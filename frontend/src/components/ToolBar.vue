@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import type { EditorTool } from '../types/editor'
-import cropIcon from '../../../assets/cAAAAAElFTkSuQmCC.png'
-import eraserIcon from '../../../assets/cBlAth80uFXgSGuZXfH6Saw6asLQRI3zP6om1WTOPzOQJP2RUz7nxH6Bppt4quWuqp1AAAAAElFTkSuQmCC.png'
-import handIcon from '../../../assets/G737GyVxO24FNVAAAAAElFTkSuQmCC.png'
-import moveIcon from '../../../assets/60WfwDkFH1iPYe5kwAAAABJRU5ErkJggg==.png'
-import brushIcon from '../../../assets/ddLPp7O3fzOa9R+zT4BdqVJm+AAAAABJRU5ErkJggg==.png'
-import selectIcon from '../../../assets/0EASsO5g1EQi9NHBckXHAUjEwzCpDgqSAfBUTAywSBMiqOC9BAchE04bIKjgKoAACuiXrD5nX1PAAAAAElFTkSuQmCC.png'
-import textIcon from '../../../assets/zmiTgwYiKmwAAAABJRU5ErkJggg==.png'
+import brushIcon from '../assets/icons/brush.svg'
+import cropIcon from '../assets/icons/crop.svg'
+import eraserIcon from '../assets/icons/eraser.svg'
+import handIcon from '../assets/icons/hand.svg'
+import moveIcon from '../assets/icons/move.svg'
+import selectIcon from '../assets/icons/select.svg'
+import textIcon from '../assets/icons/text.svg'
 
 const activeTool = defineModel<EditorTool>('activeTool', { required: true })
 

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { LayerItem } from '../types/editor'
+import addLayerIcon from '../assets/icons/add-layer.svg'
+import visibleIcon from '../assets/icons/visible.svg'
 
 defineProps<{
   activeLayerId: string
@@ -24,7 +26,9 @@ const kindLabels: Record<LayerItem['kind'], string> = {
   <section class="panel layers-panel">
     <div class="panel-title">
       <h2>Camadas</h2>
-      <button type="button" title="Adicionar camada" @click="$emit('addLayer')">+</button>
+      <button type="button" title="Adicionar camada" @click="$emit('addLayer')">
+        <img alt="" :src="addLayerIcon" />
+      </button>
     </div>
 
     <ol class="layer-list">
@@ -40,7 +44,7 @@ const kindLabels: Record<LayerItem['kind'], string> = {
           :title="layer.visible ? 'Ocultar camada' : 'Mostrar camada'"
           @click="$emit('toggleLayer', layer.id)"
         >
-          {{ layer.visible ? '●' : '○' }}
+          <img alt="" :class="{ 'visibility-icon--hidden': !layer.visible }" :src="visibleIcon" />
         </button>
         <button
           class="layer-button"

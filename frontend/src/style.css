@@ -154,7 +154,7 @@ select:focus-visible {
   display: block;
   width: 24px;
   height: 24px;
-  filter: invert(1) opacity(0.82);
+  opacity: 0.82;
   margin: auto;
   object-fit: contain;
   pointer-events: none;
@@ -166,7 +166,8 @@ select:focus-visible {
 }
 
 .tool-bar button[aria-pressed="true"] img {
-  filter: none;
+  filter: brightness(0.15);
+  opacity: 1;
 }
 
 .tool-bar button:disabled:hover {
@@ -374,6 +375,15 @@ select:focus-visible {
   height: 28px;
 }
 
+.panel-title button img,
+.visibility-button img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin: auto;
+  pointer-events: none;
+}
+
 .panel label {
   display: grid;
   gap: 6px;
@@ -424,8 +434,10 @@ select:focus-visible {
 
 .visibility-button {
   min-height: 48px;
-  color: #58c4b3;
-  font-size: 11px;
+}
+
+.visibility-icon--hidden {
+  opacity: 0.25;
 }
 
 .layer-button {
