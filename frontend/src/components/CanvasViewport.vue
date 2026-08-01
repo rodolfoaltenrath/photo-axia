@@ -1,7 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { DocumentSpec, EditorTool, ImportedImage, LayerItem, LayerTransform } from '../types/editor'
 import { readBrowserImages } from '../services/imageImport'
+import {
+  clampZoom,
+  formatZoom,
+  MAX_ZOOM,
+  nextZoomLevel,
+  wheelZoomLevel
+} from '../editor/viewport'
 
 const props = defineProps<{
   activeLayerId: string
@@ -13,17 +20,18 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (event: 'zoomIn'): void
-  (event: 'zoomOut'): void
-  (event: 'fit', zoom: number): void
+  (event: 'update:zoom', zoom: number): void
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
 }>()
 
 const scrollArea = ref<HTMLDivElement | null>(null)
+const surface = ref<HTMLDivElement | null>(null)
 const isPanning = ref(false)
 const isSpacePressed = ref(false)
+const modifierKeys = ref({ alt: false, command: false })
+const zoomTarget = ref(props.zoom)
 const panStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0, pointerId: -1 })
 const dragState = ref<{
   layerId: string
@@ -33,6 +41,10 @@ const dragState = ref<{
   transform: LayerTransform
 } | null>(null)
 let resizeObserver: ResizeObserver | undefined
+let pendingNavigation:
+  | { type: 'anchor'; clientX: number; clientY: number; documentX: number; documentY: number }
+  | { type: 'center' }
+  | undefined
 
 const scale = computed(() => props.zoom / 100)
 const frameStyle = computed(() => ({
@@ -68,7 +80,14 @@ const selectionStyle = computed(() => {
 })
 const viewportCursorClass = computed(() => ({
   'canvas-scroll--panning': isPanning.value,
-  'canvas-scroll--pan-ready': props.activeTool === 'hand' || isSpacePressed.value
+  'canvas-scroll--pan-ready':
+    props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
+  'canvas-scroll--zoom-in':
+    (props.activeTool === 'zoom' && !modifierKeys.value.alt) ||
+    (isSpacePressed.value && modifierKeys.value.command),
+  'canvas-scroll--zoom-out':
+    (props.activeTool === 'zoom' && modifierKeys.value.alt) ||
+    (isSpacePressed.value && modifierKeys.value.alt)
 }))
 
 function layerStyle(layer: Pick<LayerItem, 'transform' | 'opacity'>) {
@@ -99,22 +118,28 @@ async function handleDrop(event: DragEvent) {
 }
 
 function handleWheel(event: WheelEvent) {
-  scrollArea.value?.focus()
-  if (!event.ctrlKey && !event.metaKey) return
-
-  event.preventDefault()
-  event.deltaY < 0 ? emit('zoomIn') : emit('zoomOut')
-}
-
-function handleKeydown(event: KeyboardEvent) {
   const scroll = scrollArea.value
-  if (!scroll) return
+  scroll?.focus()
 
-  if (event.code === 'Space') {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
     event.preventDefault()
-    isSpacePressed.value = true
+    requestZoom(wheelZoomLevel(zoomTarget.value, event.deltaY), event.clientX, event.clientY)
     return
   }
+
+  if (event.shiftKey && scroll) {
+    event.preventDefault()
+    scroll.scrollLeft += event.deltaY || event.deltaX
+  }
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest('input, select, textarea, [contenteditable="true"]'))
+}
+
+function handleCanvasKeydown(event: KeyboardEvent) {
+  const scroll = scrollArea.value
+  if (!scroll) return
 
   const step = event.shiftKey ? 96 : 36
   const movement: Record<string, [number, number]> = {
@@ -124,14 +149,65 @@ function handleKeydown(event: KeyboardEvent) {
     ArrowRight: [step, 0]
   }
   const delta = movement[event.key]
-  if (!delta) return
+  if (delta) {
+    event.preventDefault()
+    scroll.scrollBy({ left: delta[0], top: delta[1], behavior: 'auto' })
+    return
+  }
 
-  event.preventDefault()
-  scroll.scrollBy({ left: delta[0], top: delta[1], behavior: 'auto' })
+  if (event.key === 'PageUp' || event.key === 'PageDown') {
+    event.preventDefault()
+    const direction = event.key === 'PageUp' ? -1 : 1
+    scroll.scrollBy({
+      left: event.ctrlKey || event.metaKey ? direction * scroll.clientWidth * 0.9 : 0,
+      top: event.ctrlKey || event.metaKey ? 0 : direction * scroll.clientHeight * 0.9,
+      behavior: 'auto'
+    })
+  }
 }
 
-function handleKeyup(event: KeyboardEvent) {
+function updateModifierKeys(event: KeyboardEvent) {
+  modifierKeys.value = { alt: event.altKey, command: event.ctrlKey || event.metaKey }
+}
+
+function handleWindowKeydown(event: KeyboardEvent) {
+  updateModifierKeys(event)
+  if (isEditableTarget(event.target)) return
+
+  if (event.code === 'Space') {
+    event.preventDefault()
+    isSpacePressed.value = true
+  }
+
+  if (!event.ctrlKey && !event.metaKey) return
+
+  const shortcuts: Record<string, () => void> = {
+    Digit0: fitDocument,
+    Numpad0: fitDocument,
+    Digit1: () => requestZoom(100),
+    Numpad1: () => requestZoom(100),
+    Digit2: () => requestZoom(200),
+    Numpad2: () => requestZoom(200),
+    Equal: zoomIn,
+    NumpadAdd: zoomIn,
+    Minus: zoomOut,
+    NumpadSubtract: zoomOut
+  }
+  const action = shortcuts[event.code]
+  if (!action) return
+
+  event.preventDefault()
+  action()
+}
+
+function handleWindowKeyup(event: KeyboardEvent) {
+  updateModifierKeys(event)
   if (event.code === 'Space') isSpacePressed.value = false
+}
+
+function resetInteractionKeys() {
+  isSpacePressed.value = false
+  modifierKeys.value = { alt: false, command: false }
 }
 
 function startViewportPointer(event: PointerEvent) {
@@ -139,7 +215,18 @@ function startViewportPointer(event: PointerEvent) {
   if (!scroll) return
 
   scroll.focus()
-  const shouldPan = event.button === 1 || event.altKey || props.activeTool === 'hand' || isSpacePressed.value
+  const temporaryZoom = isSpacePressed.value && (event.ctrlKey || event.metaKey || event.altKey)
+  const shouldZoom = event.button === 0 && (props.activeTool === 'zoom' || temporaryZoom)
+  if (shouldZoom) {
+    event.preventDefault()
+    const direction = event.altKey ? -1 : 1
+    requestZoom(nextZoomLevel(zoomTarget.value, direction), event.clientX, event.clientY)
+    return
+  }
+
+  const shouldPan =
+    event.button === 1 ||
+    (event.button === 0 && (props.activeTool === 'hand' || (isSpacePressed.value && !temporaryZoom)))
   if (!shouldPan) return
 
   event.preventDefault()
@@ -155,7 +242,7 @@ function startViewportPointer(event: PointerEvent) {
 }
 
 function startLayerPointer(event: PointerEvent, layer: LayerItem) {
-  if (event.button !== 0 || props.activeTool === 'hand' || isSpacePressed.value || event.altKey) return
+  if (event.button !== 0 || props.activeTool === 'hand' || props.activeTool === 'zoom' || isSpacePressed.value) return
   if (props.activeTool !== 'move' && props.activeTool !== 'select') return
 
   event.stopPropagation()
@@ -194,7 +281,72 @@ function updatePointer(event: PointerEvent) {
 
 function stopPointer(event: PointerEvent) {
   if (dragState.value?.pointerId === event.pointerId) dragState.value = null
-  if (panStart.value.pointerId === event.pointerId) isPanning.value = false
+  if (panStart.value.pointerId === event.pointerId) {
+    isPanning.value = false
+    panStart.value.pointerId = -1
+  }
+}
+
+function defaultZoomAnchor() {
+  const scroll = scrollArea.value
+  const canvas = surface.value
+  if (!scroll || !canvas) return undefined
+
+  const viewport = scroll.getBoundingClientRect()
+  const bounds = canvas.getBoundingClientRect()
+  return {
+    x: Math.max(bounds.left, Math.min(bounds.right, viewport.left + viewport.width / 2)),
+    y: Math.max(bounds.top, Math.min(bounds.bottom, viewport.top + viewport.height / 2))
+  }
+}
+
+function applyPendingNavigation() {
+  const scroll = scrollArea.value
+  const canvas = surface.value
+  const navigation = pendingNavigation
+  pendingNavigation = undefined
+  if (!scroll || !canvas || !navigation) return
+
+  if (navigation.type === 'center') {
+    scroll.scrollLeft = (scroll.scrollWidth - scroll.clientWidth) / 2
+    scroll.scrollTop = (scroll.scrollHeight - scroll.clientHeight) / 2
+    return
+  }
+
+  const bounds = canvas.getBoundingClientRect()
+  const currentX = bounds.left + navigation.documentX * scale.value
+  const currentY = bounds.top + navigation.documentY * scale.value
+  scroll.scrollLeft += currentX - navigation.clientX
+  scroll.scrollTop += currentY - navigation.clientY
+}
+
+function requestZoom(value: number, clientX?: number, clientY?: number) {
+  const nextZoom = clampZoom(value)
+  const canvas = surface.value
+  const anchor = clientX === undefined || clientY === undefined ? defaultZoomAnchor() : { x: clientX, y: clientY }
+
+  if (canvas && anchor) {
+    const bounds = canvas.getBoundingClientRect()
+    pendingNavigation = {
+      type: 'anchor',
+      clientX: anchor.x,
+      clientY: anchor.y,
+      documentX: (anchor.x - bounds.left) / scale.value,
+      documentY: (anchor.y - bounds.top) / scale.value
+    }
+  }
+
+  zoomTarget.value = nextZoom
+  emit('update:zoom', nextZoom)
+  if (Math.abs(nextZoom - props.zoom) < 0.001) void nextTick(applyPendingNavigation)
+}
+
+function zoomIn() {
+  requestZoom(nextZoomLevel(zoomTarget.value, 1))
+}
+
+function zoomOut() {
+  requestZoom(nextZoomLevel(zoomTarget.value, -1))
 }
 
 function fitDocument() {
@@ -203,19 +355,27 @@ function fitDocument() {
 
   const availableWidth = Math.max(1, scroll.clientWidth - 96)
   const availableHeight = Math.max(1, scroll.clientHeight - 96)
-  const fittedZoom = Math.floor(
-    Math.min(4, availableWidth / props.document.width, availableHeight / props.document.height) * 100
+  const fittedZoom = clampZoom(
+    Math.min(MAX_ZOOM / 100, availableWidth / props.document.width, availableHeight / props.document.height) * 100
   )
-  emit('fit', Math.max(12, fittedZoom))
-  void nextTick(() => {
-    if (!scrollArea.value) return
-    scrollArea.value.scrollLeft = (scrollArea.value.scrollWidth - scrollArea.value.clientWidth) / 2
-    scrollArea.value.scrollTop = (scrollArea.value.scrollHeight - scrollArea.value.clientHeight) / 2
-  })
+  pendingNavigation = { type: 'center' }
+  zoomTarget.value = fittedZoom
+  emit('update:zoom', fittedZoom)
+  if (Math.abs(fittedZoom - props.zoom) < 0.001) void nextTick(applyPendingNavigation)
 }
 
+watch(
+  () => props.zoom,
+  (value) => {
+    zoomTarget.value = value
+    void nextTick(applyPendingNavigation)
+  }
+)
+
 onMounted(() => {
-  window.addEventListener('keyup', handleKeyup)
+  window.addEventListener('keydown', handleWindowKeydown)
+  window.addEventListener('keyup', handleWindowKeyup)
+  window.addEventListener('blur', resetInteractionKeys)
   if (scrollArea.value) {
     resizeObserver = new ResizeObserver(() => {
       if (props.document.id === 'draft') fitDocument()
@@ -225,9 +385,13 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keyup', handleKeyup)
+  window.removeEventListener('keydown', handleWindowKeydown)
+  window.removeEventListener('keyup', handleWindowKeyup)
+  window.removeEventListener('blur', resetInteractionKeys)
   resizeObserver?.disconnect()
 })
+
+defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
 </script>
 
 <template>
@@ -236,11 +400,12 @@ onBeforeUnmount(() => {
     aria-label="Área de edição"
     @dragover.prevent
     @drop="handleDrop"
-    @keydown="handleKeydown"
+    @keydown="handleCanvasKeydown"
     @pointerdown="startViewportPointer"
     @pointermove="updatePointer"
     @pointerup="stopPointer"
     @pointercancel="stopPointer"
+    @auxclick.prevent
     @wheel="handleWheel"
   >
     <div class="context-bar">
@@ -248,17 +413,17 @@ onBeforeUnmount(() => {
       <span v-if="activeTool === 'brush' || activeTool === 'eraser'">{{ brushSize }} px</span>
       <span>{{ document.width }} × {{ document.height }}</span>
       <span>{{ document.unit === 'cm' ? `${document.physicalWidth} × ${document.physicalHeight} cm` : 'pixels' }}</span>
-      <span>{{ zoom }}%</span>
+      <span>{{ formatZoom(zoom) }}%</span>
       <div class="zoom-actions">
-        <button type="button" title="Reduzir zoom" @click="$emit('zoomOut')">−</button>
-        <button type="button" title="Ajustar à tela" @click="fitDocument">Ajustar</button>
-        <button type="button" title="Aumentar zoom" @click="$emit('zoomIn')">+</button>
+        <button type="button" title="Reduzir zoom (Ctrl+-)" @click="zoomOut">−</button>
+        <button type="button" title="Ajustar à tela (Ctrl+0)" @click="fitDocument">Ajustar</button>
+        <button type="button" title="Aumentar zoom (Ctrl++)" @click="zoomIn">+</button>
       </div>
     </div>
 
     <div ref="scrollArea" class="canvas-scroll" :class="viewportCursorClass" tabindex="0">
       <div class="canvas-frame" :style="frameStyle">
-        <div class="canvas-surface" :style="surfaceStyle">
+        <div ref="surface" class="canvas-surface" :style="surfaceStyle">
           <div class="transparent-grid"></div>
           <div class="document-background" :style="backgroundStyle"></div>
           <div class="document-layers">

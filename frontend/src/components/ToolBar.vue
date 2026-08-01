@@ -7,17 +7,22 @@ import handIcon from '../assets/icons/hand.svg'
 import moveIcon from '../assets/icons/move.svg'
 import selectIcon from '../assets/icons/select.svg'
 import textIcon from '../assets/icons/text.svg'
+import zoomIcon from '../assets/icons/zoom.svg'
 
 const activeTool = defineModel<EditorTool>('activeTool', { required: true })
+const emit = defineEmits<{
+  (event: 'toolDoubleClick', tool: EditorTool): void
+}>()
 
 const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boolean }> = [
-  { id: 'move', icon: moveIcon, label: 'Mover', enabled: true },
-  { id: 'select', icon: selectIcon, label: 'Selecionar', enabled: true },
+  { id: 'move', icon: moveIcon, label: 'Mover (V)', enabled: true },
+  { id: 'select', icon: selectIcon, label: 'Selecionar (M)', enabled: true },
   { id: 'brush', icon: brushIcon, label: 'Pincel (em breve)', enabled: false },
   { id: 'eraser', icon: eraserIcon, label: 'Borracha (em breve)', enabled: false },
   { id: 'crop', icon: cropIcon, label: 'Cortar (em breve)', enabled: false },
   { id: 'text', icon: textIcon, label: 'Texto (em breve)', enabled: false },
-  { id: 'hand', icon: handIcon, label: 'Navegar', enabled: true }
+  { id: 'hand', icon: handIcon, label: 'Mão (H)', enabled: true },
+  { id: 'zoom', icon: zoomIcon, label: 'Zoom (Z)', enabled: true }
 ]
 </script>
 
@@ -32,6 +37,7 @@ const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boole
       :title="tool.label"
       type="button"
       @click="activeTool = tool.id"
+      @dblclick="emit('toolDoubleClick', tool.id)"
     >
       <img alt="" :src="tool.icon" />
     </button>

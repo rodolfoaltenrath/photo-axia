@@ -80,9 +80,9 @@ defineEmits<{
       Zoom
       <input
         :value="zoom"
-        max="400"
-        min="12"
-        step="1"
+        max="3200"
+        min="5"
+        step="0.01"
         type="number"
         @input="$emit('update:zoom', Number(($event.target as HTMLInputElement).value))"
       />

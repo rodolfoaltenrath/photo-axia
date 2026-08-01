@@ -16,6 +16,7 @@ import {
 } from './services/backend'
 import { readBrowserImages, releaseLayerAssets } from './services/imageImport'
 import { renderDocumentPNG } from './services/renderDocument'
+import { clampZoom } from './editor/viewport'
 import type {
   DocumentSpec,
   EditorTool,
@@ -34,6 +35,7 @@ const isBusy = ref(false)
 const activeLayerId = ref('layer-bg')
 const showNewDocumentDialog = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const canvasViewport = ref<InstanceType<typeof CanvasViewport> | null>(null)
 const activeDocument = ref<DocumentSpec>({
   id: 'draft',
   name: 'Sem título',
@@ -60,7 +62,12 @@ function createBackgroundLayer(): LayerItem {
 
 function setZoom(value: number) {
   if (!Number.isFinite(value)) return
-  zoom.value = Math.min(400, Math.max(12, Math.round(value)))
+  zoom.value = clampZoom(value)
+}
+
+function handleToolDoubleClick(tool: EditorTool) {
+  if (tool === 'hand') canvasViewport.value?.fitDocument()
+  if (tool === 'zoom') canvasViewport.value?.zoomToActualSize()
 }
 
 function addLayer() {
@@ -234,11 +241,20 @@ function blockBrowserWheelZoom(event: WheelEvent) {
 
 function handleShortcut(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
-  if (target?.matches('input, select, textarea')) return
+  if (target?.closest('input, select, textarea, [contenteditable="true"]')) return
   if (event.ctrlKey || event.metaKey || event.altKey) return
 
-  if (event.key.toLowerCase() === 'v') activeTool.value = 'move'
-  if (event.key.toLowerCase() === 'h') activeTool.value = 'hand'
+  const toolsByKey: Record<string, EditorTool> = {
+    v: 'move',
+    m: 'select',
+    h: 'hand',
+    z: 'zoom'
+  }
+  const tool = toolsByKey[event.key.toLowerCase()]
+  if (!tool) return
+
+  event.preventDefault()
+  activeTool.value = tool
 }
 
 onMounted(async () => {
@@ -286,21 +302,20 @@ onBeforeUnmount(() => {
     />
 
     <section class="workspace">
-      <ToolBar v-model:active-tool="activeTool" />
+      <ToolBar v-model:active-tool="activeTool" @tool-double-click="handleToolDoubleClick" />
 
       <CanvasViewport
+        ref="canvasViewport"
         :active-layer-id="activeLayerId"
         :active-tool="activeTool"
         :brush-size="brushSize"
         :document="activeDocument"
         :layers="layers"
         :zoom="zoom"
-        @fit="setZoom"
         @images-dropped="addImportedImages"
         @select-layer="activeLayerId = $event"
         @update-transform="updateLayerTransform"
-        @zoom-in="setZoom(zoom + 10)"
-        @zoom-out="setZoom(zoom - 10)"
+        @update:zoom="setZoom"
       />
 
       <aside class="side-panels" aria-label="Painéis do documento">

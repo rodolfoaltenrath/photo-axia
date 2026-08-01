@@ -226,6 +226,30 @@ select:focus-visible {
   cursor: grab;
 }
 
+.canvas-scroll--zoom-in:not(.canvas-scroll--panning) {
+  cursor: zoom-in;
+}
+
+.canvas-scroll--zoom-out:not(.canvas-scroll--panning) {
+  cursor: zoom-out;
+}
+
+.canvas-scroll--panning .document-layer {
+  cursor: grabbing;
+}
+
+.canvas-scroll--pan-ready:not(.canvas-scroll--panning) .document-layer {
+  cursor: grab;
+}
+
+.canvas-scroll--zoom-in:not(.canvas-scroll--panning) .document-layer {
+  cursor: zoom-in;
+}
+
+.canvas-scroll--zoom-out:not(.canvas-scroll--panning) .document-layer {
+  cursor: zoom-out;
+}
+
 .canvas-frame {
   position: relative;
   flex: none;

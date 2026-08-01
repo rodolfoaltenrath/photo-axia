@@ -1,4 +1,4 @@
-export type EditorTool = 'move' | 'select' | 'brush' | 'eraser' | 'crop' | 'text' | 'hand'
+export type EditorTool = 'move' | 'select' | 'brush' | 'eraser' | 'crop' | 'text' | 'hand' | 'zoom'
 
 export type LayerKind = 'pixel' | 'image' | 'adjustment' | 'background'
 export type DocumentUnit = 'px' | 'cm'

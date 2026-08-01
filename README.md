@@ -54,7 +54,21 @@ No Linux, os scripts usam `-tags webkit2_41`, que e o caminho recomendado para d
 - Criacao de documentos em pixels ou centimetros.
 - Importacao de PNG, JPEG e GIF por seletor ou arrastar e soltar.
 - Selecao, movimentacao, visibilidade e opacidade de camadas.
-- Zoom, ajuste a tela e navegacao com a ferramenta Mao, tecla Espaco ou botao do meio.
+- Zoom ancorado no cursor, ajuste a tela e navegacao com a ferramenta Mao, tecla Espaco ou botao do meio.
 - Exportacao da composicao em PNG.
 
 As ferramentas ainda nao implementadas aparecem desabilitadas para manter a interface coerente com os recursos disponiveis.
+
+## Atalhos de navegacao
+
+- `V`, `M`, `H` e `Z`: Mover, Selecionar, Mao e Zoom.
+- `Espaco` + arrastar ou botao do meio + arrastar: navegar pela imagem.
+- `Ctrl` + `Espaco` + clique: zoom temporario; `Alt` + `Espaco` + clique: reduzir temporariamente.
+- `Ctrl` + roda do mouse ou `Alt` + roda: zoom suave sob o cursor.
+- `Z` + clique: aumentar; `Alt` + clique: reduzir.
+- `Ctrl` + `+` / `-`: proximo nivel de zoom.
+- `Ctrl` + `0`: ajustar a tela; `Ctrl` + `1`: 100%; `Ctrl` + `2`: 200%.
+- Duplo clique na Mao ajusta a tela; duplo clique no Zoom retorna a 100%.
+- Roda do mouse: navegar verticalmente; `Shift` + roda: navegar horizontalmente.
+
+No macOS, use `Command` no lugar de `Ctrl`.
