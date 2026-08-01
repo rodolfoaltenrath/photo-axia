@@ -42,7 +42,7 @@ func TestReadImageFileRegistersAsset(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, imported.SourceURL, nil)
 	response := httptest.NewRecorder()
-	app.AssetHandler().ServeHTTP(response, request)
+	app.assetHandler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("unexpected response status: %d", response.Code)
 	}
@@ -54,7 +54,7 @@ func TestReadImageFileRegistersAsset(t *testing.T) {
 func TestAssetHandlerDoesNotExposeUnknownPaths(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/__axia_asset/missing", nil)
 	response := httptest.NewRecorder()
-	NewApp().AssetHandler().ServeHTTP(response, request)
+	NewApp().assetHandler().ServeHTTP(response, request)
 
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("unexpected response status: %d", response.Code)

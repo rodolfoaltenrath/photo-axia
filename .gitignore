@@ -1,8 +1,46 @@
-build/bin
-node_modules
-frontend/dist/*
-!frontend/dist/.gitkeep
-frontend/node_modules
-.toolchains
-.wails
+# Toolchains e dependencias locais
+/.toolchains/
+/node_modules/
+/frontend/node_modules/
+
+# Saidas de build
+/build/bin/
+/frontend/dist/*
+!/frontend/dist/.gitkeep
+/.wails/
+/.vite/
+
+# Testes, cobertura e profiling
+/coverage/
+/.nyc_output/
+coverage.out
+*.test
+*.prof
+
+# Logs e arquivos temporarios
 *.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+/.cache/
+/tmp/
+
+# Variaveis locais e segredos
+.env
+.env.*
+!.env.example
+
+# IDE e sistema operacional
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+
+# Material local usado apenas como referencia
+/assets/
+/Exemplo de assets.html
+/Exemplo de assets_files/
+/Photopea _ Online Photo Editor_files/

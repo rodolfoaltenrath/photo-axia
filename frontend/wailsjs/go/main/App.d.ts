@@ -8,6 +8,6 @@ export function CreateDocument(arg1:string,arg2:number,arg3:number,arg4:string,a
 
 export function GetEditorStatus():Promise<main.EditorStatus>;
 
-export function SelectImageFiles():Promise<Array<main.ImportedImage>>;
-
 export function SaveExportedPNG(arg1:string,arg2:string):Promise<string>;
+
+export function SelectImageFiles():Promise<Array<main.ImportedImage>>;

@@ -228,7 +228,7 @@ func (a *App) readImageFile(path string) (ImportedImage, error) {
 	}, nil
 }
 
-func (a *App) AssetHandler() http.Handler {
+func (a *App) assetHandler() http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet && request.Method != http.MethodHead {
 			http.Error(response, "metodo nao permitido", http.StatusMethodNotAllowed)
@@ -254,8 +254,8 @@ func (a *App) AssetHandler() http.Handler {
 	})
 }
 
-func (a *App) AssetMiddleware(next http.Handler) http.Handler {
-	assets := a.AssetHandler()
+func (a *App) assetMiddleware(next http.Handler) http.Handler {
+	assets := a.assetHandler()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/__axia_asset/") {
 			assets.ServeHTTP(response, request)

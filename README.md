@@ -2,17 +2,28 @@
 
 Axia e um prototipo de editor de imagem desktop para Linux, construido com Go, Wails, Vue 3, TypeScript e Vite.
 
-## Requisitos
+## Configuracao no Fedora
 
-- Go 1.23+.
-- Wails CLI v2.
-- Node.js 24 LTS. O projeto inclui scripts para usar Node local em `.toolchains`, sem instalacao global.
+O instalador configura as bibliotecas nativas do Fedora, Go 1.23.12, Wails 2.12 e Node.js 24 localmente para o projeto:
+
+```sh
+./scripts/setup-fedora.sh
+```
+
+O `sudo` e usado somente pelo `dnf`. Go, Wails e Node ficam em `.toolchains`, sem alterar instalacoes globais.
+
+Para disponibilizar `go`, `wails`, `node` e `npm` no terminal atual:
+
+```sh
+source ./scripts/env.sh
+```
 
 ## Desenvolvimento
 
-Instale as dependencias do frontend:
+Em outras distribuicoes, instale GTK 3, WebKit2GTK 4.1, um compilador C/C++ e pkg-config. Depois execute:
 
 ```sh
+./scripts/setup-go.sh
 ./scripts/setup-node.sh
 ./scripts/frontend-install.sh
 ```
