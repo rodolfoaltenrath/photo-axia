@@ -41,6 +41,19 @@ const pixelSize = computed(() => {
   }
 })
 
+const validationError = computed(() => {
+  if (!Number.isFinite(pixelSize.value.width) || !Number.isFinite(pixelSize.value.height)) {
+    return 'Informe dimensões válidas.'
+  }
+  if (pixelSize.value.width > 16384 || pixelSize.value.height > 16384) {
+    return 'Cada dimensão pode ter no máximo 16.384 px.'
+  }
+  if (pixelSize.value.width * pixelSize.value.height > 64_000_000) {
+    return 'O documento pode ter no máximo 64 megapixels.'
+  }
+  return ''
+})
+
 watch(
   () => form.unit,
   (unit) => {
@@ -62,6 +75,7 @@ function applyPreset(index: number) {
 }
 
 function createDocument() {
+  if (validationError.value) return
   emit('create', {
     name: form.name.trim() || 'Sem titulo',
     unit: form.unit,
@@ -84,7 +98,7 @@ function createDocument() {
         <button type="button" title="Fechar" @click="emit('close')">x</button>
       </header>
 
-      <div class="preset-row" aria-label="Predefinicoes">
+      <div class="preset-row" aria-label="Predefinições">
         <button
           v-for="(preset, index) in presets"
           :key="preset.label"
@@ -105,12 +119,12 @@ function createDocument() {
           Unidade
           <select v-model="form.unit">
             <option value="px">Pixels</option>
-            <option value="cm">Centimetros</option>
+            <option value="cm">Centímetros</option>
           </select>
         </label>
 
         <label>
-          Resolucao
+          Resolução
           <input v-model.number="form.resolutionDpi" min="1" step="1" type="number" />
         </label>
 
@@ -133,9 +147,11 @@ function createDocument() {
           </select>
         </label>
 
+        <p v-if="validationError" class="form-error" role="alert">{{ validationError }}</p>
+
         <footer class="dialog-actions">
           <button type="button" @click="emit('close')">Cancelar</button>
-          <button class="primary-button" type="submit">Criar</button>
+          <button class="primary-button" :disabled="Boolean(validationError)" type="submit">Criar</button>
         </footer>
       </form>
     </section>

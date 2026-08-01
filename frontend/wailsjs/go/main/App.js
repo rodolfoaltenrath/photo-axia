@@ -17,3 +17,7 @@ export function GetEditorStatus() {
 export function SelectImageFiles() {
   return window['go']['main']['App']['SelectImageFiles']();
 }
+
+export function SaveExportedPNG(arg1, arg2) {
+  return window['go']['main']['App']['SaveExportedPNG'](arg1, arg2);
+}

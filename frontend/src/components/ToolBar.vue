@@ -10,14 +10,14 @@ import textIcon from '../../../assets/zmiTgwYiKmwAAAABJRU5ErkJggg==.png'
 
 const activeTool = defineModel<EditorTool>('activeTool', { required: true })
 
-const tools: Array<{ id: EditorTool; icon: string; label: string }> = [
-  { id: 'move', icon: moveIcon, label: 'Mover' },
-  { id: 'select', icon: selectIcon, label: 'Selecionar' },
-  { id: 'brush', icon: brushIcon, label: 'Pincel' },
-  { id: 'eraser', icon: eraserIcon, label: 'Borracha' },
-  { id: 'crop', icon: cropIcon, label: 'Cortar' },
-  { id: 'text', icon: textIcon, label: 'Texto' },
-  { id: 'hand', icon: handIcon, label: 'Navegar' }
+const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boolean }> = [
+  { id: 'move', icon: moveIcon, label: 'Mover', enabled: true },
+  { id: 'select', icon: selectIcon, label: 'Selecionar', enabled: true },
+  { id: 'brush', icon: brushIcon, label: 'Pincel (em breve)', enabled: false },
+  { id: 'eraser', icon: eraserIcon, label: 'Borracha (em breve)', enabled: false },
+  { id: 'crop', icon: cropIcon, label: 'Cortar (em breve)', enabled: false },
+  { id: 'text', icon: textIcon, label: 'Texto (em breve)', enabled: false },
+  { id: 'hand', icon: handIcon, label: 'Navegar', enabled: true }
 ]
 </script>
 
@@ -26,12 +26,14 @@ const tools: Array<{ id: EditorTool; icon: string; label: string }> = [
     <button
       v-for="tool in tools"
       :key="tool.id"
+      :aria-label="tool.label"
       :aria-pressed="activeTool === tool.id"
+      :disabled="!tool.enabled"
       :title="tool.label"
       type="button"
       @click="activeTool = tool.id"
     >
-      <img :alt="tool.label" :src="tool.icon" />
+      <img alt="" :src="tool.icon" />
     </button>
   </aside>
 </template>

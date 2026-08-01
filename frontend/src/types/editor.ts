@@ -32,7 +32,7 @@ export interface ImageAsset {
   width: number
   height: number
   mimeType: string
-  dataUrl: string
+  sourceUrl: string
 }
 
 export interface LayerTransform {
@@ -48,7 +48,7 @@ export interface ImportedImage {
   width: number
   height: number
   mimeType: string
-  dataUrl: string
+  sourceUrl: string
 }
 
 export interface NewDocumentSettings {

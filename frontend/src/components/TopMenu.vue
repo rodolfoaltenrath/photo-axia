@@ -7,6 +7,7 @@ defineProps<{
 const emit = defineEmits<{
   (event: 'newDocument'): void
   (event: 'importImages'): void
+  (event: 'exportDocument'): void
   (event: 'previewFilter', filterName: string): void
 }>()
 </script>
@@ -21,9 +22,9 @@ const emit = defineEmits<{
     <nav class="menu-actions" aria-label="Acoes principais">
       <button type="button" @click="emit('newDocument')">Novo</button>
       <button type="button" @click="emit('importImages')">Importar</button>
-      <button type="button">Salvar</button>
-      <button type="button" @click="emit('previewFilter', 'clarity')">Filtro</button>
-      <button type="button">Exportar</button>
+      <button disabled title="Formato de projeto em breve" type="button">Salvar</button>
+      <button disabled title="Filtros não destrutivos em breve" type="button">Filtro</button>
+      <button type="button" @click="emit('exportDocument')">Exportar PNG</button>
     </nav>
 
     <div class="document-status">

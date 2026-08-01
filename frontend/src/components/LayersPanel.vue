@@ -11,6 +11,13 @@ defineEmits<{
   (event: 'selectLayer', layerId: string): void
   (event: 'toggleLayer', layerId: string): void
 }>()
+
+const kindLabels: Record<LayerItem['kind'], string> = {
+  pixel: 'Pixels',
+  image: 'Imagem',
+  adjustment: 'Ajuste',
+  background: 'Fundo'
+}
 </script>
 
 <template>
@@ -29,20 +36,27 @@ defineEmits<{
         <button
           class="visibility-button"
           type="button"
+          :aria-label="layer.visible ? `Ocultar ${layer.name}` : `Mostrar ${layer.name}`"
           :title="layer.visible ? 'Ocultar camada' : 'Mostrar camada'"
           @click="$emit('toggleLayer', layer.id)"
         >
-          {{ layer.visible ? 'V' : '-' }}
+          {{ layer.visible ? '●' : '○' }}
         </button>
-        <button class="layer-button" type="button" @click="$emit('selectLayer', layer.id)">
-          <span class="layer-thumb"></span>
+        <button
+          class="layer-button"
+          type="button"
+          :aria-current="layer.id === activeLayerId ? 'true' : undefined"
+          @click="$emit('selectLayer', layer.id)"
+        >
+          <span class="layer-thumb" :class="{ 'layer-thumb--transparent': !layer.image }">
+            <img v-if="layer.image" alt="" :src="layer.image.sourceUrl" />
+          </span>
           <span>
             <strong>{{ layer.name }}</strong>
-            <small>{{ layer.kind }} - {{ layer.opacity }}%</small>
+            <small>{{ kindLabels[layer.kind] }} · {{ layer.opacity }}%</small>
           </span>
         </button>
       </li>
     </ol>
   </section>
 </template>
-

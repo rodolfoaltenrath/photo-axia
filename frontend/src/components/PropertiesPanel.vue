@@ -5,13 +5,12 @@ defineProps<{
   activeLayer: LayerItem
   activeTool: EditorTool
   brushSize: number
-  opacity: number
   zoom: number
 }>()
 
 defineEmits<{
   (event: 'update:brushSize', value: number): void
-  (event: 'update:opacity', value: number): void
+  (event: 'update:layerOpacity', value: number): void
   (event: 'update:zoom', value: number): void
 }>()
 </script>
@@ -32,7 +31,7 @@ defineEmits<{
       <input :value="activeLayer.name" readonly />
     </label>
 
-    <label>
+    <label v-if="activeTool === 'brush' || activeTool === 'eraser'">
       Pincel
       <input
         :value="brushSize"
@@ -46,13 +45,36 @@ defineEmits<{
     <label>
       Opacidade
       <input
-        :value="opacity"
+        :value="activeLayer.opacity"
         max="100"
         min="0"
         type="range"
-        @input="$emit('update:opacity', Number(($event.target as HTMLInputElement).value))"
+        @input="$emit('update:layerOpacity', Number(($event.target as HTMLInputElement).value))"
       />
     </label>
+
+    <template v-if="activeLayer.transform">
+      <div class="property-grid">
+        <label>
+          X
+          <input :value="activeLayer.transform.x" readonly type="number" />
+        </label>
+        <label>
+          Y
+          <input :value="activeLayer.transform.y" readonly type="number" />
+        </label>
+      </div>
+      <div class="property-grid">
+        <label>
+          Largura
+          <input :value="activeLayer.transform.width" readonly type="number" />
+        </label>
+        <label>
+          Altura
+          <input :value="activeLayer.transform.height" readonly type="number" />
+        </label>
+      </div>
+    </template>
 
     <label>
       Zoom
@@ -67,4 +89,3 @@ defineEmits<{
     </label>
   </section>
 </template>
-

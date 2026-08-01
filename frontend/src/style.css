@@ -97,6 +97,18 @@ select {
   border-color: #58c4b3;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #58c4b3;
+  outline-offset: 2px;
+}
+
 .document-status {
   display: grid;
   justify-items: end;
@@ -107,6 +119,14 @@ select {
 
 .document-status strong {
   color: #e8edf2;
+}
+
+.document-status strong,
+.document-status span {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace {
@@ -149,6 +169,10 @@ select {
   filter: none;
 }
 
+.tool-bar button:disabled:hover {
+  border-color: #313944;
+}
+
 .canvas-stage {
   display: grid;
   grid-template-rows: 42px 1fr;
@@ -183,7 +207,7 @@ select {
   display: grid;
   min-height: 0;
   overflow: auto;
-  place-items: center;
+  place-items: safe center;
   padding: 48px;
   outline: none;
   overscroll-behavior: contain;
@@ -197,13 +221,23 @@ select {
   cursor: grabbing;
 }
 
-.canvas-surface {
+.canvas-scroll--pan-ready:not(.canvas-scroll--panning) {
+  cursor: grab;
+}
+
+.canvas-frame {
   position: relative;
-  min-width: 280px;
-  min-height: 180px;
+  flex: none;
+}
+
+.canvas-surface {
+  position: absolute;
+  inset: 0 auto auto 0;
   overflow: hidden;
   border: 1px solid #343d48;
   box-shadow: 0 20px 60px rgb(0 0 0 / 45%);
+  transform-origin: top left;
+  user-select: none;
 }
 
 .transparent-grid {
@@ -223,12 +257,9 @@ select {
   background-size: 24px 24px;
 }
 
-.canvas-surface--white .transparent-grid {
-  background: #fff;
-}
-
-.canvas-surface--black .transparent-grid {
-  background: #050607;
+.document-background {
+  position: absolute;
+  inset: 0;
 }
 
 .document-layers,
@@ -243,6 +274,8 @@ select {
 
 .document-layer {
   overflow: hidden;
+  cursor: pointer;
+  touch-action: none;
 }
 
 .document-layer img {
@@ -251,6 +284,20 @@ select {
   height: 100%;
   object-fit: contain;
   user-select: none;
+}
+
+.document-layer--active {
+  cursor: move;
+}
+
+.layer-selection {
+  position: absolute;
+  border: 2px solid #58c4b3;
+  box-shadow:
+    0 0 0 1px rgb(7 17 15 / 80%),
+    inset 0 0 0 1px rgb(255 255 255 / 25%);
+  pointer-events: none;
+  z-index: 10;
 }
 
 .drop-hint {
@@ -335,6 +382,12 @@ select {
   font-size: 12px;
 }
 
+.property-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .panel input,
 .panel select,
 .document-form input,
@@ -371,6 +424,8 @@ select {
 
 .visibility-button {
   min-height: 48px;
+  color: #58c4b3;
+  font-size: 11px;
 }
 
 .layer-button {
@@ -383,21 +438,49 @@ select {
   text-align: left;
 }
 
+.layer-button > span:last-child {
+  min-width: 0;
+}
+
 .layer-list li.active .layer-button {
   border-color: #58c4b3;
   background: #233239;
 }
 
 .layer-thumb {
+  position: relative;
+  display: grid;
+  overflow: hidden;
   width: 36px;
   height: 32px;
+  place-items: center;
   border-radius: 4px;
   background: linear-gradient(135deg, #58c4b3, #e2aa58);
+}
+
+.layer-thumb--transparent {
+  background:
+    linear-gradient(45deg, #707984 25%, transparent 25%),
+    linear-gradient(-45deg, #707984 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #707984 75%),
+    linear-gradient(-45deg, transparent 75%, #707984 75%),
+    #aeb6bf;
+  background-position: 0 0, 0 5px, 5px -5px, -5px 0;
+  background-size: 10px 10px;
+}
+
+.layer-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .layer-button strong,
 .layer-button small {
   display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .layer-button small {
@@ -487,8 +570,15 @@ select {
 }
 
 .field-full,
+.form-error,
 .dialog-actions {
   grid-column: 1 / -1;
+}
+
+.form-error {
+  margin: 0;
+  color: #ffadb3;
+  font-size: 12px;
 }
 
 .dialog-actions {
@@ -511,6 +601,40 @@ select {
   background: #58c4b3;
   color: #07110f;
   font-weight: 700;
+}
+
+.error-banner {
+  position: fixed;
+  top: 58px;
+  left: 50%;
+  z-index: 30;
+  display: flex;
+  width: min(680px, calc(100vw - 48px));
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #d46b6b;
+  border-radius: 8px;
+  background: #3a2024;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 40%);
+  color: #ffd9dc;
+  padding: 10px 12px;
+  transform: translateX(-50%);
+  white-space: pre-line;
+}
+
+.error-banner button {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+}
+
+.app-shell--busy {
+  cursor: progress;
 }
 
 .visually-hidden {

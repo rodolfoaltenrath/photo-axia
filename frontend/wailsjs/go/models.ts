@@ -54,7 +54,7 @@ export namespace main {
 	    width: number;
 	    height: number;
 	    mimeType: string;
-	    dataUrl: string;
+		    sourceUrl: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ImportedImage(source);
@@ -67,9 +67,8 @@ export namespace main {
 	        this.width = source["width"];
 	        this.height = source["height"];
 	        this.mimeType = source["mimeType"];
-	        this.dataUrl = source["dataUrl"];
+		        this.sourceUrl = source["sourceUrl"];
 	    }
 	}
 
 }
-
