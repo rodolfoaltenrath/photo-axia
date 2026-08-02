@@ -32,6 +32,8 @@ const isPanning = ref(false)
 const isSpacePressed = ref(false)
 const modifierKeys = ref({ alt: false, command: false })
 const zoomTarget = ref(props.zoom)
+const viewportSize = ref({ width: 1, height: 1 })
+const isViewportReady = ref(false)
 const panStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0, pointerId: -1 })
 const dragState = ref<{
   layerId: string
@@ -41,15 +43,27 @@ const dragState = ref<{
   transform: LayerTransform
 } | null>(null)
 let resizeObserver: ResizeObserver | undefined
+let navigationFrame = 0
+let viewportInitialization = 0
 let pendingNavigation:
   | { type: 'anchor'; clientX: number; clientY: number; documentX: number; documentY: number }
   | { type: 'center' }
   | undefined
 
 const scale = computed(() => props.zoom / 100)
+const scaledDocumentSize = computed(() => ({
+  width: Math.max(1, props.document.width * scale.value),
+  height: Math.max(1, props.document.height * scale.value)
+}))
+const pasteboardStyle = computed(() => ({
+  width: `${viewportSize.value.width * 2 + scaledDocumentSize.value.width}px`,
+  height: `${viewportSize.value.height * 2 + scaledDocumentSize.value.height}px`
+}))
 const frameStyle = computed(() => ({
-  width: `${Math.max(1, props.document.width * scale.value)}px`,
-  height: `${Math.max(1, props.document.height * scale.value)}px`
+  left: `${viewportSize.value.width}px`,
+  top: `${viewportSize.value.height}px`,
+  width: `${scaledDocumentSize.value.width}px`,
+  height: `${scaledDocumentSize.value.height}px`
 }))
 const surfaceStyle = computed(() => ({
   width: `${props.document.width}px`,
@@ -79,6 +93,7 @@ const selectionStyle = computed(() => {
   }
 })
 const viewportCursorClass = computed(() => ({
+  'canvas-scroll--ready': isViewportReady.value,
   'canvas-scroll--panning': isPanning.value,
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
@@ -215,21 +230,25 @@ function startViewportPointer(event: PointerEvent) {
   if (!scroll) return
 
   scroll.focus()
+  const isMiddleButton = event.button === 1 || (event.buttons & 4) === 4
   const temporaryZoom = isSpacePressed.value && (event.ctrlKey || event.metaKey || event.altKey)
   const shouldZoom = event.button === 0 && (props.activeTool === 'zoom' || temporaryZoom)
   if (shouldZoom) {
     event.preventDefault()
+    event.stopPropagation()
     const direction = event.altKey ? -1 : 1
     requestZoom(nextZoomLevel(zoomTarget.value, direction), event.clientX, event.clientY)
     return
   }
 
   const shouldPan =
-    event.button === 1 ||
+    isMiddleButton ||
     (event.button === 0 && (props.activeTool === 'hand' || (isSpacePressed.value && !temporaryZoom)))
   if (!shouldPan) return
 
   event.preventDefault()
+  event.stopPropagation()
+  dragState.value = null
   scroll.setPointerCapture(event.pointerId)
   isPanning.value = true
   panStart.value = {
@@ -242,7 +261,15 @@ function startViewportPointer(event: PointerEvent) {
 }
 
 function startLayerPointer(event: PointerEvent, layer: LayerItem) {
-  if (event.button !== 0 || props.activeTool === 'hand' || props.activeTool === 'zoom' || isSpacePressed.value) return
+  if (
+    event.button !== 0 ||
+    (event.buttons & 4) === 4 ||
+    isPanning.value ||
+    props.activeTool === 'hand' ||
+    props.activeTool === 'zoom' ||
+    isSpacePressed.value
+  )
+    return
   if (props.activeTool !== 'move' && props.activeTool !== 'select') return
 
   event.stopPropagation()
@@ -263,6 +290,13 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
 }
 
 function updatePointer(event: PointerEvent) {
+  if (isPanning.value && scrollArea.value && panStart.value.pointerId === event.pointerId) {
+    event.preventDefault()
+    scrollArea.value.scrollLeft = panStart.value.scrollLeft - (event.clientX - panStart.value.x)
+    scrollArea.value.scrollTop = panStart.value.scrollTop - (event.clientY - panStart.value.y)
+    return
+  }
+
   if (dragState.value?.pointerId === event.pointerId) {
     const drag = dragState.value
     emit('updateTransform', drag.layerId, {
@@ -272,11 +306,6 @@ function updatePointer(event: PointerEvent) {
     })
     return
   }
-
-  if (!isPanning.value || !scrollArea.value || panStart.value.pointerId !== event.pointerId) return
-  event.preventDefault()
-  scrollArea.value.scrollLeft = panStart.value.scrollLeft - (event.clientX - panStart.value.x)
-  scrollArea.value.scrollTop = panStart.value.scrollTop - (event.clientY - panStart.value.y)
 }
 
 function stopPointer(event: PointerEvent) {
@@ -302,10 +331,9 @@ function defaultZoomAnchor() {
 
 function applyPendingNavigation() {
   const scroll = scrollArea.value
-  const canvas = surface.value
   const navigation = pendingNavigation
   pendingNavigation = undefined
-  if (!scroll || !canvas || !navigation) return
+  if (!scroll || !navigation) return
 
   if (navigation.type === 'center') {
     scroll.scrollLeft = (scroll.scrollWidth - scroll.clientWidth) / 2
@@ -313,11 +341,20 @@ function applyPendingNavigation() {
     return
   }
 
+  const canvas = surface.value
+  if (!canvas) return
   const bounds = canvas.getBoundingClientRect()
   const currentX = bounds.left + navigation.documentX * scale.value
   const currentY = bounds.top + navigation.documentY * scale.value
   scroll.scrollLeft += currentX - navigation.clientX
   scroll.scrollTop += currentY - navigation.clientY
+}
+
+function schedulePendingNavigation() {
+  void nextTick(() => {
+    cancelAnimationFrame(navigationFrame)
+    navigationFrame = requestAnimationFrame(applyPendingNavigation)
+  })
 }
 
 function requestZoom(value: number, clientX?: number, clientY?: number) {
@@ -338,7 +375,7 @@ function requestZoom(value: number, clientX?: number, clientY?: number) {
 
   zoomTarget.value = nextZoom
   emit('update:zoom', nextZoom)
-  if (Math.abs(nextZoom - props.zoom) < 0.001) void nextTick(applyPendingNavigation)
+  schedulePendingNavigation()
 }
 
 function zoomIn() {
@@ -361,15 +398,50 @@ function fitDocument() {
   pendingNavigation = { type: 'center' }
   zoomTarget.value = fittedZoom
   emit('update:zoom', fittedZoom)
-  if (Math.abs(fittedZoom - props.zoom) < 0.001) void nextTick(applyPendingNavigation)
+  schedulePendingNavigation()
+}
+
+function syncViewportSize() {
+  const scroll = scrollArea.value
+  if (!scroll) return
+
+  const width = scroll.clientWidth
+  const height = scroll.clientHeight
+  if (viewportSize.value.width === width && viewportSize.value.height === height) return
+
+  viewportSize.value = { width, height }
+}
+
+async function initializeViewport() {
+  const initialization = ++viewportInitialization
+  isViewportReady.value = false
+
+  // The first measurement has no scrollbars yet. Render the pasteboard once,
+  // then measure again so fit and centering use the stable editing area.
+  syncViewportSize()
+  await nextTick()
+  syncViewportSize()
+  await nextTick()
+  fitDocument()
+  await nextTick()
+
+  if (initialization !== viewportInitialization) return
+  cancelAnimationFrame(navigationFrame)
+  applyPendingNavigation()
+  isViewportReady.value = true
 }
 
 watch(
   () => props.zoom,
   (value) => {
     zoomTarget.value = value
-    void nextTick(applyPendingNavigation)
+    schedulePendingNavigation()
   }
+)
+
+watch(
+  () => [props.document.id, props.document.width, props.document.height],
+  () => void initializeViewport()
 )
 
 onMounted(() => {
@@ -377,10 +449,12 @@ onMounted(() => {
   window.addEventListener('keyup', handleWindowKeyup)
   window.addEventListener('blur', resetInteractionKeys)
   if (scrollArea.value) {
+    syncViewportSize()
     resizeObserver = new ResizeObserver(() => {
-      if (props.document.id === 'draft') fitDocument()
+      syncViewportSize()
     })
     resizeObserver.observe(scrollArea.value)
+    void initializeViewport()
   }
 })
 
@@ -388,6 +462,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('keyup', handleWindowKeyup)
   window.removeEventListener('blur', resetInteractionKeys)
+  cancelAnimationFrame(navigationFrame)
   resizeObserver?.disconnect()
 })
 
@@ -401,11 +476,6 @@ defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
     @dragover.prevent
     @drop="handleDrop"
     @keydown="handleCanvasKeydown"
-    @pointerdown="startViewportPointer"
-    @pointermove="updatePointer"
-    @pointerup="stopPointer"
-    @pointercancel="stopPointer"
-    @auxclick.prevent
     @wheel="handleWheel"
   >
     <div class="context-bar">
@@ -413,7 +483,7 @@ defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
       <span v-if="activeTool === 'brush' || activeTool === 'eraser'">{{ brushSize }} px</span>
       <span>{{ document.width }} × {{ document.height }}</span>
       <span>{{ document.unit === 'cm' ? `${document.physicalWidth} × ${document.physicalHeight} cm` : 'pixels' }}</span>
-      <span>{{ formatZoom(zoom) }}%</span>
+      <span>{{ isViewportReady ? `${formatZoom(zoom)}%` : '—' }}</span>
       <div class="zoom-actions">
         <button type="button" title="Reduzir zoom (Ctrl+-)" @click="zoomOut">−</button>
         <button type="button" title="Ajustar à tela (Ctrl+0)" @click="fitDocument">Ajustar</button>
@@ -421,32 +491,45 @@ defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
       </div>
     </div>
 
-    <div ref="scrollArea" class="canvas-scroll" :class="viewportCursorClass" tabindex="0">
-      <div class="canvas-frame" :style="frameStyle">
-        <div ref="surface" class="canvas-surface" :style="surfaceStyle">
-          <div class="transparent-grid"></div>
-          <div class="document-background" :style="backgroundStyle"></div>
-          <div class="document-layers">
-            <div
-              v-for="layer in renderedLayers"
-              v-show="layer.visible"
-              :key="layer.id"
-              class="document-layer"
-              :class="{ 'document-layer--active': layer.id === activeLayerId }"
-              :style="layerStyle(layer)"
-              @pointerdown="startLayerPointer($event, layer)"
-            >
-              <img
-                v-if="layer.kind === 'image' && layer.image"
-                :alt="layer.name"
-                draggable="false"
-                :src="layer.image.sourceUrl"
-              />
+    <div
+      ref="scrollArea"
+      class="canvas-scroll"
+      :class="viewportCursorClass"
+      tabindex="0"
+      @auxclick.prevent
+      @lostpointercapture="stopPointer"
+      @pointercancel="stopPointer"
+      @pointerdown.capture="startViewportPointer"
+      @pointermove="updatePointer"
+      @pointerup="stopPointer"
+    >
+      <div class="canvas-pasteboard" :style="pasteboardStyle">
+        <div class="canvas-frame" :style="frameStyle">
+          <div ref="surface" class="canvas-surface" :style="surfaceStyle">
+            <div class="transparent-grid"></div>
+            <div class="document-background" :style="backgroundStyle"></div>
+            <div class="document-layers">
+              <div
+                v-for="layer in renderedLayers"
+                v-show="layer.visible"
+                :key="layer.id"
+                class="document-layer"
+                :class="{ 'document-layer--active': layer.id === activeLayerId }"
+                :style="layerStyle(layer)"
+                @pointerdown="startLayerPointer($event, layer)"
+              >
+                <img
+                  v-if="layer.kind === 'image' && layer.image"
+                  :alt="layer.name"
+                  draggable="false"
+                  :src="layer.image.sourceUrl"
+                />
+              </div>
             </div>
-          </div>
-          <div v-if="selectionStyle" class="layer-selection" :style="selectionStyle"></div>
-          <div v-if="!layers.some((layer) => layer.kind === 'image')" class="drop-hint">
-            Arraste uma imagem para começar
+            <div v-if="selectionStyle" class="layer-selection" :style="selectionStyle"></div>
+            <div v-if="!layers.some((layer) => layer.kind === 'image')" class="drop-hint">
+              Arraste uma imagem para começar
+            </div>
           </div>
         </div>
       </div>
