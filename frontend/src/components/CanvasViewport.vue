@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import CanvasLayer from './CanvasLayer.vue'
 import type { DocumentSpec, EditorTool, ImportedImage, LayerItem, LayerTransform } from '../types/editor'
 import { readBrowserImages } from '../services/imageImport'
 import {
@@ -51,7 +52,12 @@ const dragState = ref<{
   startY: number
   transform: LayerTransform
 } | null>(null)
-const transformSession = ref<{ layerId: string; original: LayerTransform } | null>(null)
+const layerDragPreview = ref<{ layerId: string; transform: LayerTransform } | null>(null)
+const transformSession = ref<{
+  layerId: string
+  original: LayerTransform
+  draft: LayerTransform
+} | null>(null)
 const transformInteraction = ref<
   | {
       type: 'move'
@@ -75,6 +81,10 @@ const transformInteraction = ref<
 >(null)
 let resizeObserver: ResizeObserver | undefined
 let navigationFrame = 0
+let interactionFrame = 0
+let wheelZoomFrame = 0
+let pendingInteractionFrame: (() => void) | undefined
+let pendingWheelZoom: { value: number; clientX: number; clientY: number } | undefined
 let viewportInitialization = 0
 let pendingNavigation:
   | { type: 'anchor'; clientX: number; clientY: number; documentX: number; documentY: number }
@@ -105,6 +115,13 @@ const surfaceStyle = computed(() => ({
   '--transform-rotate-offset': `${34 / scale.value}px`
 }))
 const renderedLayers = computed(() => [...props.layers].reverse().filter((layer) => layer.kind !== 'background'))
+const defaultLayerTransform = computed<LayerTransform>(() => ({
+  x: 0,
+  y: 0,
+  width: props.document.width,
+  height: props.document.height,
+  rotation: 0
+}))
 const backgroundLayer = computed(() => props.layers.find((layer) => layer.kind === 'background'))
 const backgroundStyle = computed(() => {
   const background = backgroundLayer.value
@@ -117,27 +134,20 @@ const backgroundStyle = computed(() => {
 })
 const activeLayer = computed(() => props.layers.find((layer) => layer.id === props.activeLayerId))
 const isTransforming = computed(() => Boolean(transformSession.value))
+const activeDisplayTransform = computed(() => {
+  const layer = activeLayer.value
+  if (!layer) return undefined
+  return displayTransform(layer)
+})
 const selectionStyle = computed(() => {
-  const transform = activeLayer.value?.transform
+  const transform = activeDisplayTransform.value
   if (!transform || !activeLayer.value?.visible || isTransforming.value) return undefined
-  return {
-    left: `${transform.x}px`,
-    top: `${transform.y}px`,
-    width: `${transform.width}px`,
-    height: `${transform.height}px`,
-    transform: `rotate(${transform.rotation ?? 0}deg)`
-  }
+  return positionedTransformStyle(transform)
 })
 const freeTransformStyle = computed(() => {
-  const transform = activeLayer.value?.transform
+  const transform = activeDisplayTransform.value
   if (!transform || !activeLayer.value?.visible || !isTransforming.value) return undefined
-  return {
-    left: `${transform.x}px`,
-    top: `${transform.y}px`,
-    width: `${transform.width}px`,
-    height: `${transform.height}px`,
-    transform: `rotate(${transform.rotation ?? 0}deg)`
-  }
+  return positionedTransformStyle(transform)
 })
 const viewportCursorClass = computed(() => ({
   'canvas-scroll--ready': isViewportReady.value,
@@ -152,21 +162,19 @@ const viewportCursorClass = computed(() => ({
     (isSpacePressed.value && modifierKeys.value.alt)
 }))
 
-function layerStyle(layer: Pick<LayerItem, 'transform' | 'opacity'>) {
-  const transform = layer.transform ?? {
-    x: 0,
-    y: 0,
-    width: props.document.width,
-    height: props.document.height
-  }
+function displayTransform(layer: Pick<LayerItem, 'id' | 'transform'>) {
+  if (transformSession.value?.layerId === layer.id) return transformSession.value.draft
+  if (layerDragPreview.value?.layerId === layer.id) return layerDragPreview.value.transform
+  return layer.transform
+}
 
+function positionedTransformStyle(transform: LayerTransform) {
   return {
-    left: `${transform.x}px`,
-    top: `${transform.y}px`,
+    left: '0',
+    top: '0',
     width: `${transform.width}px`,
     height: `${transform.height}px`,
-    opacity: layer.opacity === undefined ? 1 : layer.opacity / 100,
-    transform: `rotate(${transform.rotation ?? 0}deg)`
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0) rotate(${transform.rotation ?? 0}deg)`
   }
 }
 
@@ -186,13 +194,26 @@ function handleWheel(event: WheelEvent) {
 
   if (event.ctrlKey || event.metaKey || event.altKey) {
     event.preventDefault()
-    requestZoom(wheelZoomLevel(zoomTarget.value, event.deltaY), event.clientX, event.clientY)
+    const value = wheelZoomLevel(zoomTarget.value, event.deltaY)
+    zoomTarget.value = value
+    pendingWheelZoom = { value, clientX: event.clientX, clientY: event.clientY }
+    if (!wheelZoomFrame) {
+      wheelZoomFrame = requestAnimationFrame(() => {
+        wheelZoomFrame = 0
+        const pending = pendingWheelZoom
+        pendingWheelZoom = undefined
+        if (pending) requestZoom(pending.value, pending.clientX, pending.clientY)
+      })
+    }
     return
   }
 
   if (event.shiftKey && scroll) {
     event.preventDefault()
-    scroll.scrollLeft += event.deltaY || event.deltaX
+    const scrollLeft = scroll.scrollLeft + (event.deltaY || event.deltaX)
+    scheduleInteractionFrame(() => {
+      if (scrollArea.value) scrollArea.value.scrollLeft = scrollLeft
+    })
   }
 }
 
@@ -291,27 +312,70 @@ function resetInteractionKeys() {
   modifierKeys.value = { alt: false, command: false }
 }
 
+function scheduleInteractionFrame(action: () => void) {
+  pendingInteractionFrame = action
+  if (interactionFrame) return
+
+  interactionFrame = requestAnimationFrame(() => {
+    interactionFrame = 0
+    const pending = pendingInteractionFrame
+    pendingInteractionFrame = undefined
+    pending?.()
+  })
+}
+
+function flushInteractionFrame() {
+  if (interactionFrame) cancelAnimationFrame(interactionFrame)
+  interactionFrame = 0
+  const pending = pendingInteractionFrame
+  pendingInteractionFrame = undefined
+  pending?.()
+}
+
+function discardInteractionFrame() {
+  if (interactionFrame) cancelAnimationFrame(interactionFrame)
+  interactionFrame = 0
+  pendingInteractionFrame = undefined
+}
+
+function transformsMatch(first: LayerTransform, second: LayerTransform) {
+  return (
+    first.x === second.x &&
+    first.y === second.y &&
+    first.width === second.width &&
+    first.height === second.height &&
+    (first.rotation ?? 0) === (second.rotation ?? 0)
+  )
+}
+
 function startFreeTransform() {
   if (transformSession.value) return
   const layer = activeLayer.value
   if (!layer?.transform || !layer.visible || layer.kind === 'background') return
 
   dragState.value = null
+  layerDragPreview.value = null
+  const original = { ...layer.transform, rotation: layer.transform.rotation ?? 0 }
   transformSession.value = {
     layerId: layer.id,
-    original: { ...layer.transform, rotation: layer.transform.rotation ?? 0 }
+    original,
+    draft: { ...original }
   }
   scrollArea.value?.focus()
 }
 
 function commitFreeTransform() {
+  flushInteractionFrame()
+  const session = transformSession.value
+  if (session && !transformsMatch(session.original, session.draft)) {
+    emit('updateTransform', session.layerId, { ...session.draft })
+  }
   transformInteraction.value = null
   transformSession.value = null
 }
 
 function cancelFreeTransform() {
-  const session = transformSession.value
-  if (session) emit('updateTransform', session.layerId, { ...session.original })
+  discardInteractionFrame()
   transformInteraction.value = null
   transformSession.value = null
 }
@@ -334,7 +398,7 @@ function captureTransformPointer(event: PointerEvent) {
 }
 
 function startTransformMove(event: PointerEvent) {
-  const transform = activeLayer.value?.transform
+  const transform = activeDisplayTransform.value
   const pointer = pointerToDocument(event)
   if (event.button !== 0 || !transform || !pointer) return
 
@@ -348,7 +412,7 @@ function startTransformMove(event: PointerEvent) {
 }
 
 function startTransformResize(event: PointerEvent, handle: TransformHandle) {
-  const transform = activeLayer.value?.transform
+  const transform = activeDisplayTransform.value
   if (event.button !== 0 || !transform) return
 
   captureTransformPointer(event)
@@ -361,7 +425,7 @@ function startTransformResize(event: PointerEvent, handle: TransformHandle) {
 }
 
 function startTransformRotate(event: PointerEvent) {
-  const transform = activeLayer.value?.transform
+  const transform = activeDisplayTransform.value
   const pointer = pointerToDocument(event)
   if (event.button !== 0 || !transform || !pointer) return
 
@@ -406,7 +470,9 @@ function startViewportPointer(event: PointerEvent) {
 
   event.preventDefault()
   event.stopPropagation()
+  discardInteractionFrame()
   dragState.value = null
+  layerDragPreview.value = null
   transformInteraction.value = null
   scroll.setPointerCapture(event.pointerId)
   isPanning.value = true
@@ -448,13 +514,19 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
     startY: event.clientY,
     transform: { ...layer.transform }
   }
+  layerDragPreview.value = { layerId: layer.id, transform: { ...layer.transform } }
 }
 
 function updatePointer(event: PointerEvent) {
   if (isPanning.value && scrollArea.value && panStart.value.pointerId === event.pointerId) {
     event.preventDefault()
-    scrollArea.value.scrollLeft = panStart.value.scrollLeft - (event.clientX - panStart.value.x)
-    scrollArea.value.scrollTop = panStart.value.scrollTop - (event.clientY - panStart.value.y)
+    const scrollLeft = panStart.value.scrollLeft - (event.clientX - panStart.value.x)
+    const scrollTop = panStart.value.scrollTop - (event.clientY - panStart.value.y)
+    scheduleInteractionFrame(() => {
+      if (!isPanning.value || !scrollArea.value) return
+      scrollArea.value.scrollLeft = scrollLeft
+      scrollArea.value.scrollTop = scrollTop
+    })
     return
   }
 
@@ -480,24 +552,41 @@ function updatePointer(event: PointerEvent) {
       transform = rotateLayerTransform(interaction.initial, interaction.startAngle, pointer, event.shiftKey)
     }
 
-    emit('updateTransform', transformSession.value.layerId, transform)
+    const layerId = transformSession.value.layerId
+    scheduleInteractionFrame(() => {
+      const session = transformSession.value
+      if (!session || session.layerId !== layerId) return
+      session.draft = transform
+    })
     return
   }
 
   if (dragState.value?.pointerId === event.pointerId) {
     const drag = dragState.value
-    emit('updateTransform', drag.layerId, {
+    const transform = {
       ...drag.transform,
       x: Math.round(drag.transform.x + (event.clientX - drag.startX) / scale.value),
       y: Math.round(drag.transform.y + (event.clientY - drag.startY) / scale.value)
+    }
+    scheduleInteractionFrame(() => {
+      if (dragState.value?.layerId !== drag.layerId) return
+      layerDragPreview.value = { layerId: drag.layerId, transform }
     })
     return
   }
 }
 
 function stopPointer(event: PointerEvent) {
+  flushInteractionFrame()
   if (transformInteraction.value?.pointerId === event.pointerId) transformInteraction.value = null
-  if (dragState.value?.pointerId === event.pointerId) dragState.value = null
+  if (dragState.value?.pointerId === event.pointerId) {
+    const preview = layerDragPreview.value
+    if (preview?.layerId === dragState.value.layerId && !transformsMatch(dragState.value.transform, preview.transform)) {
+      emit('updateTransform', preview.layerId, { ...preview.transform })
+    }
+    dragState.value = null
+    layerDragPreview.value = null
+  }
   if (panStart.value.pointerId === event.pointerId) {
     isPanning.value = false
     panStart.value.pointerId = -1
@@ -658,10 +747,16 @@ onBeforeUnmount(() => {
   window.removeEventListener('keyup', handleWindowKeyup)
   window.removeEventListener('blur', resetInteractionKeys)
   cancelAnimationFrame(navigationFrame)
+  cancelAnimationFrame(interactionFrame)
+  cancelAnimationFrame(wheelZoomFrame)
   resizeObserver?.disconnect()
 })
 
-defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
+defineExpose({
+  commitPendingTransform: commitFreeTransform,
+  fitDocument,
+  zoomToActualSize: () => requestZoom(100)
+})
 </script>
 
 <template>
@@ -680,7 +775,7 @@ defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
       <span>{{ document.unit === 'cm' ? `${document.physicalWidth} × ${document.physicalHeight} cm` : 'pixels' }}</span>
       <span>{{ isViewportReady ? `${formatZoom(zoom)}%` : '—' }}</span>
       <div v-if="isTransforming" class="zoom-actions transform-actions">
-        <span>{{ activeLayer?.transform?.rotation ?? 0 }}°</span>
+        <span>{{ activeDisplayTransform?.rotation ?? 0 }}°</span>
         <button type="button" title="Cancelar transformação (Esc)" @click="cancelFreeTransform">Cancelar</button>
         <button type="button" title="Aplicar transformação (Enter)" @click="commitFreeTransform">Aplicar</button>
       </div>
@@ -709,22 +804,14 @@ defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
             <div class="transparent-grid"></div>
             <div class="document-background" :style="backgroundStyle"></div>
             <div class="document-layers">
-              <div
+              <CanvasLayer
                 v-for="layer in renderedLayers"
-                v-show="layer.visible"
                 :key="layer.id"
-                class="document-layer"
-                :class="{ 'document-layer--active': layer.id === activeLayerId }"
-                :style="layerStyle(layer)"
+                :active="layer.id === activeLayerId"
+                :layer="layer"
+                :transform="displayTransform(layer) ?? defaultLayerTransform"
                 @pointerdown="startLayerPointer($event, layer)"
-              >
-                <img
-                  v-if="layer.kind === 'image' && layer.image"
-                  :alt="layer.name"
-                  draggable="false"
-                  :src="layer.image.sourceUrl"
-                />
-              </div>
+              />
             </div>
             <div v-if="selectionStyle" class="layer-selection" :style="selectionStyle"></div>
             <div

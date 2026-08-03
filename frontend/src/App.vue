@@ -215,6 +215,7 @@ async function previewFilter(filterName: string) {
 }
 
 async function exportDocument() {
+  canvasViewport.value?.commitPendingTransform()
   errorText.value = ''
   isBusy.value = true
   statusText.value = 'Preparando PNG…'
