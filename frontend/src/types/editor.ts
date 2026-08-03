@@ -40,6 +40,7 @@ export interface LayerTransform {
   y: number
   width: number
   height: number
+  rotation?: number
 }
 
 export interface ImportedImage {

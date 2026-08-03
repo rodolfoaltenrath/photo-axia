@@ -30,12 +30,16 @@ export async function renderDocumentPNG(document: DocumentSpec, layers: LayerIte
     if (!layer.visible || layer.kind !== 'image' || !layer.image || !layer.transform) continue
 
     const image = await loadImage(layer.image.sourceUrl)
+    const centerX = layer.transform.x + layer.transform.width / 2
+    const centerY = layer.transform.y + layer.transform.height / 2
     context.save()
     context.globalAlpha = layer.opacity / 100
+    context.translate(centerX, centerY)
+    context.rotate(((layer.transform.rotation ?? 0) * Math.PI) / 180)
     context.drawImage(
       image,
-      layer.transform.x,
-      layer.transform.y,
+      -layer.transform.width / 2,
+      -layer.transform.height / 2,
       layer.transform.width,
       layer.transform.height
     )

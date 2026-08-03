@@ -74,6 +74,10 @@ defineEmits<{
           <input :value="activeLayer.transform.height" readonly type="number" />
         </label>
       </div>
+      <label>
+        Rotação
+        <input :value="activeLayer.transform.rotation ?? 0" readonly type="number" />
+      </label>
     </template>
 
     <label>

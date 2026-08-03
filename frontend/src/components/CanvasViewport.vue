@@ -9,6 +9,15 @@ import {
   nextZoomLevel,
   wheelZoomLevel
 } from '../editor/viewport'
+import {
+  moveLayerTransform,
+  resizeLayerTransform,
+  rotateLayerTransform,
+  TRANSFORM_HANDLES,
+  transformCenter,
+  type DocumentPoint,
+  type TransformHandle
+} from '../editor/freeTransform'
 
 const props = defineProps<{
   activeLayerId: string
@@ -42,6 +51,28 @@ const dragState = ref<{
   startY: number
   transform: LayerTransform
 } | null>(null)
+const transformSession = ref<{ layerId: string; original: LayerTransform } | null>(null)
+const transformInteraction = ref<
+  | {
+      type: 'move'
+      pointerId: number
+      start: DocumentPoint
+      initial: LayerTransform
+    }
+  | {
+      type: 'resize'
+      pointerId: number
+      handle: TransformHandle
+      initial: LayerTransform
+    }
+  | {
+      type: 'rotate'
+      pointerId: number
+      startAngle: number
+      initial: LayerTransform
+    }
+  | null
+>(null)
 let resizeObserver: ResizeObserver | undefined
 let navigationFrame = 0
 let viewportInitialization = 0
@@ -68,7 +99,10 @@ const frameStyle = computed(() => ({
 const surfaceStyle = computed(() => ({
   width: `${props.document.width}px`,
   height: `${props.document.height}px`,
-  transform: `scale(${scale.value})`
+  transform: `scale(${scale.value})`,
+  '--transform-handle-size': `${10 / scale.value}px`,
+  '--transform-line-width': `${1 / scale.value}px`,
+  '--transform-rotate-offset': `${34 / scale.value}px`
 }))
 const renderedLayers = computed(() => [...props.layers].reverse().filter((layer) => layer.kind !== 'background'))
 const backgroundLayer = computed(() => props.layers.find((layer) => layer.kind === 'background'))
@@ -82,14 +116,27 @@ const backgroundStyle = computed(() => {
   }
 })
 const activeLayer = computed(() => props.layers.find((layer) => layer.id === props.activeLayerId))
+const isTransforming = computed(() => Boolean(transformSession.value))
 const selectionStyle = computed(() => {
   const transform = activeLayer.value?.transform
-  if (!transform || !activeLayer.value?.visible) return undefined
+  if (!transform || !activeLayer.value?.visible || isTransforming.value) return undefined
   return {
     left: `${transform.x}px`,
     top: `${transform.y}px`,
     width: `${transform.width}px`,
-    height: `${transform.height}px`
+    height: `${transform.height}px`,
+    transform: `rotate(${transform.rotation ?? 0}deg)`
+  }
+})
+const freeTransformStyle = computed(() => {
+  const transform = activeLayer.value?.transform
+  if (!transform || !activeLayer.value?.visible || !isTransforming.value) return undefined
+  return {
+    left: `${transform.x}px`,
+    top: `${transform.y}px`,
+    width: `${transform.width}px`,
+    height: `${transform.height}px`,
+    transform: `rotate(${transform.rotation ?? 0}deg)`
   }
 })
 const viewportCursorClass = computed(() => ({
@@ -118,7 +165,8 @@ function layerStyle(layer: Pick<LayerItem, 'transform' | 'opacity'>) {
     top: `${transform.y}px`,
     width: `${transform.width}px`,
     height: `${transform.height}px`,
-    opacity: layer.opacity === undefined ? 1 : layer.opacity / 100
+    opacity: layer.opacity === undefined ? 1 : layer.opacity / 100,
+    transform: `rotate(${transform.rotation ?? 0}deg)`
   }
 }
 
@@ -189,12 +237,30 @@ function handleWindowKeydown(event: KeyboardEvent) {
   updateModifierKeys(event)
   if (isEditableTarget(event.target)) return
 
+  if (isTransforming.value && event.key === 'Escape') {
+    event.preventDefault()
+    cancelFreeTransform()
+    return
+  }
+
+  if (isTransforming.value && event.key === 'Enter') {
+    event.preventDefault()
+    commitFreeTransform()
+    return
+  }
+
   if (event.code === 'Space') {
     event.preventDefault()
     isSpacePressed.value = true
   }
 
   if (!event.ctrlKey && !event.metaKey) return
+
+  if (event.code === 'KeyT') {
+    event.preventDefault()
+    startFreeTransform()
+    return
+  }
 
   const shortcuts: Record<string, () => void> = {
     Digit0: fitDocument,
@@ -225,13 +291,105 @@ function resetInteractionKeys() {
   modifierKeys.value = { alt: false, command: false }
 }
 
+function startFreeTransform() {
+  if (transformSession.value) return
+  const layer = activeLayer.value
+  if (!layer?.transform || !layer.visible || layer.kind === 'background') return
+
+  dragState.value = null
+  transformSession.value = {
+    layerId: layer.id,
+    original: { ...layer.transform, rotation: layer.transform.rotation ?? 0 }
+  }
+  scrollArea.value?.focus()
+}
+
+function commitFreeTransform() {
+  transformInteraction.value = null
+  transformSession.value = null
+}
+
+function cancelFreeTransform() {
+  const session = transformSession.value
+  if (session) emit('updateTransform', session.layerId, { ...session.original })
+  transformInteraction.value = null
+  transformSession.value = null
+}
+
+function pointerToDocument(event: PointerEvent): DocumentPoint | undefined {
+  const canvas = surface.value
+  if (!canvas) return undefined
+  const bounds = canvas.getBoundingClientRect()
+  return {
+    x: (event.clientX - bounds.left) / scale.value,
+    y: (event.clientY - bounds.top) / scale.value
+  }
+}
+
+function captureTransformPointer(event: PointerEvent) {
+  event.preventDefault()
+  event.stopPropagation()
+  const target = event.currentTarget as HTMLElement
+  target.setPointerCapture(event.pointerId)
+}
+
+function startTransformMove(event: PointerEvent) {
+  const transform = activeLayer.value?.transform
+  const pointer = pointerToDocument(event)
+  if (event.button !== 0 || !transform || !pointer) return
+
+  captureTransformPointer(event)
+  transformInteraction.value = {
+    type: 'move',
+    pointerId: event.pointerId,
+    start: pointer,
+    initial: { ...transform }
+  }
+}
+
+function startTransformResize(event: PointerEvent, handle: TransformHandle) {
+  const transform = activeLayer.value?.transform
+  if (event.button !== 0 || !transform) return
+
+  captureTransformPointer(event)
+  transformInteraction.value = {
+    type: 'resize',
+    pointerId: event.pointerId,
+    handle,
+    initial: { ...transform }
+  }
+}
+
+function startTransformRotate(event: PointerEvent) {
+  const transform = activeLayer.value?.transform
+  const pointer = pointerToDocument(event)
+  if (event.button !== 0 || !transform || !pointer) return
+
+  const center = transformCenter(transform)
+  captureTransformPointer(event)
+  transformInteraction.value = {
+    type: 'rotate',
+    pointerId: event.pointerId,
+    startAngle: Math.atan2(pointer.y - center.y, pointer.x - center.x),
+    initial: { ...transform }
+  }
+}
+
 function startViewportPointer(event: PointerEvent) {
   const scroll = scrollArea.value
   if (!scroll) return
 
   scroll.focus()
+  const target = event.target as HTMLElement | null
   const isMiddleButton = event.button === 1 || (event.buttons & 4) === 4
   const temporaryZoom = isSpacePressed.value && (event.ctrlKey || event.metaKey || event.altKey)
+  if (
+    event.button === 0 &&
+    isTransforming.value &&
+    !isSpacePressed.value &&
+    target?.closest('.free-transform-box')
+  )
+    return
   const shouldZoom = event.button === 0 && (props.activeTool === 'zoom' || temporaryZoom)
   if (shouldZoom) {
     event.preventDefault()
@@ -249,6 +407,7 @@ function startViewportPointer(event: PointerEvent) {
   event.preventDefault()
   event.stopPropagation()
   dragState.value = null
+  transformInteraction.value = null
   scroll.setPointerCapture(event.pointerId)
   isPanning.value = true
   panStart.value = {
@@ -271,6 +430,8 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
   )
     return
   if (props.activeTool !== 'move' && props.activeTool !== 'select') return
+
+  if (transformSession.value) commitFreeTransform()
 
   event.stopPropagation()
   event.preventDefault()
@@ -297,6 +458,32 @@ function updatePointer(event: PointerEvent) {
     return
   }
 
+  const interaction = transformInteraction.value
+  if (interaction?.pointerId === event.pointerId && transformSession.value) {
+    const pointer = pointerToDocument(event)
+    if (!pointer) return
+
+    event.preventDefault()
+    let transform: LayerTransform
+    if (interaction.type === 'move') {
+      transform = moveLayerTransform(interaction.initial, interaction.start, pointer)
+    } else if (interaction.type === 'resize') {
+      const isCorner = interaction.handle.x !== 0 && interaction.handle.y !== 0
+      transform = resizeLayerTransform(
+        interaction.initial,
+        interaction.handle,
+        pointer,
+        event.altKey,
+        isCorner && !event.shiftKey
+      )
+    } else {
+      transform = rotateLayerTransform(interaction.initial, interaction.startAngle, pointer, event.shiftKey)
+    }
+
+    emit('updateTransform', transformSession.value.layerId, transform)
+    return
+  }
+
   if (dragState.value?.pointerId === event.pointerId) {
     const drag = dragState.value
     emit('updateTransform', drag.layerId, {
@@ -309,6 +496,7 @@ function updatePointer(event: PointerEvent) {
 }
 
 function stopPointer(event: PointerEvent) {
+  if (transformInteraction.value?.pointerId === event.pointerId) transformInteraction.value = null
   if (dragState.value?.pointerId === event.pointerId) dragState.value = null
   if (panStart.value.pointerId === event.pointerId) {
     isPanning.value = false
@@ -444,6 +632,13 @@ watch(
   () => void initializeViewport()
 )
 
+watch(
+  () => props.activeLayerId,
+  (layerId) => {
+    if (transformSession.value && transformSession.value.layerId !== layerId) commitFreeTransform()
+  }
+)
+
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown)
   window.addEventListener('keyup', handleWindowKeyup)
@@ -484,7 +679,12 @@ defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
       <span>{{ document.width }} × {{ document.height }}</span>
       <span>{{ document.unit === 'cm' ? `${document.physicalWidth} × ${document.physicalHeight} cm` : 'pixels' }}</span>
       <span>{{ isViewportReady ? `${formatZoom(zoom)}%` : '—' }}</span>
-      <div class="zoom-actions">
+      <div v-if="isTransforming" class="zoom-actions transform-actions">
+        <span>{{ activeLayer?.transform?.rotation ?? 0 }}°</span>
+        <button type="button" title="Cancelar transformação (Esc)" @click="cancelFreeTransform">Cancelar</button>
+        <button type="button" title="Aplicar transformação (Enter)" @click="commitFreeTransform">Aplicar</button>
+      </div>
+      <div v-else class="zoom-actions">
         <button type="button" title="Reduzir zoom (Ctrl+-)" @click="zoomOut">−</button>
         <button type="button" title="Ajustar à tela (Ctrl+0)" @click="fitDocument">Ajustar</button>
         <button type="button" title="Aumentar zoom (Ctrl++)" @click="zoomIn">+</button>
@@ -527,6 +727,33 @@ defineExpose({ fitDocument, zoomToActualSize: () => requestZoom(100) })
               </div>
             </div>
             <div v-if="selectionStyle" class="layer-selection" :style="selectionStyle"></div>
+            <div
+              v-if="freeTransformStyle"
+              class="free-transform-box"
+              :style="freeTransformStyle"
+              @dblclick.stop="commitFreeTransform"
+            >
+              <div class="free-transform-body" title="Arraste para mover" @pointerdown="startTransformMove"></div>
+              <div class="free-transform-origin" aria-hidden="true"></div>
+              <div class="free-transform-rotate-stem" aria-hidden="true"></div>
+              <button
+                class="free-transform-rotate"
+                type="button"
+                title="Girar; segure Shift para passos de 15°"
+                aria-label="Girar camada"
+                @pointerdown="startTransformRotate"
+              ></button>
+              <button
+                v-for="handle in TRANSFORM_HANDLES"
+                :key="handle.id"
+                class="free-transform-handle"
+                :style="{ left: `${handle.left}%`, top: `${handle.top}%`, cursor: handle.cursor }"
+                type="button"
+                :aria-label="`Redimensionar por ${handle.id}`"
+                title="Arraste para redimensionar; Alt usa o centro; Shift libera a proporção"
+                @pointerdown="startTransformResize($event, handle)"
+              ></button>
+            </div>
             <div v-if="!layers.some((layer) => layer.kind === 'image')" class="drop-hint">
               Arraste uma imagem para começar
             </div>

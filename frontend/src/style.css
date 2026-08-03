@@ -205,6 +205,14 @@ select:focus-visible {
   margin-left: auto;
 }
 
+.transform-actions {
+  align-items: center;
+}
+
+.transform-actions button {
+  min-width: 68px;
+}
+
 .context-bar button {
   min-width: 34px;
   height: 28px;
@@ -363,6 +371,92 @@ select:focus-visible {
     inset 0 0 0 1px rgb(255 255 255 / 25%);
   pointer-events: none;
   z-index: 10;
+}
+
+.free-transform-box {
+  position: absolute;
+  border: var(--transform-line-width) solid #f4f7fb;
+  box-shadow: 0 0 0 var(--transform-line-width) rgb(10 18 24 / 85%);
+  transform-origin: center;
+  z-index: 20;
+}
+
+.free-transform-body {
+  position: absolute;
+  inset: 0;
+  cursor: move;
+}
+
+.free-transform-handle,
+.free-transform-rotate {
+  position: absolute;
+  z-index: 3;
+  width: var(--transform-handle-size);
+  height: var(--transform-handle-size);
+  border: var(--transform-line-width) solid #152028;
+  border-radius: 1px;
+  padding: 0;
+  background: #f8fafc;
+  transform: translate(-50%, -50%);
+  touch-action: none;
+}
+
+.free-transform-handle:hover,
+.free-transform-rotate:hover {
+  border-color: #152028;
+  background: #58c4b3;
+}
+
+.free-transform-rotate {
+  top: calc(0px - var(--transform-rotate-offset));
+  left: 50%;
+  border-radius: 50%;
+  cursor: grab;
+}
+
+.free-transform-rotate:active {
+  cursor: grabbing;
+}
+
+.free-transform-rotate-stem {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: var(--transform-line-width);
+  height: var(--transform-rotate-offset);
+  background: #f4f7fb;
+  transform: translateX(-50%);
+}
+
+.free-transform-origin {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  width: var(--transform-handle-size);
+  height: var(--transform-handle-size);
+  border: var(--transform-line-width) solid #f4f7fb;
+  border-radius: 50%;
+  box-shadow: 0 0 0 var(--transform-line-width) rgb(10 18 24 / 85%);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.free-transform-origin::before,
+.free-transform-origin::after {
+  position: absolute;
+  content: '';
+  background: #152028;
+}
+
+.free-transform-origin::before {
+  inset: 50% 15% auto;
+  height: var(--transform-line-width);
+}
+
+.free-transform-origin::after {
+  inset: 15% auto 15% 50%;
+  width: var(--transform-line-width);
 }
 
 .drop-hint {

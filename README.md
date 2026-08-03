@@ -54,6 +54,7 @@ No Linux, os scripts usam `-tags webkit2_41`, que e o caminho recomendado para d
 - Criacao de documentos em pixels ou centimetros.
 - Importacao de PNG, JPEG e GIF por seletor ou arrastar e soltar.
 - Selecao, movimentacao, visibilidade e opacidade de camadas.
+- Transformacao livre de camadas com escala proporcional, escala central e rotacao.
 - Zoom ancorado no cursor, ajuste a tela e navegacao com a ferramenta Mao, tecla Espaco ou botao do meio.
 - Exportacao da composicao em PNG.
 
@@ -72,3 +73,12 @@ As ferramentas ainda nao implementadas aparecem desabilitadas para manter a inte
 - Roda do mouse: navegar verticalmente; `Shift` + roda: navegar horizontalmente.
 
 No macOS, use `Command` no lugar de `Ctrl`.
+
+## Transformacao livre
+
+- `Ctrl` + `T`: transformar a camada ativa.
+- Arraste dentro da caixa: mover a camada.
+- Arraste um canto: redimensionar mantendo a proporcao; `Shift` alterna para escala livre.
+- `Alt` + arrastar uma alca: redimensionar a partir do centro.
+- Arraste o controle circular: girar livremente; `Shift` encaixa a rotacao em passos de 15 graus.
+- `Enter` ou duplo clique: aplicar; `Esc`: cancelar e restaurar a transformacao anterior.
