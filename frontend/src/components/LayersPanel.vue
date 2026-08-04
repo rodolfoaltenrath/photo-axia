@@ -24,11 +24,13 @@ const editingLayerId = ref<string>()
 const draggedLayerId = ref<string>()
 const dropTarget = ref<{ layerId: string; position: 'before' | 'after' }>()
 const layerList = ref<HTMLOListElement | null>(null)
+const dragPreview = ref<HTMLDivElement | null>(null)
 let dragFrame = 0
 let pendingDragPoint: { clientX: number; clientY: number } | undefined
 
 const activeIndex = computed(() => props.layers.findIndex((layer) => layer.id === props.activeLayerId))
 const activeLayer = computed(() => props.layers[activeIndex.value])
+const draggedLayer = computed(() => props.layers.find((layer) => layer.id === draggedLayerId.value))
 const canManipulate = computed(() => Boolean(activeLayer.value && activeLayer.value.kind !== 'background'))
 const canMoveUp = computed(() => canManipulate.value && activeIndex.value > 0)
 const canMoveDown = computed(() => {
@@ -52,42 +54,54 @@ function startDrag(layerId: string) {
   emit('selectLayer', layerId)
 }
 
-function updateDragTarget() {
+function setDropTarget(target?: { layerId: string; position: 'before' | 'after' }) {
+  const current = dropTarget.value
+  if (current?.layerId === target?.layerId && current?.position === target?.position) return
+  dropTarget.value = target
+}
+
+function updateDragTarget(allowAutoScroll = true) {
   dragFrame = 0
   const point = pendingDragPoint
-  pendingDragPoint = undefined
   const sourceId = draggedLayerId.value
   if (!point || !sourceId) return
 
   const row = document.elementFromPoint(point.clientX, point.clientY)?.closest<HTMLElement>('.layer-row')
   const targetId = row?.dataset.layerId
   if (!row || !targetId || targetId === sourceId) {
-    dropTarget.value = undefined
-    return
+    setDropTarget()
+  } else {
+    const bounds = row.getBoundingClientRect()
+    const position = row.dataset.layerKind === 'background' || point.clientY < bounds.top + bounds.height / 2
+      ? 'before'
+      : 'after'
+    setDropTarget({ layerId: targetId, position })
   }
 
-  const target = props.layers.find((layer) => layer.id === targetId)
-  const bounds = row.getBoundingClientRect()
-  const position = target?.kind === 'background' || point.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-  dropTarget.value = { layerId: targetId, position }
+  if (dragPreview.value) {
+    dragPreview.value.style.transform = `translate3d(${Math.round(point.clientX + 14)}px, ${Math.round(point.clientY + 14)}px, 0)`
+  }
 
   const list = layerList.value
-  if (!list) return
+  if (!list || !allowAutoScroll) return
   const listBounds = list.getBoundingClientRect()
   const edgeSize = 28
+  const previousScroll = list.scrollTop
   if (point.clientY < listBounds.top + edgeSize) list.scrollTop -= 12
   else if (point.clientY > listBounds.bottom - edgeSize) list.scrollTop += 12
+
+  if (list.scrollTop !== previousScroll) dragFrame = requestAnimationFrame(() => updateDragTarget())
 }
 
 function moveDrag(clientX: number, clientY: number) {
   pendingDragPoint = { clientX, clientY }
-  if (!dragFrame) dragFrame = requestAnimationFrame(updateDragTarget)
+  if (!dragFrame) dragFrame = requestAnimationFrame(() => updateDragTarget())
 }
 
 function finishDrag() {
   if (dragFrame) cancelAnimationFrame(dragFrame)
   dragFrame = 0
-  if (pendingDragPoint) updateDragTarget()
+  if (pendingDragPoint) updateDragTarget(false)
 
   const sourceId = draggedLayerId.value
   const target = dropTarget.value
@@ -164,6 +178,23 @@ onBeforeUnmount(clearDrag)
         @toggle="emit('toggleLayer', $event)"
       />
     </ol>
+
+    <Teleport to="body">
+      <div
+        ref="dragPreview"
+        class="layer-drag-preview"
+        :class="{ 'layer-drag-preview--visible': draggedLayer }"
+        aria-hidden="true"
+      >
+        <span class="layer-thumb" :class="{ 'layer-thumb--transparent': !draggedLayer?.image }">
+          <img v-if="draggedLayer?.image" alt="" draggable="false" :src="draggedLayer.image.sourceUrl" />
+        </span>
+        <span class="layer-drag-preview-copy">
+          <strong>{{ draggedLayer?.name }}</strong>
+          <small>Solte para reordenar</small>
+        </span>
+      </div>
+    </Teleport>
 
     <div class="layer-actions" aria-label="Ações da camada selecionada">
       <button

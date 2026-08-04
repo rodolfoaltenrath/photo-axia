@@ -116,7 +116,9 @@ const surfaceStyle = computed(() => ({
   '--transform-line-width': `${1 / scale.value}px`,
   '--transform-rotate-offset': `${34 / scale.value}px`
 }))
-const renderedLayers = computed(() => [...props.layers].reverse().filter((layer) => layer.kind !== 'background'))
+const renderedLayers = computed(() =>
+  [...props.layers].reverse().filter((layer) => layer.kind !== 'background' && layer.visible)
+)
 const defaultLayerTransform = computed<LayerTransform>(() => ({
   x: 0,
   y: 0,

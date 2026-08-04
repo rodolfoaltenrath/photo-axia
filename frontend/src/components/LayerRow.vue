@@ -119,6 +119,7 @@ function selectLayer(event: MouseEvent) {
       'layer-row--drop-before': dropPosition === 'before'
     }"
     :data-layer-id="layer.id"
+    :data-layer-kind="layer.kind"
   >
     <button
       class="visibility-button"
@@ -147,7 +148,14 @@ function selectLayer(event: MouseEvent) {
     >
       <span class="layer-drag-handle" aria-hidden="true">⠿</span>
       <span class="layer-thumb" :class="{ 'layer-thumb--transparent': !layer.image }">
-        <img v-if="layer.image" alt="" decoding="async" draggable="false" :src="layer.image.sourceUrl" />
+        <img
+          v-if="layer.image"
+          alt=""
+          decoding="async"
+          draggable="false"
+          loading="lazy"
+          :src="layer.image.sourceUrl"
+        />
       </span>
       <span class="layer-copy">
         <input

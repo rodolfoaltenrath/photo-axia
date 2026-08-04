@@ -24,7 +24,6 @@ const layerStyle = computed(() => ({
 
 <template>
   <div
-    v-show="layer.visible"
     class="document-layer"
     :class="{ 'document-layer--active': active }"
     :style="layerStyle"

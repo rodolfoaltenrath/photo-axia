@@ -645,8 +645,25 @@ select:focus-visible {
   list-style: none;
   margin: 0;
   padding: 6px;
+  overscroll-behavior: contain;
   scrollbar-color: #46515e transparent;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
+}
+
+.layer-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.layer-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.layer-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #46515e;
+  background-clip: padding-box;
 }
 
 .layer-row {
@@ -655,6 +672,8 @@ select:focus-visible {
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 4px;
   contain: layout paint style;
+  contain-intrinsic-size: 58px;
+  content-visibility: auto;
 }
 
 .layer-row::before,
@@ -663,7 +682,7 @@ select:focus-visible {
   right: 4px;
   left: 4px;
   z-index: 5;
-  height: 2px;
+  height: 3px;
   border-radius: 999px;
   background: #58c4b3;
   content: '';
@@ -672,16 +691,17 @@ select:focus-visible {
 }
 
 .layer-row::before {
-  top: -2px;
+  top: 0;
 }
 
 .layer-row::after {
-  bottom: -2px;
+  bottom: 0;
 }
 
 .layer-row--drop-before::before,
 .layer-row--drop-after::after {
   opacity: 1;
+  box-shadow: 0 0 8px rgb(88 196 179 / 80%);
 }
 
 .visibility-button,
@@ -745,12 +765,17 @@ select:focus-visible {
 }
 
 .layer-row--dragging {
-  opacity: 0.45;
+  opacity: 0.28;
 }
 
 .layer-row--dragging .layer-button,
 .layer-row--dragging .layer-drag-handle {
   cursor: grabbing;
+}
+
+.layer-row--dragging .layer-button {
+  border-color: #58c4b3;
+  border-style: dashed;
 }
 
 .layer-copy {
@@ -797,6 +822,57 @@ select:focus-visible {
   color: #9aa7b4;
   font-size: 11px;
   margin-top: 2px;
+}
+
+.layer-drag-preview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  width: 220px;
+  min-height: 50px;
+  border: 1px solid #58c4b3;
+  border-radius: 8px;
+  background: rgb(28 37 44 / 96%);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 48%), 0 0 0 1px rgb(88 196 179 / 16%);
+  opacity: 0;
+  padding: 7px;
+  transform: translate3d(-300px, -300px, 0);
+  transition: opacity 70ms ease;
+  pointer-events: none;
+  contain: layout paint style;
+  will-change: transform;
+}
+
+.layer-drag-preview--visible {
+  opacity: 0.96;
+}
+
+.layer-drag-preview-copy {
+  min-width: 0;
+}
+
+.layer-drag-preview strong,
+.layer-drag-preview small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-drag-preview strong {
+  color: #eef4f5;
+  font-size: 12px;
+}
+
+.layer-drag-preview small {
+  margin-top: 3px;
+  color: #79d8c9;
+  font-size: 10px;
 }
 
 .panel .layer-name-input {
