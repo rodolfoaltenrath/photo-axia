@@ -953,9 +953,6 @@ defineExpose({
                 @pointerdown="startTransformResize($event, handle)"
               ></button>
             </div>
-            <div v-if="!layers.some((layer) => layer.kind === 'image' || layer.kind === 'text')" class="drop-hint">
-              Arraste uma imagem para começar
-            </div>
           </div>
         </div>
       </div>

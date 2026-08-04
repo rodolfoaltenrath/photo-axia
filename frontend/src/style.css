@@ -529,16 +529,6 @@ select:focus-visible {
   width: var(--transform-line-width);
 }
 
-.drop-hint {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: #5f6c78;
-  font-size: 14px;
-  pointer-events: none;
-}
-
 .sample-art {
   position: absolute;
   inset: 8%;
