@@ -146,13 +146,3 @@ export function releaseLayerAssets(layers: LayerItem[]) {
     }
   }
 }
-
-export function releaseRemovedLayerAssets(layer: LayerItem, remainingLayers: LayerItem[]) {
-  for (const source of [layer.image?.sourceUrl, layer.image?.previewUrl]) {
-    if (!source?.startsWith('blob:')) continue
-    const stillUsed = remainingLayers.some(
-      (item) => item.image?.sourceUrl === source || item.image?.previewUrl === source
-    )
-    if (!stillUsed) URL.revokeObjectURL(source)
-  }
-}

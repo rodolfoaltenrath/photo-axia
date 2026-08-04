@@ -49,6 +49,8 @@ select {
 }
 
 .top-menu {
+  position: relative;
+  z-index: 50;
   display: grid;
   grid-template-columns: 172px 1fr auto;
   align-items: center;
@@ -77,7 +79,146 @@ select {
 
 .menu-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.history-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-left: 1px solid #313944;
+  border-right: 1px solid #313944;
+  padding: 0 5px;
+}
+
+.menu-actions .history-icon-button {
+  display: grid;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 0;
+  background: transparent;
+  color: #cbd4dd;
+  list-style: none;
+}
+
+.history-icon-button::-webkit-details-marker {
+  display: none;
+}
+
+.history-icon-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.menu-actions .history-icon-button:hover:not(:disabled),
+.history-menu[open] > .history-icon-button {
+  border-color: #42505e;
+  background: #28313b;
+}
+
+.menu-actions .history-icon-button:disabled {
+  opacity: 0.3;
+}
+
+.history-menu {
+  position: relative;
+}
+
+.history-popover {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  width: 250px;
+  overflow: hidden;
+  border: 1px solid #3a4551;
+  border-radius: 8px;
+  background: #1c222a;
+  box-shadow: 0 14px 34px rgb(0 0 0 / 48%);
+  transform: translateX(-50%);
+}
+
+.history-popover-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  border-bottom: 1px solid #303944;
+  padding: 0 11px;
+  color: #e5eaf0;
+  font-size: 12px;
+}
+
+.history-popover-title span {
+  color: #8794a2;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-list {
+  max-height: min(420px, calc(100vh - 104px));
+  margin: 0;
+  overflow-y: auto;
+  padding: 5px;
+  list-style: none;
+  scrollbar-color: #465361 #1c222a;
+  scrollbar-width: thin;
+}
+
+.history-list li {
+  margin: 0;
+}
+
+.menu-actions .history-list button {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0 8px;
+  background: transparent;
+  color: #c4cdd6;
+  font-size: 12px;
+  text-align: left;
+}
+
+.menu-actions .history-list button:hover {
+  background: #28313b;
+}
+
+.menu-actions .history-list .history-entry--current {
+  background: rgb(88 196 179 / 14%);
+  color: #ecfffc;
+}
+
+.menu-actions .history-list .history-entry--future {
+  color: #77838f;
+}
+
+.history-entry-marker {
+  width: 7px;
+  height: 7px;
+  margin: auto;
+  border: 1px solid #657280;
+  border-radius: 50%;
+}
+
+.history-entry--current .history-entry-marker {
+  border-color: #58c4b3;
+  background: #58c4b3;
+  box-shadow: 0 0 0 3px rgb(88 196 179 / 13%);
 }
 
 .menu-actions button,

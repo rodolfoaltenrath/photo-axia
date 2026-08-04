@@ -18,10 +18,10 @@ import {
   createImagePreview,
   imagePreviewNeedsUpdate,
   readBrowserImages,
-  releaseLayerAssets,
-  releaseRemovedLayerAssets
+  releaseLayerAssets
 } from './services/imageImport'
 import { renderDocumentPNG } from './services/renderDocument'
+import { useHistory, type HistoryRecordOptions } from './editor/history'
 import { clampZoom } from './editor/viewport'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
 import type {
@@ -61,6 +61,21 @@ const activeDocument = ref<DocumentSpec>({
 const layers = ref<LayerItem[]>([createBackgroundLayer()])
 const zoomEventOptions = { capture: true, passive: false }
 const previewGenerations = new Map<string, number>()
+const trackedObjectUrls = new Set<string>()
+
+interface EditorSnapshot {
+  document: DocumentSpec
+  layers: LayerItem[]
+  activeLayerId: string
+}
+
+const history = useHistory<EditorSnapshot>(80, 'Documento inicial')
+const canRedo = history.canRedo
+const canUndo = history.canUndo
+const historyItems = history.timeline
+const historyPosition = history.currentPosition
+const redoLabel = history.redoLabel
+const undoLabel = history.undoLabel
 
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
@@ -68,6 +83,110 @@ const activeLayer = computed<LayerItem>(() => {
 
 function createBackgroundLayer(): LayerItem {
   return { id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, kind: 'background' }
+}
+
+function cloneLayer(layer: LayerItem): LayerItem {
+  return {
+    ...layer,
+    image: layer.image ? { ...layer.image } : undefined,
+    text: layer.text ? { ...layer.text } : undefined,
+    transform: layer.transform ? { ...layer.transform } : undefined
+  }
+}
+
+function captureEditorSnapshot(): EditorSnapshot {
+  return {
+    document: { ...activeDocument.value },
+    layers: layers.value.map(cloneLayer),
+    activeLayerId: activeLayerId.value
+  }
+}
+
+function runHistoryAction(label: string, action: () => boolean | void, options?: HistoryRecordOptions) {
+  const before = captureEditorSnapshot()
+  if (action() === false) return false
+  history.record(label, before, captureEditorSnapshot(), options)
+  collectUnusedObjectUrls()
+  return true
+}
+
+function layerObjectUrls(layer: LayerItem) {
+  return [layer.image?.sourceUrl, layer.image?.previewUrl].filter(
+    (source): source is string => Boolean(source?.startsWith('blob:'))
+  )
+}
+
+function trackLayerAssets(items: LayerItem[]) {
+  for (const layer of items) {
+    for (const source of layerObjectUrls(layer)) trackedObjectUrls.add(source)
+  }
+}
+
+function retainedHistoryLayers() {
+  return history.entries().flatMap((entry) => [...entry.before.layers, ...entry.after.layers])
+}
+
+function collectUnusedObjectUrls() {
+  const retainedUrls = new Set<string>()
+  for (const layer of [...layers.value, ...retainedHistoryLayers()]) {
+    for (const source of layerObjectUrls(layer)) retainedUrls.add(source)
+  }
+
+  for (const source of trackedObjectUrls) {
+    if (retainedUrls.has(source)) continue
+    URL.revokeObjectURL(source)
+    trackedObjectUrls.delete(source)
+  }
+}
+
+function releaseAllEditorAssets() {
+  releaseLayerAssets([...layers.value, ...retainedHistoryLayers()])
+  for (const source of trackedObjectUrls) URL.revokeObjectURL(source)
+  trackedObjectUrls.clear()
+}
+
+function restoreEditorSnapshot(snapshot: EditorSnapshot) {
+  for (const layer of layers.value) {
+    previewGenerations.set(layer.id, (previewGenerations.get(layer.id) ?? 0) + 1)
+  }
+
+  activeDocument.value = { ...snapshot.document }
+  layers.value = snapshot.layers.map(cloneLayer)
+  activeLayerId.value = layers.value.some((layer) => layer.id === snapshot.activeLayerId)
+    ? snapshot.activeLayerId
+    : layers.value[0]!.id
+  trackLayerAssets(layers.value)
+  for (const layer of layers.value) {
+    if (layer.image) void refreshLayerPreview(layer)
+  }
+  collectUnusedObjectUrls()
+}
+
+function undoHistory() {
+  canvasViewport.value?.commitPendingTransform()
+  const transition = history.undo()
+  if (!transition) return
+  restoreEditorSnapshot(transition.snapshot)
+  statusText.value = `Desfeito: ${transition.label}`
+  errorText.value = ''
+}
+
+function redoHistory() {
+  canvasViewport.value?.commitPendingTransform()
+  const transition = history.redo()
+  if (!transition) return
+  restoreEditorSnapshot(transition.snapshot)
+  statusText.value = `Refeito: ${transition.label}`
+  errorText.value = ''
+}
+
+function jumpHistory(position: number) {
+  canvasViewport.value?.commitPendingTransform()
+  const transition = history.jump(position)
+  if (!transition) return
+  restoreEditorSnapshot(transition.snapshot)
+  statusText.value = `Histórico: ${transition.label}`
+  errorText.value = ''
 }
 
 function setZoom(value: number) {
@@ -82,16 +201,18 @@ function handleToolDoubleClick(tool: EditorTool) {
 
 function addLayer() {
   const id = crypto.randomUUID()
-  const activeIndex = layers.value.findIndex((layer) => layer.id === activeLayerId.value)
-  const insertionIndex = activeIndex < 0 ? 0 : activeIndex
-  layers.value.splice(insertionIndex, 0, {
-    id,
-    name: `Camada ${layers.value.length}`,
-    visible: true,
-    opacity: 100,
-    kind: 'pixel'
+  runHistoryAction('Criar camada', () => {
+    const activeIndex = layers.value.findIndex((layer) => layer.id === activeLayerId.value)
+    const insertionIndex = activeIndex < 0 ? 0 : activeIndex
+    layers.value.splice(insertionIndex, 0, {
+      id,
+      name: `Camada ${layers.value.length}`,
+      visible: true,
+      opacity: 100,
+      kind: 'pixel'
+    })
+    activeLayerId.value = id
   })
-  activeLayerId.value = id
   statusText.value = 'Nova camada criada'
 }
 
@@ -102,56 +223,72 @@ function addTextLayer(point: { x: number; y: number }) {
   text.baseWidth = size.width
   text.baseHeight = size.height
 
-  const activeIndex = layers.value.findIndex((layer) => layer.id === activeLayerId.value)
-  const insertionIndex = activeIndex < 0 ? 0 : activeIndex
-  layers.value.splice(insertionIndex, 0, {
-    id,
-    name: text.content,
-    visible: true,
-    opacity: 100,
-    kind: 'text',
-    text,
-    transform: {
-      x: Math.round(Math.max(0, Math.min(point.x, activeDocument.value.width - size.width))),
-      y: Math.round(Math.max(0, Math.min(point.y, activeDocument.value.height - size.height))),
-      width: size.width,
-      height: size.height,
-      rotation: 0
-    }
+  runHistoryAction('Criar texto', () => {
+    const activeIndex = layers.value.findIndex((layer) => layer.id === activeLayerId.value)
+    const insertionIndex = activeIndex < 0 ? 0 : activeIndex
+    layers.value.splice(insertionIndex, 0, {
+      id,
+      name: text.content,
+      visible: true,
+      opacity: 100,
+      kind: 'text',
+      text,
+      transform: {
+        x: Math.round(Math.max(0, Math.min(point.x, activeDocument.value.width - size.width))),
+        y: Math.round(Math.max(0, Math.min(point.y, activeDocument.value.height - size.height))),
+        width: size.width,
+        height: size.height,
+        rotation: 0
+      }
+    })
+    activeLayerId.value = id
   })
-  activeLayerId.value = id
   statusText.value = 'Camada de texto criada'
 }
 
 function updateTextLayer(layerId: string, patch: Partial<TextLayerContent>) {
   const layer = layers.value.find((item) => item.id === layerId)
   if (!layer?.text || !layer.transform) return
+  const patchEntries = Object.entries(patch) as Array<[keyof TextLayerContent, TextLayerContent[keyof TextLayerContent]]>
+  if (!patchEntries.some(([key, value]) => layer.text?.[key] !== value)) return
 
-  const previous = layer.text
-  const scaleX = layer.transform.width / previous.baseWidth
-  const scaleY = layer.transform.height / previous.baseHeight
-  const text: TextLayerContent = { ...previous, ...patch }
-  text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
-  text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
-  text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
-  const size = measureTextLayer(text)
-  text.baseWidth = size.width
-  text.baseHeight = size.height
-  layer.text = text
-  layer.transform = {
-    ...layer.transform,
-    width: Math.round(size.width * scaleX * 100) / 100,
-    height: Math.round(size.height * scaleY * 100) / 100
-  }
+  const property = Object.keys(patch).sort().join('-')
+  runHistoryAction(
+    patch.content !== undefined ? 'Editar texto' : 'Alterar texto',
+    () => {
+      const previous = layer.text!
+      const transform = layer.transform!
+      const scaleX = transform.width / previous.baseWidth
+      const scaleY = transform.height / previous.baseHeight
+      const text: TextLayerContent = { ...previous, ...patch }
+      text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
+      text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
+      text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
+      const size = measureTextLayer(text)
+      text.baseWidth = size.width
+      text.baseHeight = size.height
+      layer.text = text
+      layer.transform = {
+        ...transform,
+        width: Math.round(size.width * scaleX * 100) / 100,
+        height: Math.round(size.height * scaleY * 100) / 100
+      }
 
-  if (patch.content !== undefined) {
-    layer.name = patch.content.trim().split('\n')[0]?.slice(0, 36) || 'Texto'
-  }
+      if (patch.content !== undefined) {
+        layer.name = patch.content.trim().split('\n')[0]?.slice(0, 36) || 'Texto'
+      }
+    },
+    { mergeKey: `text:${layerId}:${property}`, mergeWindowMs: 800 }
+  )
 }
 
 function toggleLayer(layerId: string) {
   const layer = layers.value.find((item) => item.id === layerId)
-  if (layer) layer.visible = !layer.visible
+  if (!layer) return
+  const label = layer.visible ? 'Ocultar camada' : 'Mostrar camada'
+  runHistoryAction(label, () => {
+    layer.visible = !layer.visible
+  })
 }
 
 function renameLayer(layerId: string, name: string) {
@@ -159,7 +296,10 @@ function renameLayer(layerId: string, name: string) {
   const cleanName = name.trim()
   if (!layer || layer.kind === 'background' || !cleanName) return
 
-  layer.name = cleanName
+  if (layer.name === cleanName) return
+  runHistoryAction('Renomear camada', () => {
+    layer.name = cleanName
+  })
   statusText.value = `Camada renomeada para ${cleanName}`
 }
 
@@ -183,8 +323,10 @@ function duplicateLayer(layerId = activeLayerId.value) {
       : undefined
   }
 
-  layers.value.splice(index, 0, duplicate)
-  activeLayerId.value = duplicate.id
+  runHistoryAction('Duplicar camada', () => {
+    layers.value.splice(index, 0, duplicate)
+    activeLayerId.value = duplicate.id
+  })
   statusText.value = 'Camada duplicada'
 }
 
@@ -198,13 +340,13 @@ function deleteLayer(layerId: string) {
     return
   }
 
-  layers.value.splice(index, 1)
-  previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
-  releaseRemovedLayerAssets(layer, layers.value)
-
-  if (activeLayerId.value === layerId) {
-    activeLayerId.value = layers.value[Math.min(index, layers.value.length - 1)]!.id
-  }
+  runHistoryAction('Excluir camada', () => {
+    layers.value.splice(index, 1)
+    previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
+    if (activeLayerId.value === layerId) {
+      activeLayerId.value = layers.value[Math.min(index, layers.value.length - 1)]!.id
+    }
+  })
   errorText.value = ''
   statusText.value = 'Camada excluída'
 }
@@ -216,8 +358,10 @@ function moveLayer(layerId: string, direction: -1 | 1) {
   const target = layers.value[targetIndex]
   if (!layer || layer.kind === 'background' || !target || target.kind === 'background') return
 
-  layers.value.splice(index, 1)
-  layers.value.splice(targetIndex, 0, layer)
+  runHistoryAction(direction < 0 ? 'Elevar camada' : 'Abaixar camada', () => {
+    layers.value.splice(index, 1)
+    layers.value.splice(targetIndex, 0, layer)
+  })
   statusText.value = direction < 0 ? 'Camada elevada' : 'Camada abaixada'
 }
 
@@ -235,20 +379,49 @@ function reorderLayer(layerId: string, targetId: string, position: 'before' | 'a
   if (backgroundIndex >= 0) insertionIndex = Math.min(insertionIndex, backgroundIndex)
 
   reordered.splice(insertionIndex, 0, source)
-  layers.value = reordered
+  if (reordered.every((layer, index) => layer.id === layers.value[index]?.id)) return
+  runHistoryAction('Reordenar camada', () => {
+    layers.value = reordered
+  })
   statusText.value = 'Ordem das camadas atualizada'
 }
 
 function updateLayerOpacity(value: number) {
-  activeLayer.value.opacity = Math.min(100, Math.max(0, value))
+  const layer = activeLayer.value
+  const opacity = Math.min(100, Math.max(0, value))
+  if (layer.opacity === opacity) return
+  runHistoryAction(
+    'Alterar opacidade',
+    () => {
+      layer.opacity = opacity
+    },
+    { mergeKey: `opacity:${layer.id}`, mergeWindowMs: 800 }
+  )
 }
 
 function updateLayerTransform(layerId: string, transform: LayerTransform) {
   const layer = layers.value.find((item) => item.id === layerId)
   if (!layer) return
+  const previous = layer.transform
+  if (
+    previous &&
+    previous.x === transform.x &&
+    previous.y === transform.y &&
+    previous.width === transform.width &&
+    previous.height === transform.height &&
+    (previous.rotation ?? 0) === (transform.rotation ?? 0)
+  )
+    return
 
-  const sizeChanged = layer.transform?.width !== transform.width || layer.transform?.height !== transform.height
-  layer.transform = transform
+  const sizeChanged = previous?.width !== transform.width || previous?.height !== transform.height
+  const onlyMoved =
+    previous &&
+    previous.width === transform.width &&
+    previous.height === transform.height &&
+    (previous.rotation ?? 0) === (transform.rotation ?? 0)
+  runHistoryAction(onlyMoved ? 'Mover camada' : 'Transformar camada', () => {
+    layer.transform = transform
+  })
   if (sizeChanged) void refreshLayerPreview(layer)
 }
 
@@ -272,7 +445,9 @@ async function createDocument(settings: NewDocumentSettings) {
   try {
     const pixels = toPixelSize(settings)
     const document = await createEditorDocument(settings, pixels.width, pixels.height)
-    releaseLayerAssets(layers.value)
+    releaseAllEditorAssets()
+    history.clear('Documento criado')
+    previewGenerations.clear()
     activeDocument.value = document
     layers.value = [createBackgroundLayer()]
     activeLayerId.value = 'layer-bg'
@@ -320,13 +495,8 @@ async function refreshLayerPreview(layer: LayerItem, force = false, allowDetache
     asset.previewUrl = preview?.url
     asset.previewWidth = preview?.width ?? asset.width
     asset.previewHeight = preview?.height ?? asset.height
-    if (
-      previousPreview?.startsWith('blob:') &&
-      previousPreview !== asset.previewUrl &&
-      !layers.value.some((item) => item !== layer && item.image?.previewUrl === previousPreview)
-    ) {
-      URL.revokeObjectURL(previousPreview)
-    }
+    if (asset.previewUrl?.startsWith('blob:')) trackedObjectUrls.add(asset.previewUrl)
+    if (!allowDetached && previousPreview !== asset.previewUrl) collectUnusedObjectUrls()
   } catch {
     // The original remains a safe fallback when preview generation is unavailable.
   }
@@ -348,6 +518,7 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
       },
       transform: imageTransform(image)
     }))
+    trackLayerAssets(imageLayers)
 
     for (const [index, layer] of imageLayers.entries()) {
       statusText.value =
@@ -357,9 +528,11 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
       await refreshLayerPreview(layer, true, true)
     }
 
-    layers.value = [...imageLayers, ...layers.value]
-    activeLayerId.value = imageLayers[0]!.id
-    activeTool.value = 'move'
+    runHistoryAction(images.length === 1 ? 'Importar imagem' : 'Importar imagens', () => {
+      layers.value = [...imageLayers, ...layers.value]
+      activeLayerId.value = imageLayers[0]!.id
+      activeTool.value = 'move'
+    })
     statusText.value = images.length === 1 ? 'Imagem importada' : `${images.length} imagens importadas`
   }
 
@@ -435,10 +608,23 @@ function blockBrowserWheelZoom(event: WheelEvent) {
 }
 
 function handleShortcut(event: KeyboardEvent) {
+  const command = event.ctrlKey || event.metaKey
+  if (command && event.code === 'KeyZ') {
+    event.preventDefault()
+    if (event.shiftKey) redoHistory()
+    else undoHistory()
+    return
+  }
+  if (command && event.code === 'KeyY') {
+    event.preventDefault()
+    redoHistory()
+    return
+  }
+
   const target = event.target as HTMLElement | null
   if (target?.closest('input, select, textarea, [contenteditable="true"]')) return
 
-  if ((event.ctrlKey || event.metaKey) && event.code === 'KeyJ') {
+  if (command && event.code === 'KeyJ') {
     event.preventDefault()
     duplicateLayer()
     return
@@ -473,7 +659,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  releaseLayerAssets(layers.value)
+  releaseAllEditorAssets()
   window.removeEventListener('wheel', blockBrowserWheelZoom, true)
   window.removeEventListener('keydown', handleShortcut)
 })
@@ -482,12 +668,21 @@ onBeforeUnmount(() => {
 <template>
   <main class="app-shell" :class="{ 'app-shell--busy': isBusy }">
     <TopMenu
+      :can-redo="canRedo"
+      :can-undo="canUndo"
       :document-name="activeDocument.name"
+      :history-items="historyItems"
+      :history-position="historyPosition"
+      :redo-label="redoLabel"
       :status-text="statusText"
+      :undo-label="undoLabel"
       @export-document="exportDocument"
+      @history-jump="jumpHistory"
       @import-images="importImages"
       @new-document="showNewDocumentDialog = true"
       @preview-filter="previewFilter"
+      @redo="redoHistory"
+      @undo="undoHistory"
     />
 
     <div v-if="errorText" class="error-banner" role="alert">
