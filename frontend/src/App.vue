@@ -72,7 +72,9 @@ function handleToolDoubleClick(tool: EditorTool) {
 
 function addLayer() {
   const id = crypto.randomUUID()
-  layers.value.unshift({
+  const activeIndex = layers.value.findIndex((layer) => layer.id === activeLayerId.value)
+  const insertionIndex = activeIndex < 0 ? 0 : activeIndex
+  layers.value.splice(insertionIndex, 0, {
     id,
     name: `Camada ${layers.value.length}`,
     visible: true,
@@ -86,6 +88,86 @@ function addLayer() {
 function toggleLayer(layerId: string) {
   const layer = layers.value.find((item) => item.id === layerId)
   if (layer) layer.visible = !layer.visible
+}
+
+function renameLayer(layerId: string, name: string) {
+  const layer = layers.value.find((item) => item.id === layerId)
+  const cleanName = name.trim()
+  if (!layer || layer.kind === 'background' || !cleanName) return
+
+  layer.name = cleanName
+  statusText.value = `Camada renomeada para ${cleanName}`
+}
+
+function duplicateLayer(layerId = activeLayerId.value) {
+  const index = layers.value.findIndex((layer) => layer.id === layerId)
+  const source = layers.value[index]
+  if (!source || source.kind === 'background') return
+
+  const duplicate: LayerItem = {
+    ...source,
+    id: crypto.randomUUID(),
+    name: `${source.name} cópia`,
+    image: source.image ? { ...source.image } : undefined,
+    transform: source.transform
+      ? {
+          ...source.transform,
+          x: source.transform.x + 12,
+          y: source.transform.y + 12
+        }
+      : undefined
+  }
+
+  layers.value.splice(index, 0, duplicate)
+  activeLayerId.value = duplicate.id
+  statusText.value = 'Camada duplicada'
+}
+
+function deleteLayer(layerId: string) {
+  const index = layers.value.findIndex((layer) => layer.id === layerId)
+  const layer = layers.value[index]
+  if (!layer || layer.kind === 'background') return
+
+  layers.value.splice(index, 1)
+  const source = layer.image?.sourceUrl
+  if (source?.startsWith('blob:') && !layers.value.some((item) => item.image?.sourceUrl === source)) {
+    URL.revokeObjectURL(source)
+  }
+
+  if (activeLayerId.value === layerId) {
+    activeLayerId.value = layers.value[Math.min(index, layers.value.length - 1)]!.id
+  }
+  statusText.value = 'Camada excluída'
+}
+
+function moveLayer(layerId: string, direction: -1 | 1) {
+  const index = layers.value.findIndex((layer) => layer.id === layerId)
+  const layer = layers.value[index]
+  const targetIndex = index + direction
+  const target = layers.value[targetIndex]
+  if (!layer || layer.kind === 'background' || !target || target.kind === 'background') return
+
+  layers.value.splice(index, 1)
+  layers.value.splice(targetIndex, 0, layer)
+  statusText.value = direction < 0 ? 'Camada elevada' : 'Camada abaixada'
+}
+
+function reorderLayer(layerId: string, targetId: string, position: 'before' | 'after') {
+  const source = layers.value.find((layer) => layer.id === layerId)
+  if (!source || source.kind === 'background' || layerId === targetId) return
+
+  const reordered = layers.value.filter((layer) => layer.id !== layerId)
+  const targetIndex = reordered.findIndex((layer) => layer.id === targetId)
+  if (targetIndex < 0) return
+
+  const target = reordered[targetIndex]!
+  let insertionIndex = targetIndex + (position === 'after' && target.kind !== 'background' ? 1 : 0)
+  const backgroundIndex = reordered.findIndex((layer) => layer.kind === 'background')
+  if (backgroundIndex >= 0) insertionIndex = Math.min(insertionIndex, backgroundIndex)
+
+  reordered.splice(insertionIndex, 0, source)
+  layers.value = reordered
+  statusText.value = 'Ordem das camadas atualizada'
 }
 
 function updateLayerOpacity(value: number) {
@@ -243,6 +325,13 @@ function blockBrowserWheelZoom(event: WheelEvent) {
 function handleShortcut(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
   if (target?.closest('input, select, textarea, [contenteditable="true"]')) return
+
+  if ((event.ctrlKey || event.metaKey) && event.code === 'KeyJ') {
+    event.preventDefault()
+    duplicateLayer()
+    return
+  }
+
   if (event.ctrlKey || event.metaKey || event.altKey) return
 
   const toolsByKey: Record<string, EditorTool> = {
@@ -334,6 +423,11 @@ onBeforeUnmount(() => {
           :active-layer-id="activeLayerId"
           :layers="layers"
           @add-layer="addLayer"
+          @delete-layer="deleteLayer"
+          @duplicate-layer="duplicateLayer"
+          @move-layer="moveLayer"
+          @rename-layer="renameLayer"
+          @reorder-layer="reorderLayer"
           @select-layer="activeLayerId = $event"
           @toggle-layer="toggleLayer"
         />
