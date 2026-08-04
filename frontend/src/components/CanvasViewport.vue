@@ -40,7 +40,7 @@ const scrollArea = ref<HTMLDivElement | null>(null)
 const surface = ref<HTMLDivElement | null>(null)
 const isPanning = ref(false)
 const isSpacePressed = ref(false)
-const modifierKeys = ref({ alt: false, command: false })
+const modifierKeys = ref({ alt: false, command: false, shift: false })
 const zoomTarget = ref(props.zoom)
 const viewportSize = ref({ width: 1, height: 1 })
 const isViewportReady = ref(false)
@@ -251,7 +251,11 @@ function handleCanvasKeydown(event: KeyboardEvent) {
 }
 
 function updateModifierKeys(event: KeyboardEvent) {
-  modifierKeys.value = { alt: event.altKey, command: event.ctrlKey || event.metaKey }
+  modifierKeys.value = {
+    alt: event.altKey,
+    command: event.ctrlKey || event.metaKey,
+    shift: event.shiftKey
+  }
 }
 
 function handleWindowKeydown(event: KeyboardEvent) {
@@ -309,7 +313,7 @@ function handleWindowKeyup(event: KeyboardEvent) {
 
 function resetInteractionKeys() {
   isSpacePressed.value = false
-  modifierKeys.value = { alt: false, command: false }
+  modifierKeys.value = { alt: false, command: false, shift: false }
 }
 
 function scheduleInteractionFrame(action: () => void) {
@@ -541,15 +545,18 @@ function updatePointer(event: PointerEvent) {
       transform = moveLayerTransform(interaction.initial, interaction.start, pointer)
     } else if (interaction.type === 'resize') {
       const isCorner = interaction.handle.x !== 0 && interaction.handle.y !== 0
+      const fromCenter = event.altKey || modifierKeys.value.alt
+      const freeProportions = event.shiftKey || modifierKeys.value.shift
       transform = resizeLayerTransform(
         interaction.initial,
         interaction.handle,
         pointer,
-        event.altKey,
-        isCorner && !event.shiftKey
+        fromCenter,
+        isCorner && !freeProportions
       )
     } else {
-      transform = rotateLayerTransform(interaction.initial, interaction.startAngle, pointer, event.shiftKey)
+      const snapRotation = event.shiftKey || modifierKeys.value.shift
+      transform = rotateLayerTransform(interaction.initial, interaction.startAngle, pointer, snapRotation)
     }
 
     const layerId = transformSession.value.layerId
@@ -829,7 +836,16 @@ defineExpose({
                 title="Girar; segure Shift para passos de 15°"
                 aria-label="Girar camada"
                 @pointerdown="startTransformRotate"
-              ></button>
+              >
+                <svg
+                  class="free-transform-rotate-icon"
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                >
+                  <path class="free-transform-rotate-icon-outline" d="M21 12a9 9 0 1 1-2.64-6.36L21 8M21 3v5h-5" />
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8M21 3v5h-5" />
+                </svg>
+              </button>
               <button
                 v-for="handle in TRANSFORM_HANDLES"
                 :key="handle.id"
