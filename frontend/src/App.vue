@@ -17,13 +17,15 @@ import {
 import { readBrowserImages, releaseLayerAssets } from './services/imageImport'
 import { renderDocumentPNG } from './services/renderDocument'
 import { clampZoom } from './editor/viewport'
+import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
 import type {
   DocumentSpec,
   EditorTool,
   ImportedImage,
   LayerItem,
   LayerTransform,
-  NewDocumentSettings
+  NewDocumentSettings,
+  TextLayerContent
 } from './types/editor'
 
 const activeTool = ref<EditorTool>('move')
@@ -85,6 +87,60 @@ function addLayer() {
   statusText.value = 'Nova camada criada'
 }
 
+function addTextLayer(point: { x: number; y: number }) {
+  const id = crypto.randomUUID()
+  const text = { ...DEFAULT_TEXT_LAYER }
+  const size = measureTextLayer(text)
+  text.baseWidth = size.width
+  text.baseHeight = size.height
+
+  const activeIndex = layers.value.findIndex((layer) => layer.id === activeLayerId.value)
+  const insertionIndex = activeIndex < 0 ? 0 : activeIndex
+  layers.value.splice(insertionIndex, 0, {
+    id,
+    name: text.content,
+    visible: true,
+    opacity: 100,
+    kind: 'text',
+    text,
+    transform: {
+      x: Math.round(Math.max(0, Math.min(point.x, activeDocument.value.width - size.width))),
+      y: Math.round(Math.max(0, Math.min(point.y, activeDocument.value.height - size.height))),
+      width: size.width,
+      height: size.height,
+      rotation: 0
+    }
+  })
+  activeLayerId.value = id
+  statusText.value = 'Camada de texto criada'
+}
+
+function updateTextLayer(layerId: string, patch: Partial<TextLayerContent>) {
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (!layer?.text || !layer.transform) return
+
+  const previous = layer.text
+  const scaleX = layer.transform.width / previous.baseWidth
+  const scaleY = layer.transform.height / previous.baseHeight
+  const text: TextLayerContent = { ...previous, ...patch }
+  text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
+  text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
+  text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
+  const size = measureTextLayer(text)
+  text.baseWidth = size.width
+  text.baseHeight = size.height
+  layer.text = text
+  layer.transform = {
+    ...layer.transform,
+    width: Math.round(size.width * scaleX * 100) / 100,
+    height: Math.round(size.height * scaleY * 100) / 100
+  }
+
+  if (patch.content !== undefined) {
+    layer.name = patch.content.trim().split('\n')[0]?.slice(0, 36) || 'Texto'
+  }
+}
+
 function toggleLayer(layerId: string) {
   const layer = layers.value.find((item) => item.id === layerId)
   if (layer) layer.visible = !layer.visible
@@ -109,6 +165,7 @@ function duplicateLayer(layerId = activeLayerId.value) {
     id: crypto.randomUUID(),
     name: `${source.name} cópia`,
     image: source.image ? { ...source.image } : undefined,
+    text: source.text ? { ...source.text } : undefined,
     transform: source.transform
       ? {
           ...source.transform,
@@ -343,6 +400,7 @@ function handleShortcut(event: KeyboardEvent) {
   const toolsByKey: Record<string, EditorTool> = {
     v: 'move',
     m: 'select',
+    t: 'text',
     h: 'hand',
     z: 'zoom'
   }
@@ -409,6 +467,7 @@ onBeforeUnmount(() => {
         :layers="layers"
         :zoom="zoom"
         @images-dropped="addImportedImages"
+        @create-text="addTextLayer"
         @select-layer="activeLayerId = $event"
         @update-transform="updateLayerTransform"
         @update:zoom="setZoom"
@@ -422,6 +481,7 @@ onBeforeUnmount(() => {
           :zoom="zoom"
           @update:brush-size="brushSize = $event"
           @update:layer-opacity="updateLayerOpacity"
+          @update:text="updateTextLayer(activeLayer.id, $event)"
           @update:zoom="setZoom"
         />
 

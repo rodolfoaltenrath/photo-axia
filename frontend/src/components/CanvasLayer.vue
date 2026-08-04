@@ -20,12 +20,30 @@ const layerStyle = computed(() => ({
   opacity: props.layer.opacity === undefined ? 1 : props.layer.opacity / 100,
   transform: `translate3d(${props.transform.x}px, ${props.transform.y}px, 0) rotate(${props.transform.rotation ?? 0}deg)`
 }))
+
+const textStyle = computed(() => {
+  const text = props.layer.text
+  if (!text) return undefined
+
+  return {
+    width: `${text.baseWidth}px`,
+    height: `${text.baseHeight}px`,
+    color: text.color,
+    fontFamily: text.fontFamily,
+    fontSize: `${text.fontSize}px`,
+    fontWeight: text.fontWeight,
+    lineHeight: text.lineHeight,
+    textAlign: text.alignment,
+    transform: `scale(${props.transform.width / text.baseWidth}, ${props.transform.height / text.baseHeight})`
+  }
+})
 </script>
 
 <template>
   <div
     class="document-layer"
     :class="{ 'document-layer--active': active }"
+    :data-layer-kind="layer.kind"
     :style="layerStyle"
     @pointerdown="emit('pointerdown', $event)"
   >
@@ -36,5 +54,11 @@ const layerStyle = computed(() => ({
       draggable="false"
       :src="layer.image.sourceUrl"
     />
+    <div
+      v-else-if="layer.kind === 'text' && layer.text"
+      class="document-text"
+      :style="textStyle"
+      v-text="layer.text.content"
+    ></div>
   </div>
 </template>

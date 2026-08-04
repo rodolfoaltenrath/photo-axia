@@ -34,6 +34,7 @@ let ignoreClickUntil = 0
 const kindLabels: Record<LayerItem['kind'], string> = {
   pixel: 'Pixels',
   image: 'Imagem',
+  text: 'Texto',
   adjustment: 'Ajuste',
   background: 'Fundo'
 }
@@ -156,6 +157,7 @@ function selectLayer(event: MouseEvent) {
           loading="lazy"
           :src="layer.image.sourceUrl"
         />
+        <span v-else-if="layer.kind === 'text'" class="layer-thumb-text" aria-hidden="true">T</span>
       </span>
       <span class="layer-copy">
         <input

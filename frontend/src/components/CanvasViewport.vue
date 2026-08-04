@@ -31,6 +31,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'update:zoom', zoom: number): void
+  (event: 'createText', point: DocumentPoint): void
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
@@ -156,6 +157,7 @@ const freeTransformStyle = computed(() => {
 const viewportCursorClass = computed(() => ({
   'canvas-scroll--ready': isViewportReady.value,
   'canvas-scroll--panning': isPanning.value,
+  'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
   'canvas-scroll--zoom-in':
@@ -454,6 +456,23 @@ function startViewportPointer(event: PointerEvent) {
     target?.closest('.free-transform-box')
   )
     return
+
+  const textLayerTarget = target?.closest('.document-layer[data-layer-kind="text"]')
+  if (event.button === 0 && props.activeTool === 'text' && !isSpacePressed.value && !textLayerTarget) {
+    const point = pointerToDocument(event)
+    if (
+      !point ||
+      point.x < 0 ||
+      point.y < 0 ||
+      point.x > props.document.width ||
+      point.y > props.document.height
+    )
+      return
+    event.preventDefault()
+    event.stopPropagation()
+    emit('createText', point)
+    return
+  }
   const shouldZoom = event.button === 0 && (props.activeTool === 'zoom' || temporaryZoom)
   if (shouldZoom) {
     event.preventDefault()
@@ -495,6 +514,12 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
     isSpacePressed.value
   )
     return
+  if (props.activeTool === 'text' && layer.kind === 'text') {
+    event.stopPropagation()
+    event.preventDefault()
+    emit('selectLayer', layer.id)
+    return
+  }
   if (props.activeTool !== 'move' && props.activeTool !== 'select') return
 
   if (transformSession.value) commitFreeTransform()
@@ -912,7 +937,7 @@ defineExpose({
                 @pointerdown="startTransformResize($event, handle)"
               ></button>
             </div>
-            <div v-if="!layers.some((layer) => layer.kind === 'image')" class="drop-hint">
+            <div v-if="!layers.some((layer) => layer.kind === 'image' || layer.kind === 'text')" class="drop-hint">
               Arraste uma imagem para começar
             </div>
           </div>
