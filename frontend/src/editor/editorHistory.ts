@@ -47,12 +47,11 @@ export function cloneLayerState(layer: LayerItem): LayerItem {
 }
 
 export function cloneLayerPatch(patch: Partial<LayerItem>): Partial<LayerItem> {
-  return {
-    ...patch,
-    image: patch.image ? { ...patch.image } : patch.image,
-    text: patch.text ? { ...patch.text } : patch.text,
-    transform: patch.transform ? { ...patch.transform } : patch.transform
-  }
+  const cloned = { ...patch }
+  if ('image' in patch) cloned.image = patch.image ? { ...patch.image } : patch.image
+  if ('text' in patch) cloned.text = patch.text ? { ...patch.text } : patch.text
+  if ('transform' in patch) cloned.transform = patch.transform ? { ...patch.transform } : patch.transform
+  return cloned
 }
 
 export function mergeEditorHistoryDelta(previous: EditorHistoryDelta, next: EditorHistoryDelta) {

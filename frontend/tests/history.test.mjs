@@ -129,6 +129,12 @@ test('aplica inserção, patch, reordenação e remoção de forma reversível',
     visible: true,
     opacity: 100,
     kind: 'image',
+    image: {
+      width: 3840,
+      height: 2160,
+      mimeType: 'image/jpeg',
+      sourceUrl: '/__axia_asset/image'
+    },
     transform: { x: 0, y: 0, width: 100, height: 100 }
   }
   const layers = [background]
@@ -150,8 +156,10 @@ test('aplica inserção, patch, reordenação e remoção de forma reversível',
   }
   applyEditorHistoryDelta(layers, 'image', patch, 'redo')
   assert.equal(layers[0].opacity, 35)
+  assert.equal(layers[0].image.sourceUrl, '/__axia_asset/image')
   applyEditorHistoryDelta(layers, 'image', patch, 'undo')
   assert.equal(layers[0].opacity, 100)
+  assert.equal(layers[0].image.sourceUrl, '/__axia_asset/image')
 
   const reorder = { type: 'layer:reorder', layerId: 'image', beforeIndex: 0, afterIndex: 1 }
   applyEditorHistoryDelta(layers, 'image', reorder, 'redo')
@@ -162,6 +170,39 @@ test('aplica inserção, patch, reordenação e remoção de forma reversível',
   result = applyEditorHistoryDelta(layers, 'image', add, 'undo')
   assert.deepEqual(layers.map((layer) => layer.id), ['background'])
   assert.equal(result.activeLayerId, 'background')
+})
+
+test('desfazer uma transformação preserva o asset visual da camada', () => {
+  const layers = [{
+    id: 'image',
+    name: 'Imagem 4K',
+    visible: true,
+    opacity: 100,
+    kind: 'image',
+    image: {
+      width: 3840,
+      height: 2160,
+      mimeType: 'image/jpeg',
+      sourceUrl: '/__axia_asset/image-4k',
+      previewUrl: '/__axia_asset/image-4k?previewWidth=1920&previewHeight=1080',
+      previewWidth: 1920,
+      previewHeight: 1080
+    },
+    transform: { x: 0, y: 0, width: 1920, height: 1080, rotation: 0 }
+  }]
+  const transform = {
+    type: 'layer:patch',
+    layerId: 'image',
+    before: { transform: { x: 0, y: 0, width: 1920, height: 1080, rotation: 0 } },
+    after: { transform: { x: 120, y: 80, width: 960, height: 540, rotation: 15 } }
+  }
+
+  applyEditorHistoryDelta(layers, 'image', transform, 'redo')
+  applyEditorHistoryDelta(layers, 'image', transform, 'undo')
+
+  assert.equal(layers[0].image.sourceUrl, '/__axia_asset/image-4k')
+  assert.equal(layers[0].image.previewWidth, 1920)
+  assert.deepEqual(layers[0].transform, transform.before.transform)
 })
 
 test('mantém dez mil ações dentro dos limites configurados', () => {
