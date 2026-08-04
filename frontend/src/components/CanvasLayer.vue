@@ -52,7 +52,7 @@ const textStyle = computed(() => {
       :alt="layer.name"
       decoding="async"
       draggable="false"
-      :src="layer.image.sourceUrl"
+      :src="layer.image.previewUrl ?? layer.image.sourceUrl"
     />
     <div
       v-else-if="layer.kind === 'text' && layer.text"

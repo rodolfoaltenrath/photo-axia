@@ -14,7 +14,13 @@ import {
   saveExportedPNG,
   selectDesktopImages
 } from './services/backend'
-import { readBrowserImages, releaseLayerAssets } from './services/imageImport'
+import {
+  createImagePreview,
+  imagePreviewNeedsUpdate,
+  readBrowserImages,
+  releaseLayerAssets,
+  releaseRemovedLayerAssets
+} from './services/imageImport'
 import { renderDocumentPNG } from './services/renderDocument'
 import { clampZoom } from './editor/viewport'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
@@ -54,6 +60,7 @@ const activeDocument = ref<DocumentSpec>({
 })
 const layers = ref<LayerItem[]>([createBackgroundLayer()])
 const zoomEventOptions = { capture: true, passive: false }
+const previewGenerations = new Map<string, number>()
 
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
@@ -192,10 +199,8 @@ function deleteLayer(layerId: string) {
   }
 
   layers.value.splice(index, 1)
-  const source = layer.image?.sourceUrl
-  if (source?.startsWith('blob:') && !layers.value.some((item) => item.image?.sourceUrl === source)) {
-    URL.revokeObjectURL(source)
-  }
+  previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
+  releaseRemovedLayerAssets(layer, layers.value)
 
   if (activeLayerId.value === layerId) {
     activeLayerId.value = layers.value[Math.min(index, layers.value.length - 1)]!.id
@@ -240,7 +245,11 @@ function updateLayerOpacity(value: number) {
 
 function updateLayerTransform(layerId: string, transform: LayerTransform) {
   const layer = layers.value.find((item) => item.id === layerId)
-  if (layer) layer.transform = transform
+  if (!layer) return
+
+  const sizeChanged = layer.transform?.width !== transform.width || layer.transform?.height !== transform.height
+  layer.transform = transform
+  if (sizeChanged) void refreshLayerPreview(layer)
 }
 
 function toPixelSize(settings: NewDocumentSettings) {
@@ -278,8 +287,8 @@ async function createDocument(settings: NewDocumentSettings) {
 }
 
 function imageTransform(image: ImportedImage): LayerTransform {
-  const maxWidth = activeDocument.value.width * 0.82
-  const maxHeight = activeDocument.value.height * 0.82
+  const maxWidth = activeDocument.value.width
+  const maxHeight = activeDocument.value.height
   const imageScale = Math.min(1, maxWidth / image.width, maxHeight / image.height)
   const width = Math.max(1, Math.round(image.width * imageScale))
   const height = Math.max(1, Math.round(image.height * imageScale))
@@ -292,7 +301,38 @@ function imageTransform(image: ImportedImage): LayerTransform {
   }
 }
 
-function addImportedImages(images: ImportedImage[], errors: string[] = []) {
+async function refreshLayerPreview(layer: LayerItem, force = false, allowDetached = false) {
+  const asset = layer.image
+  const transform = layer.transform
+  if (!asset || !transform || (!force && !imagePreviewNeedsUpdate(asset, transform.width, transform.height))) return
+
+  const generation = (previewGenerations.get(layer.id) ?? 0) + 1
+  previewGenerations.set(layer.id, generation)
+
+  try {
+    const preview = await createImagePreview(asset, transform.width, transform.height)
+    if (previewGenerations.get(layer.id) !== generation || (!allowDetached && !layers.value.includes(layer))) {
+      if (preview?.url.startsWith('blob:')) URL.revokeObjectURL(preview.url)
+      return
+    }
+
+    const previousPreview = asset.previewUrl
+    asset.previewUrl = preview?.url
+    asset.previewWidth = preview?.width ?? asset.width
+    asset.previewHeight = preview?.height ?? asset.height
+    if (
+      previousPreview?.startsWith('blob:') &&
+      previousPreview !== asset.previewUrl &&
+      !layers.value.some((item) => item !== layer && item.image?.previewUrl === previousPreview)
+    ) {
+      URL.revokeObjectURL(previousPreview)
+    }
+  } catch {
+    // The original remains a safe fallback when preview generation is unavailable.
+  }
+}
+
+async function addImportedImages(images: ImportedImage[], errors: string[] = []) {
   if (images.length) {
     const imageLayers: LayerItem[] = images.map((image) => ({
       id: image.id || crypto.randomUUID(),
@@ -308,6 +348,14 @@ function addImportedImages(images: ImportedImage[], errors: string[] = []) {
       },
       transform: imageTransform(image)
     }))
+
+    for (const [index, layer] of imageLayers.entries()) {
+      statusText.value =
+        imageLayers.length === 1
+          ? 'Otimizando imagem para edição…'
+          : `Otimizando imagem ${index + 1} de ${imageLayers.length}…`
+      await refreshLayerPreview(layer, true, true)
+    }
 
     layers.value = [...imageLayers, ...layers.value]
     activeLayerId.value = imageLayers[0]!.id
@@ -328,7 +376,7 @@ async function importImages() {
   isBusy.value = true
   statusText.value = 'Importando imagens…'
   try {
-    addImportedImages(await selectDesktopImages())
+    await addImportedImages(await selectDesktopImages())
   } catch (error) {
     showError(error, 'Não foi possível importar as imagens.')
   } finally {
@@ -343,7 +391,7 @@ async function readLocalFiles(input: HTMLInputElement) {
   statusText.value = 'Importando imagens…'
   try {
     const result = await readBrowserImages(input.files)
-    addImportedImages(result.images, result.errors)
+    await addImportedImages(result.images, result.errors)
   } catch (error) {
     showError(error, 'Não foi possível importar as imagens.')
   } finally {

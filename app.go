@@ -1,27 +1,31 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"image"
 	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
+	"image/jpeg"
+	"image/png"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/image/draw"
 )
 
 type App struct {
-	ctx        context.Context
-	assetsMu   sync.RWMutex
-	imagePaths map[string]string
+	ctx          context.Context
+	assetsMu     sync.RWMutex
+	imagePaths   map[string]string
+	previewSlots chan struct{}
 }
 
 type DocumentSpec struct {
@@ -54,7 +58,10 @@ type ImportedImage struct {
 }
 
 func NewApp() *App {
-	return &App{imagePaths: make(map[string]string)}
+	return &App{
+		imagePaths:   make(map[string]string),
+		previewSlots: make(chan struct{}, 1),
+	}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -248,10 +255,64 @@ func (a *App) assetHandler() http.Handler {
 			http.NotFound(response, request)
 			return
 		}
+		previewWidth, widthError := strconv.Atoi(request.URL.Query().Get("previewWidth"))
+		previewHeight, heightError := strconv.Atoi(request.URL.Query().Get("previewHeight"))
+		if widthError == nil && heightError == nil && previewWidth > 0 && previewHeight > 0 {
+			if previewWidth > 8192 || previewHeight > 8192 || int64(previewWidth)*int64(previewHeight) > 32_000_000 {
+				http.Error(response, "dimensoes de previa invalidas", http.StatusBadRequest)
+				return
+			}
+			select {
+			case a.previewSlots <- struct{}{}:
+				defer func() { <-a.previewSlots }()
+			case <-request.Context().Done():
+				return
+			}
+			if err := serveImagePreview(response, path, previewWidth, previewHeight); err != nil {
+				http.Error(response, "falha ao gerar previa", http.StatusInternalServerError)
+			}
+			return
+		}
 
 		response.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 		http.ServeFile(response, request, path)
 	})
+}
+
+func serveImagePreview(response http.ResponseWriter, path string, width int, height int) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	source, format, err := image.Decode(file)
+	if err != nil {
+		return err
+	}
+
+	preview := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.ApproxBiLinear.Scale(preview, preview.Bounds(), source, source.Bounds(), draw.Src, nil)
+
+	var encoded bytes.Buffer
+	contentType := "image/png"
+	opaque, canCheckOpacity := source.(interface{ Opaque() bool })
+	if format == "jpeg" || (canCheckOpacity && opaque.Opaque()) {
+		contentType = "image/jpeg"
+		err = jpeg.Encode(&encoded, preview, &jpeg.Options{Quality: 88})
+	} else {
+		encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+		err = encoder.Encode(&encoded, preview)
+	}
+	if err != nil {
+		return err
+	}
+
+	response.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	response.Header().Set("Content-Type", contentType)
+	response.Header().Set("Content-Length", strconv.Itoa(encoded.Len()))
+	_, err = response.Write(encoded.Bytes())
+	return err
 }
 
 func (a *App) assetMiddleware(next http.Handler) http.Handler {

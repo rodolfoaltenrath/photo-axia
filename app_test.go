@@ -60,3 +60,39 @@ func TestAssetHandlerDoesNotExposeUnknownPaths(t *testing.T) {
 		t.Fatalf("unexpected response status: %d", response.Code)
 	}
 }
+
+func TestAssetHandlerGeneratesSizedPreview(t *testing.T) {
+	temporaryPath := filepath.Join(t.TempDir(), "large.png")
+	file, err := os.Create(temporaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, image.NewRGBA(image.Rect(0, 0, 40, 20))); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	imported, err := app.readImageFile(temporaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, imported.SourceURL+"?previewWidth=10&previewHeight=5", nil)
+	response := httptest.NewRecorder()
+	app.assetHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected response status: %d", response.Code)
+	}
+
+	preview, _, err := image.Decode(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Bounds().Dx() != 10 || preview.Bounds().Dy() != 5 {
+		t.Fatalf("unexpected preview dimensions: %dx%d", preview.Bounds().Dx(), preview.Bounds().Dy())
+	}
+}

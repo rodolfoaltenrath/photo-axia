@@ -47,6 +47,9 @@ export interface ImageAsset {
   height: number
   mimeType: string
   sourceUrl: string
+  previewUrl?: string
+  previewWidth?: number
+  previewHeight?: number
 }
 
 export interface LayerTransform {

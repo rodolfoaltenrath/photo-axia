@@ -187,7 +187,12 @@ onBeforeUnmount(clearDrag)
         aria-hidden="true"
       >
         <span class="layer-thumb" :class="{ 'layer-thumb--transparent': !draggedLayer?.image }">
-          <img v-if="draggedLayer?.image" alt="" draggable="false" :src="draggedLayer.image.sourceUrl" />
+          <img
+            v-if="draggedLayer?.image"
+            alt=""
+            draggable="false"
+            :src="draggedLayer.image.previewUrl ?? draggedLayer.image.sourceUrl"
+          />
           <span v-else-if="draggedLayer?.kind === 'text'" class="layer-thumb-text">T</span>
         </span>
         <span class="layer-drag-preview-copy">

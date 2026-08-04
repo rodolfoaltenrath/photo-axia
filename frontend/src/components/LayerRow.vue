@@ -155,7 +155,7 @@ function selectLayer(event: MouseEvent) {
           decoding="async"
           draggable="false"
           loading="lazy"
-          :src="layer.image.sourceUrl"
+          :src="layer.image.previewUrl ?? layer.image.sourceUrl"
         />
         <span v-else-if="layer.kind === 'text'" class="layer-thumb-text" aria-hidden="true">T</span>
       </span>
