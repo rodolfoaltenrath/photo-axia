@@ -1,12 +1,24 @@
 import { computed, shallowRef } from 'vue'
 
+export type HistoryDirection = 'undo' | 'redo'
+
+export interface HistoryStep<T> {
+  delta: T
+  direction: HistoryDirection
+}
+
+export interface HistoryNavigation<T> {
+  label: string
+  steps: HistoryStep<T>[]
+}
+
 export interface HistoryEntry<T> {
   id: number
   label: string
-  before: T
-  after: T
+  delta: T
   mergeKey?: string
   committedAt: number
+  bytes: number
 }
 
 export interface HistoryRecordOptions {
@@ -14,9 +26,12 @@ export interface HistoryRecordOptions {
   mergeWindowMs?: number
 }
 
-export interface HistoryTransition<T> {
-  label: string
-  snapshot: T
+export interface HistoryOptions<T> {
+  isNoop?: (delta: T) => boolean
+  maxBytes?: number
+  maxEntries?: number
+  estimateBytes?: (delta: T) => number
+  merge?: (previous: T, next: T) => T
 }
 
 export interface HistoryTimelineItem {
@@ -26,7 +41,13 @@ export interface HistoryTimelineItem {
   state: 'past' | 'current' | 'future'
 }
 
-export function useHistory<T>(limit = 80, initialLabel = 'Documento criado') {
+const DEFAULT_MAX_BYTES = 8 * 1024 * 1024
+const DEFAULT_MAX_ENTRIES = 200
+
+export function useHistory<T>(options: HistoryOptions<T> = {}, initialLabel = 'Documento criado') {
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
+  const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES
+  const estimateBytes = options.estimateBytes ?? (() => 128)
   const past = shallowRef<HistoryEntry<T>[]>([])
   const future = shallowRef<HistoryEntry<T>[]>([])
   const baseLabel = shallowRef(initialLabel)
@@ -37,6 +58,9 @@ export function useHistory<T>(limit = 80, initialLabel = 'Documento criado') {
   const undoLabel = computed(() => past.value.at(-1)?.label)
   const redoLabel = computed(() => future.value.at(-1)?.label)
   const currentPosition = computed(() => past.value.length)
+  const sizeBytes = computed(() =>
+    [...past.value, ...future.value].reduce((total, entry) => total + entry.bytes, 0)
+  )
   const timeline = computed<HistoryTimelineItem[]>(() => {
     const chronological = [...past.value, ...future.value.slice().reverse()]
     const current = past.value.length
@@ -59,64 +83,94 @@ export function useHistory<T>(limit = 80, initialLabel = 'Documento criado') {
     ]
   })
 
-  function record(label: string, before: T, after: T, options: HistoryRecordOptions = {}) {
+  function trim(entries: HistoryEntry<T>[]) {
+    let bytes = entries.reduce((total, entry) => total + entry.bytes, 0)
+    let discarded = 0
+    while (entries.length - discarded > 1 && (entries.length - discarded > maxEntries || bytes > maxBytes)) {
+      bytes -= entries[discarded]!.bytes
+      baseLabel.value = entries[discarded]!.label
+      discarded++
+    }
+    return {
+      discarded: discarded ? entries.slice(0, discarded) : [],
+      retained: discarded ? entries.slice(discarded) : entries
+    }
+  }
+
+  function record(label: string, delta: T, recordOptions: HistoryRecordOptions = {}) {
+    if (options.isNoop?.(delta)) return []
     const committedAt = performance.now()
     const previous = past.value.at(-1)
-    const mergeWindow = options.mergeWindowMs ?? 650
+    const mergeWindow = recordOptions.mergeWindowMs ?? 650
     if (
-      options.mergeKey &&
+      recordOptions.mergeKey &&
+      options.merge &&
       future.value.length === 0 &&
-      previous?.mergeKey === options.mergeKey &&
+      previous?.mergeKey === recordOptions.mergeKey &&
       committedAt - previous.committedAt <= mergeWindow
     ) {
-      past.value = [
-        ...past.value.slice(0, -1),
-        { ...previous, label, after, committedAt }
-      ]
-      return
+      const mergedDelta = options.merge(previous.delta, delta)
+      if (options.isNoop?.(mergedDelta)) {
+        past.value = past.value.slice(0, -1)
+        return [previous]
+      }
+      const mergedEntry = {
+        ...previous,
+        label,
+        delta: mergedDelta,
+        committedAt,
+        bytes: Math.max(1, estimateBytes(mergedDelta))
+      }
+      const result = trim([...past.value.slice(0, -1), mergedEntry])
+      past.value = result.retained
+      return [previous, ...result.discarded]
     }
 
     const entry: HistoryEntry<T> = {
       id: nextId++,
       label,
-      before,
-      after,
-      mergeKey: options.mergeKey,
-      committedAt
+      delta,
+      mergeKey: recordOptions.mergeKey,
+      committedAt,
+      bytes: Math.max(1, estimateBytes(delta))
     }
-    const appended = [...past.value, entry]
-    const discardedCount = Math.max(0, appended.length - limit)
-    if (discardedCount) baseLabel.value = appended[discardedCount - 1]!.label
-    past.value = appended.slice(discardedCount)
+    const discardedFuture = future.value
+    const result = trim([...past.value, entry])
+    past.value = result.retained
     future.value = []
+    return [...discardedFuture, ...result.discarded]
   }
 
-  function undo(): HistoryTransition<T> | undefined {
+  function undo(): HistoryNavigation<T> | undefined {
     const entry = past.value.at(-1)
     if (!entry) return undefined
     past.value = past.value.slice(0, -1)
     future.value = [...future.value, entry]
-    return { label: entry.label, snapshot: entry.before }
+    return { label: entry.label, steps: [{ delta: entry.delta, direction: 'undo' }] }
   }
 
-  function redo(): HistoryTransition<T> | undefined {
+  function redo(): HistoryNavigation<T> | undefined {
     const entry = future.value.at(-1)
     if (!entry) return undefined
     future.value = future.value.slice(0, -1)
     past.value = [...past.value, entry]
-    return { label: entry.label, snapshot: entry.after }
+    return { label: entry.label, steps: [{ delta: entry.delta, direction: 'redo' }] }
   }
 
-  function jump(position: number): HistoryTransition<T> | undefined {
+  function jump(position: number): HistoryNavigation<T> | undefined {
     const chronological = [...past.value, ...future.value.slice().reverse()]
+    const current = past.value.length
     const target = Math.max(0, Math.min(chronological.length, Math.round(position)))
-    if (target === past.value.length || !chronological.length) return undefined
+    if (target === current || !chronological.length) return undefined
 
+    const steps: HistoryStep<T>[] = target < current
+      ? chronological.slice(target, current).reverse().map((entry) => ({ delta: entry.delta, direction: 'undo' }))
+      : chronological.slice(current, target).map((entry) => ({ delta: entry.delta, direction: 'redo' }))
     past.value = chronological.slice(0, target)
     future.value = chronological.slice(target).reverse()
     return {
       label: target === 0 ? baseLabel.value : chronological[target - 1]!.label,
-      snapshot: target === 0 ? chronological[0]!.before : chronological[target - 1]!.after
+      steps
     }
   }
 
@@ -133,15 +187,16 @@ export function useHistory<T>(limit = 80, initialLabel = 'Documento criado') {
   return {
     canRedo,
     canUndo,
+    clear,
     currentPosition,
     entries,
     jump,
     record,
     redo,
     redoLabel,
+    sizeBytes,
     timeline,
     undo,
-    undoLabel,
-    clear
+    undoLabel
   }
 }

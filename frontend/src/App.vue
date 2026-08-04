@@ -21,7 +21,17 @@ import {
   releaseLayerAssets
 } from './services/imageImport'
 import { renderDocumentPNG } from './services/renderDocument'
-import { useHistory, type HistoryRecordOptions } from './editor/history'
+import {
+  applyEditorHistoryDelta,
+  cloneLayerPatch,
+  cloneLayerState,
+  estimateEditorHistoryBytes,
+  historyDeltaLayers,
+  isEditorHistoryDeltaNoop,
+  mergeEditorHistoryDelta,
+  type EditorHistoryDelta
+} from './editor/editorHistory'
+import { useHistory, type HistoryRecordOptions, type HistoryStep } from './editor/history'
 import { clampZoom } from './editor/viewport'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
 import type {
@@ -63,15 +73,19 @@ const zoomEventOptions = { capture: true, passive: false }
 const previewGenerations = new Map<string, number>()
 const trackedObjectUrls = new Set<string>()
 
-interface EditorSnapshot {
-  document: DocumentSpec
-  layers: LayerItem[]
-  activeLayerId: string
-}
-
-const history = useHistory<EditorSnapshot>(80, 'Documento inicial')
+const history = useHistory<EditorHistoryDelta>(
+  {
+    maxBytes: 8 * 1024 * 1024,
+    maxEntries: 200,
+    estimateBytes: estimateEditorHistoryBytes,
+    isNoop: isEditorHistoryDeltaNoop,
+    merge: mergeEditorHistoryDelta
+  },
+  'Documento inicial'
+)
 const canRedo = history.canRedo
 const canUndo = history.canUndo
+const historyBytes = history.sizeBytes
 const historyItems = history.timeline
 const historyPosition = history.currentPosition
 const redoLabel = history.redoLabel
@@ -85,29 +99,9 @@ function createBackgroundLayer(): LayerItem {
   return { id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, kind: 'background' }
 }
 
-function cloneLayer(layer: LayerItem): LayerItem {
-  return {
-    ...layer,
-    image: layer.image ? { ...layer.image } : undefined,
-    text: layer.text ? { ...layer.text } : undefined,
-    transform: layer.transform ? { ...layer.transform } : undefined
-  }
-}
-
-function captureEditorSnapshot(): EditorSnapshot {
-  return {
-    document: { ...activeDocument.value },
-    layers: layers.value.map(cloneLayer),
-    activeLayerId: activeLayerId.value
-  }
-}
-
-function runHistoryAction(label: string, action: () => boolean | void, options?: HistoryRecordOptions) {
-  const before = captureEditorSnapshot()
-  if (action() === false) return false
-  history.record(label, before, captureEditorSnapshot(), options)
-  collectUnusedObjectUrls()
-  return true
+function recordHistory(label: string, delta: EditorHistoryDelta, options?: HistoryRecordOptions) {
+  const discarded = history.record(label, delta, options)
+  if (discarded.some((entry) => historyDeltaLayers(entry.delta).length)) collectUnusedObjectUrls()
 }
 
 function layerObjectUrls(layer: LayerItem) {
@@ -123,7 +117,7 @@ function trackLayerAssets(items: LayerItem[]) {
 }
 
 function retainedHistoryLayers() {
-  return history.entries().flatMap((entry) => [...entry.before.layers, ...entry.after.layers])
+  return history.entries().flatMap((entry) => historyDeltaLayers(entry.delta))
 }
 
 function collectUnusedObjectUrls() {
@@ -145,28 +139,32 @@ function releaseAllEditorAssets() {
   trackedObjectUrls.clear()
 }
 
-function restoreEditorSnapshot(snapshot: EditorSnapshot) {
-  for (const layer of layers.value) {
-    previewGenerations.set(layer.id, (previewGenerations.get(layer.id) ?? 0) + 1)
+function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
+  const refreshIds = new Set<string>()
+  let resourcesMayBeUnused = false
+  for (const { delta, direction } of steps) {
+    const result = applyEditorHistoryDelta(layers.value, activeLayerId.value, delta, direction)
+    activeLayerId.value = result.activeLayerId
+    trackLayerAssets(result.insertedLayers)
+    for (const layerId of result.removedLayerIds) {
+      previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
+    }
+    for (const layerId of result.refreshLayerIds) refreshIds.add(layerId)
+    if (result.removedLayerIds.length) resourcesMayBeUnused = true
   }
 
-  activeDocument.value = { ...snapshot.document }
-  layers.value = snapshot.layers.map(cloneLayer)
-  activeLayerId.value = layers.value.some((layer) => layer.id === snapshot.activeLayerId)
-    ? snapshot.activeLayerId
-    : layers.value[0]!.id
-  trackLayerAssets(layers.value)
-  for (const layer of layers.value) {
-    if (layer.image) void refreshLayerPreview(layer)
+  for (const layerId of refreshIds) {
+    const layer = layers.value.find((item) => item.id === layerId)
+    if (layer?.image) void refreshLayerPreview(layer)
   }
-  collectUnusedObjectUrls()
+  if (resourcesMayBeUnused) collectUnusedObjectUrls()
 }
 
 function undoHistory() {
   canvasViewport.value?.commitPendingTransform()
   const transition = history.undo()
   if (!transition) return
-  restoreEditorSnapshot(transition.snapshot)
+  applyHistorySteps(transition.steps)
   statusText.value = `Desfeito: ${transition.label}`
   errorText.value = ''
 }
@@ -175,7 +173,7 @@ function redoHistory() {
   canvasViewport.value?.commitPendingTransform()
   const transition = history.redo()
   if (!transition) return
-  restoreEditorSnapshot(transition.snapshot)
+  applyHistorySteps(transition.steps)
   statusText.value = `Refeito: ${transition.label}`
   errorText.value = ''
 }
@@ -184,7 +182,7 @@ function jumpHistory(position: number) {
   canvasViewport.value?.commitPendingTransform()
   const transition = history.jump(position)
   if (!transition) return
-  restoreEditorSnapshot(transition.snapshot)
+  applyHistorySteps(transition.steps)
   statusText.value = `Histórico: ${transition.label}`
   errorText.value = ''
 }
@@ -201,17 +199,23 @@ function handleToolDoubleClick(tool: EditorTool) {
 
 function addLayer() {
   const id = crypto.randomUUID()
-  runHistoryAction('Criar camada', () => {
-    const activeIndex = layers.value.findIndex((layer) => layer.id === activeLayerId.value)
-    const insertionIndex = activeIndex < 0 ? 0 : activeIndex
-    layers.value.splice(insertionIndex, 0, {
-      id,
-      name: `Camada ${layers.value.length}`,
-      visible: true,
-      opacity: 100,
-      kind: 'pixel'
-    })
-    activeLayerId.value = id
+  const activeBefore = activeLayerId.value
+  const activeIndex = layers.value.findIndex((layer) => layer.id === activeBefore)
+  const insertionIndex = activeIndex < 0 ? 0 : activeIndex
+  const layer: LayerItem = {
+    id,
+    name: `Camada ${layers.value.length}`,
+    visible: true,
+    opacity: 100,
+    kind: 'pixel'
+  }
+  layers.value.splice(insertionIndex, 0, layer)
+  activeLayerId.value = id
+  recordHistory('Criar camada', {
+    type: 'layers:add',
+    items: [{ index: insertionIndex, layer: cloneLayerState(layer) }],
+    activeBefore,
+    activeAfter: id
   })
   statusText.value = 'Nova camada criada'
 }
@@ -223,25 +227,31 @@ function addTextLayer(point: { x: number; y: number }) {
   text.baseWidth = size.width
   text.baseHeight = size.height
 
-  runHistoryAction('Criar texto', () => {
-    const activeIndex = layers.value.findIndex((layer) => layer.id === activeLayerId.value)
-    const insertionIndex = activeIndex < 0 ? 0 : activeIndex
-    layers.value.splice(insertionIndex, 0, {
-      id,
-      name: text.content,
-      visible: true,
-      opacity: 100,
-      kind: 'text',
-      text,
-      transform: {
-        x: Math.round(Math.max(0, Math.min(point.x, activeDocument.value.width - size.width))),
-        y: Math.round(Math.max(0, Math.min(point.y, activeDocument.value.height - size.height))),
-        width: size.width,
-        height: size.height,
-        rotation: 0
-      }
-    })
-    activeLayerId.value = id
+  const activeBefore = activeLayerId.value
+  const activeIndex = layers.value.findIndex((layer) => layer.id === activeBefore)
+  const insertionIndex = activeIndex < 0 ? 0 : activeIndex
+  const layer: LayerItem = {
+    id,
+    name: text.content,
+    visible: true,
+    opacity: 100,
+    kind: 'text',
+    text,
+    transform: {
+      x: Math.round(Math.max(0, Math.min(point.x, activeDocument.value.width - size.width))),
+      y: Math.round(Math.max(0, Math.min(point.y, activeDocument.value.height - size.height))),
+      width: size.width,
+      height: size.height,
+      rotation: 0
+    }
+  }
+  layers.value.splice(insertionIndex, 0, layer)
+  activeLayerId.value = id
+  recordHistory('Criar texto', {
+    type: 'layers:add',
+    items: [{ index: insertionIndex, layer: cloneLayerState(layer) }],
+    activeBefore,
+    activeAfter: id
   })
   statusText.value = 'Camada de texto criada'
 }
@@ -253,30 +263,35 @@ function updateTextLayer(layerId: string, patch: Partial<TextLayerContent>) {
   if (!patchEntries.some(([key, value]) => layer.text?.[key] !== value)) return
 
   const property = Object.keys(patch).sort().join('-')
-  runHistoryAction(
-    patch.content !== undefined ? 'Editar texto' : 'Alterar texto',
-    () => {
-      const previous = layer.text!
-      const transform = layer.transform!
-      const scaleX = transform.width / previous.baseWidth
-      const scaleY = transform.height / previous.baseHeight
-      const text: TextLayerContent = { ...previous, ...patch }
-      text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
-      text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
-      text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
-      const size = measureTextLayer(text)
-      text.baseWidth = size.width
-      text.baseHeight = size.height
-      layer.text = text
-      layer.transform = {
-        ...transform,
-        width: Math.round(size.width * scaleX * 100) / 100,
-        height: Math.round(size.height * scaleY * 100) / 100
-      }
+  const previous = layer.text
+  const transform = layer.transform
+  const before = cloneLayerPatch({ name: layer.name, text: previous, transform })
+  const scaleX = transform.width / previous.baseWidth
+  const scaleY = transform.height / previous.baseHeight
+  const text: TextLayerContent = { ...previous, ...patch }
+  text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
+  text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
+  text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
+  const size = measureTextLayer(text)
+  text.baseWidth = size.width
+  text.baseHeight = size.height
+  layer.text = text
+  layer.transform = {
+    ...transform,
+    width: Math.round(size.width * scaleX * 100) / 100,
+    height: Math.round(size.height * scaleY * 100) / 100
+  }
 
-      if (patch.content !== undefined) {
-        layer.name = patch.content.trim().split('\n')[0]?.slice(0, 36) || 'Texto'
-      }
+  if (patch.content !== undefined) {
+    layer.name = patch.content.trim().split('\n')[0]?.slice(0, 36) || 'Texto'
+  }
+  recordHistory(
+    patch.content !== undefined ? 'Editar texto' : 'Alterar texto',
+    {
+      type: 'layer:patch',
+      layerId,
+      before,
+      after: cloneLayerPatch({ name: layer.name, text: layer.text, transform: layer.transform })
     },
     { mergeKey: `text:${layerId}:${property}`, mergeWindowMs: 800 }
   )
@@ -286,8 +301,13 @@ function toggleLayer(layerId: string) {
   const layer = layers.value.find((item) => item.id === layerId)
   if (!layer) return
   const label = layer.visible ? 'Ocultar camada' : 'Mostrar camada'
-  runHistoryAction(label, () => {
-    layer.visible = !layer.visible
+  const before = layer.visible
+  layer.visible = !before
+  recordHistory(label, {
+    type: 'layer:patch',
+    layerId,
+    before: { visible: before },
+    after: { visible: layer.visible }
   })
 }
 
@@ -297,8 +317,13 @@ function renameLayer(layerId: string, name: string) {
   if (!layer || layer.kind === 'background' || !cleanName) return
 
   if (layer.name === cleanName) return
-  runHistoryAction('Renomear camada', () => {
-    layer.name = cleanName
+  const before = layer.name
+  layer.name = cleanName
+  recordHistory('Renomear camada', {
+    type: 'layer:patch',
+    layerId,
+    before: { name: before },
+    after: { name: cleanName }
   })
   statusText.value = `Camada renomeada para ${cleanName}`
 }
@@ -323,9 +348,14 @@ function duplicateLayer(layerId = activeLayerId.value) {
       : undefined
   }
 
-  runHistoryAction('Duplicar camada', () => {
-    layers.value.splice(index, 0, duplicate)
-    activeLayerId.value = duplicate.id
+  const activeBefore = activeLayerId.value
+  layers.value.splice(index, 0, duplicate)
+  activeLayerId.value = duplicate.id
+  recordHistory('Duplicar camada', {
+    type: 'layers:add',
+    items: [{ index, layer: cloneLayerState(duplicate) }],
+    activeBefore,
+    activeAfter: duplicate.id
   })
   statusText.value = 'Camada duplicada'
 }
@@ -340,12 +370,18 @@ function deleteLayer(layerId: string) {
     return
   }
 
-  runHistoryAction('Excluir camada', () => {
-    layers.value.splice(index, 1)
-    previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
-    if (activeLayerId.value === layerId) {
-      activeLayerId.value = layers.value[Math.min(index, layers.value.length - 1)]!.id
-    }
+  const activeBefore = activeLayerId.value
+  const removed = cloneLayerState(layer)
+  layers.value.splice(index, 1)
+  previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
+  if (activeLayerId.value === layerId) {
+    activeLayerId.value = layers.value[Math.min(index, layers.value.length - 1)]!.id
+  }
+  recordHistory('Excluir camada', {
+    type: 'layers:remove',
+    items: [{ index, layer: removed }],
+    activeBefore,
+    activeAfter: activeLayerId.value
   })
   errorText.value = ''
   statusText.value = 'Camada excluída'
@@ -358,9 +394,13 @@ function moveLayer(layerId: string, direction: -1 | 1) {
   const target = layers.value[targetIndex]
   if (!layer || layer.kind === 'background' || !target || target.kind === 'background') return
 
-  runHistoryAction(direction < 0 ? 'Elevar camada' : 'Abaixar camada', () => {
-    layers.value.splice(index, 1)
-    layers.value.splice(targetIndex, 0, layer)
+  layers.value.splice(index, 1)
+  layers.value.splice(targetIndex, 0, layer)
+  recordHistory(direction < 0 ? 'Elevar camada' : 'Abaixar camada', {
+    type: 'layer:reorder',
+    layerId,
+    beforeIndex: index,
+    afterIndex: targetIndex
   })
   statusText.value = direction < 0 ? 'Camada elevada' : 'Camada abaixada'
 }
@@ -380,8 +420,14 @@ function reorderLayer(layerId: string, targetId: string, position: 'before' | 'a
 
   reordered.splice(insertionIndex, 0, source)
   if (reordered.every((layer, index) => layer.id === layers.value[index]?.id)) return
-  runHistoryAction('Reordenar camada', () => {
-    layers.value = reordered
+  const beforeIndex = layers.value.findIndex((layer) => layer.id === layerId)
+  const afterIndex = reordered.findIndex((layer) => layer.id === layerId)
+  layers.value = reordered
+  recordHistory('Reordenar camada', {
+    type: 'layer:reorder',
+    layerId,
+    beforeIndex,
+    afterIndex
   })
   statusText.value = 'Ordem das camadas atualizada'
 }
@@ -390,10 +436,15 @@ function updateLayerOpacity(value: number) {
   const layer = activeLayer.value
   const opacity = Math.min(100, Math.max(0, value))
   if (layer.opacity === opacity) return
-  runHistoryAction(
+  const before = layer.opacity
+  layer.opacity = opacity
+  recordHistory(
     'Alterar opacidade',
-    () => {
-      layer.opacity = opacity
+    {
+      type: 'layer:patch',
+      layerId: layer.id,
+      before: { opacity: before },
+      after: { opacity }
     },
     { mergeKey: `opacity:${layer.id}`, mergeWindowMs: 800 }
   )
@@ -419,8 +470,12 @@ function updateLayerTransform(layerId: string, transform: LayerTransform) {
     previous.width === transform.width &&
     previous.height === transform.height &&
     (previous.rotation ?? 0) === (transform.rotation ?? 0)
-  runHistoryAction(onlyMoved ? 'Mover camada' : 'Transformar camada', () => {
-    layer.transform = transform
+  layer.transform = transform
+  recordHistory(onlyMoved ? 'Mover camada' : 'Transformar camada', {
+    type: 'layer:patch',
+    layerId,
+    before: { transform: previous ? { ...previous } : undefined },
+    after: { transform: { ...transform } }
   })
   if (sizeChanged) void refreshLayerPreview(layer)
 }
@@ -528,10 +583,15 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
       await refreshLayerPreview(layer, true, true)
     }
 
-    runHistoryAction(images.length === 1 ? 'Importar imagem' : 'Importar imagens', () => {
-      layers.value = [...imageLayers, ...layers.value]
-      activeLayerId.value = imageLayers[0]!.id
-      activeTool.value = 'move'
+    const activeBefore = activeLayerId.value
+    layers.value = [...imageLayers, ...layers.value]
+    activeLayerId.value = imageLayers[0]!.id
+    activeTool.value = 'move'
+    recordHistory(images.length === 1 ? 'Importar imagem' : 'Importar imagens', {
+      type: 'layers:add',
+      items: imageLayers.map((layer, index) => ({ index, layer: cloneLayerState(layer) })),
+      activeBefore,
+      activeAfter: activeLayerId.value
     })
     statusText.value = images.length === 1 ? 'Imagem importada' : `${images.length} imagens importadas`
   }
@@ -671,6 +731,7 @@ onBeforeUnmount(() => {
       :can-redo="canRedo"
       :can-undo="canUndo"
       :document-name="activeDocument.name"
+      :history-bytes="historyBytes"
       :history-items="historyItems"
       :history-position="historyPosition"
       :redo-label="redoLabel"

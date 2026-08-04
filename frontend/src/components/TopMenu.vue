@@ -6,6 +6,7 @@ const props = defineProps<{
   canRedo: boolean
   canUndo: boolean
   documentName: string
+  historyBytes: number
   historyItems: HistoryTimelineItem[]
   historyPosition: number
   redoLabel?: string
@@ -24,6 +25,12 @@ const emit = defineEmits<{
 }>()
 
 const historyDetails = ref<HTMLDetailsElement | null>(null)
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 function jumpToHistory(position: number) {
   emit('historyJump', position)
@@ -97,7 +104,7 @@ onBeforeUnmount(() => {
           <div class="history-popover">
             <div class="history-popover-title">
               <strong>Histórico</strong>
-              <span>{{ historyPosition }}/{{ Math.max(0, historyItems.length - 1) }}</span>
+              <span>{{ historyPosition }}/{{ Math.max(0, historyItems.length - 1) }} · {{ formatBytes(historyBytes) }}</span>
             </div>
             <ol class="history-list">
               <li v-for="item in historyItems" :key="item.id">
