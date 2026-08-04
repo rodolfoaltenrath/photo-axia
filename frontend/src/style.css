@@ -329,10 +329,10 @@ select:focus-visible {
 .canvas-surface {
   position: absolute;
   inset: 0 auto auto 0;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid #343d48;
   box-shadow: 0 16px 36px rgb(0 0 0 / 42%);
-  contain: layout paint style;
+  contain: layout style;
   backface-visibility: hidden;
   transform-origin: top left;
   will-change: transform;
@@ -363,6 +363,7 @@ select:focus-visible {
 
 .document-layers {
   inset: 0;
+  overflow: hidden;
   contain: layout paint style;
 }
 
