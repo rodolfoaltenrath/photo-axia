@@ -126,7 +126,12 @@ function duplicateLayer(layerId = activeLayerId.value) {
 function deleteLayer(layerId: string) {
   const index = layers.value.findIndex((layer) => layer.id === layerId)
   const layer = layers.value[index]
-  if (!layer || layer.kind === 'background') return
+  if (!layer) return
+  if (layers.value.length === 1) {
+    errorText.value = 'O documento precisa manter pelo menos uma camada.'
+    statusText.value = 'Não é possível excluir a única camada do documento'
+    return
+  }
 
   layers.value.splice(index, 1)
   const source = layer.image?.sourceUrl
@@ -137,6 +142,7 @@ function deleteLayer(layerId: string) {
   if (activeLayerId.value === layerId) {
     activeLayerId.value = layers.value[Math.min(index, layers.value.length - 1)]!.id
   }
+  errorText.value = ''
   statusText.value = 'Camada excluída'
 }
 

@@ -13,10 +13,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'cancelRename'): void
+  (event: 'dragCancel'): void
   (event: 'dragEnd'): void
-  (event: 'dragOver', layerId: string, position: 'before' | 'after'): void
+  (event: 'dragMove', clientX: number, clientY: number): void
   (event: 'dragStart', layerId: string): void
-  (event: 'drop', layerId: string, position: 'before' | 'after'): void
   (event: 'rename', layerId: string, name: string): void
   (event: 'requestRename', layerId: string): void
   (event: 'select', layerId: string): void
@@ -25,6 +25,11 @@ const emit = defineEmits<{
 
 const nameInput = ref<HTMLInputElement | null>(null)
 const draftName = ref(props.layer.name)
+let dragPointerId = -1
+let dragStartX = 0
+let dragStartY = 0
+let pointerDragging = false
+let ignoreClickUntil = 0
 
 const kindLabels: Record<LayerItem['kind'], string> = {
   pixel: 'Pixels',
@@ -55,32 +60,51 @@ function cancelRename() {
   emit('cancelRename')
 }
 
-function resolveDropPosition(event: DragEvent) {
-  if (props.layer.kind === 'background') return 'before'
-  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  return event.clientY >= bounds.top + bounds.height / 2 ? 'after' : 'before'
+function startPointerDrag(event: PointerEvent) {
+  if (event.button !== 0 || props.editing || props.layer.kind === 'background') return
+  dragPointerId = event.pointerId
+  dragStartX = event.clientX
+  dragStartY = event.clientY
+  pointerDragging = false
+  const row = event.currentTarget as HTMLElement
+  row.setPointerCapture(event.pointerId)
 }
 
-function handleDragStart(event: DragEvent) {
-  if (props.layer.kind === 'background') {
-    event.preventDefault()
-    return
+function movePointerDrag(event: PointerEvent) {
+  if (event.pointerId !== dragPointerId) return
+  if (!pointerDragging && Math.hypot(event.clientX - dragStartX, event.clientY - dragStartY) < 5) return
+
+  if (!pointerDragging) {
+    pointerDragging = true
+    ignoreClickUntil = performance.now() + 250
+    emit('dragStart', props.layer.id)
   }
 
-  event.dataTransfer?.setData('text/plain', props.layer.id)
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-  emit('dragStart', props.layer.id)
+  event.preventDefault()
+  emit('dragMove', event.clientX, event.clientY)
 }
 
-function handleDragOver(event: DragEvent) {
-  event.preventDefault()
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
-  emit('dragOver', props.layer.id, resolveDropPosition(event))
+function endPointerDrag(event: PointerEvent) {
+  if (event.pointerId !== dragPointerId) return
+  if (pointerDragging) emit('dragEnd')
+  dragPointerId = -1
+  pointerDragging = false
 }
 
-function handleDrop(event: DragEvent) {
-  event.preventDefault()
-  emit('drop', props.layer.id, resolveDropPosition(event))
+function cancelPointerDrag(event: PointerEvent) {
+  if (event.pointerId !== dragPointerId) return
+  if (pointerDragging) emit('dragCancel')
+  dragPointerId = -1
+  pointerDragging = false
+}
+
+function selectLayer(event: MouseEvent) {
+  if (performance.now() < ignoreClickUntil) {
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+  emit('select', props.layer.id)
 }
 </script>
 
@@ -94,11 +118,7 @@ function handleDrop(event: DragEvent) {
       'layer-row--drop-after': dropPosition === 'after',
       'layer-row--drop-before': dropPosition === 'before'
     }"
-    :draggable="layer.kind !== 'background' && !editing"
-    @dragend="emit('dragEnd')"
-    @dragover="handleDragOver"
-    @dragstart="handleDragStart"
-    @drop="handleDrop"
+    :data-layer-id="layer.id"
   >
     <button
       class="visibility-button"
@@ -115,14 +135,19 @@ function handleDrop(event: DragEvent) {
       role="button"
       tabindex="0"
       :aria-current="active ? 'true' : undefined"
-      @click="emit('select', layer.id)"
+      @click="selectLayer"
       @dblclick="emit('requestRename', layer.id)"
       @keydown.enter.self.prevent="emit('select', layer.id)"
       @keydown.space.self.prevent="emit('select', layer.id)"
+      @lostpointercapture="cancelPointerDrag"
+      @pointercancel="cancelPointerDrag"
+      @pointerdown="startPointerDrag"
+      @pointermove="movePointerDrag"
+      @pointerup="endPointerDrag"
     >
       <span class="layer-drag-handle" aria-hidden="true">⠿</span>
       <span class="layer-thumb" :class="{ 'layer-thumb--transparent': !layer.image }">
-        <img v-if="layer.image" alt="" decoding="async" :src="layer.image.sourceUrl" />
+        <img v-if="layer.image" alt="" decoding="async" draggable="false" :src="layer.image.sourceUrl" />
       </span>
       <span class="layer-copy">
         <input

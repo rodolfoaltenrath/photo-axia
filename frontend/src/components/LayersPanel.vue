@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import LayerRow from './LayerRow.vue'
 import type { LayerItem } from '../types/editor'
 import addLayerIcon from '../assets/icons/add-layer.svg'
@@ -23,6 +23,9 @@ const emit = defineEmits<{
 const editingLayerId = ref<string>()
 const draggedLayerId = ref<string>()
 const dropTarget = ref<{ layerId: string; position: 'before' | 'after' }>()
+const layerList = ref<HTMLOListElement | null>(null)
+let dragFrame = 0
+let pendingDragPoint: { clientX: number; clientY: number } | undefined
 
 const activeIndex = computed(() => props.layers.findIndex((layer) => layer.id === props.activeLayerId))
 const activeLayer = computed(() => props.layers[activeIndex.value])
@@ -49,21 +52,55 @@ function startDrag(layerId: string) {
   emit('selectLayer', layerId)
 }
 
-function dragOver(layerId: string, position: 'before' | 'after') {
-  if (!draggedLayerId.value || draggedLayerId.value === layerId) {
+function updateDragTarget() {
+  dragFrame = 0
+  const point = pendingDragPoint
+  pendingDragPoint = undefined
+  const sourceId = draggedLayerId.value
+  if (!point || !sourceId) return
+
+  const row = document.elementFromPoint(point.clientX, point.clientY)?.closest<HTMLElement>('.layer-row')
+  const targetId = row?.dataset.layerId
+  if (!row || !targetId || targetId === sourceId) {
     dropTarget.value = undefined
     return
   }
-  dropTarget.value = { layerId, position }
+
+  const target = props.layers.find((layer) => layer.id === targetId)
+  const bounds = row.getBoundingClientRect()
+  const position = target?.kind === 'background' || point.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+  dropTarget.value = { layerId: targetId, position }
+
+  const list = layerList.value
+  if (!list) return
+  const listBounds = list.getBoundingClientRect()
+  const edgeSize = 28
+  if (point.clientY < listBounds.top + edgeSize) list.scrollTop -= 12
+  else if (point.clientY > listBounds.bottom - edgeSize) list.scrollTop += 12
 }
 
-function dropLayer(targetId: string, position: 'before' | 'after') {
+function moveDrag(clientX: number, clientY: number) {
+  pendingDragPoint = { clientX, clientY }
+  if (!dragFrame) dragFrame = requestAnimationFrame(updateDragTarget)
+}
+
+function finishDrag() {
+  if (dragFrame) cancelAnimationFrame(dragFrame)
+  dragFrame = 0
+  if (pendingDragPoint) updateDragTarget()
+
   const sourceId = draggedLayerId.value
+  const target = dropTarget.value
   clearDrag()
-  if (sourceId && sourceId !== targetId) emit('reorderLayer', sourceId, targetId, position)
+  if (sourceId && target && sourceId !== target.layerId) {
+    emit('reorderLayer', sourceId, target.layerId, target.position)
+  }
 }
 
 function clearDrag() {
+  cancelAnimationFrame(dragFrame)
+  dragFrame = 0
+  pendingDragPoint = undefined
   draggedLayerId.value = undefined
   dropTarget.value = undefined
 }
@@ -77,7 +114,7 @@ function handlePanelKeydown(event: KeyboardEvent) {
     return
   }
 
-  if (event.key === 'Delete' && canManipulate.value) {
+  if (event.key === 'Delete') {
     event.preventDefault()
     emit('deleteLayer', activeLayer.value.id)
     return
@@ -91,6 +128,8 @@ function handlePanelKeydown(event: KeyboardEvent) {
     emit('moveLayer', activeLayer.value.id, 1)
   }
 }
+
+onBeforeUnmount(clearDrag)
 </script>
 
 <template>
@@ -105,7 +144,7 @@ function handlePanelKeydown(event: KeyboardEvent) {
       </button>
     </div>
 
-    <ol class="layer-list" @dragleave.self="clearDrag">
+    <ol ref="layerList" class="layer-list">
       <LayerRow
         v-for="layer in layers"
         :key="layer.id"
@@ -115,10 +154,10 @@ function handlePanelKeydown(event: KeyboardEvent) {
         :editing="editingLayerId === layer.id"
         :layer="layer"
         @cancel-rename="editingLayerId = undefined"
-        @drag-end="clearDrag"
-        @drag-over="dragOver"
+        @drag-cancel="clearDrag"
+        @drag-end="finishDrag"
+        @drag-move="moveDrag"
         @drag-start="startDrag"
-        @drop="dropLayer"
         @rename="renameLayer"
         @request-rename="requestRename"
         @select="emit('selectLayer', $event)"
@@ -163,7 +202,7 @@ function handlePanelKeydown(event: KeyboardEvent) {
         class="layer-action--danger"
         type="button"
         title="Excluir camada (Delete)"
-        :disabled="!canManipulate"
+        :disabled="!activeLayer"
         @click="activeLayer && emit('deleteLayer', activeLayer.id)"
       >
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3m2 0-1 13H8L7 7m3 4v5m4-5v5" /></svg>

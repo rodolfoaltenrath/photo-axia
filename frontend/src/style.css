@@ -715,6 +715,8 @@ select:focus-visible {
   padding: 5px 7px 5px 4px;
   cursor: pointer;
   text-align: left;
+  touch-action: none;
+  user-select: none;
 }
 
 .layer-button:hover,
@@ -744,6 +746,11 @@ select:focus-visible {
 
 .layer-row--dragging {
   opacity: 0.45;
+}
+
+.layer-row--dragging .layer-button,
+.layer-row--dragging .layer-drag-handle {
+  cursor: grabbing;
 }
 
 .layer-copy {
@@ -797,6 +804,7 @@ select:focus-visible {
   margin: -2px 0 0;
   padding: 2px 6px;
   font-size: 12px;
+  user-select: text;
 }
 
 .layer-actions {
