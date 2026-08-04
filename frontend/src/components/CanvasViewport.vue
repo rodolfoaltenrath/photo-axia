@@ -23,6 +23,7 @@ import {
 const props = defineProps<{
   activeLayerId: string
   activeTool: EditorTool
+  autoSelectLayer: boolean
   brushSize: number
   document: DocumentSpec
   layers: LayerItem[]
@@ -35,6 +36,7 @@ const emit = defineEmits<{
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
+  (event: 'update:autoSelectLayer', enabled: boolean): void
 }>()
 
 const scrollArea = ref<HTMLDivElement | null>(null)
@@ -526,20 +528,22 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
 
   event.stopPropagation()
   event.preventDefault()
-  emit('selectLayer', layer.id)
+  const targetLayer = props.activeTool === 'move' && !props.autoSelectLayer ? activeLayer.value : layer
+  if (!targetLayer?.visible || targetLayer.kind === 'background') return
+  if (targetLayer.id !== props.activeLayerId) emit('selectLayer', targetLayer.id)
 
-  if (props.activeTool !== 'move' || !layer.transform) return
+  if (props.activeTool !== 'move' || !targetLayer.transform) return
 
   const target = event.currentTarget as HTMLElement
   target.setPointerCapture(event.pointerId)
   dragState.value = {
-    layerId: layer.id,
+    layerId: targetLayer.id,
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
-    transform: { ...layer.transform }
+    transform: { ...targetLayer.transform }
   }
-  layerDragPreview.value = { layerId: layer.id, transform: { ...layer.transform } }
+  layerDragPreview.value = { layerId: targetLayer.id, transform: { ...targetLayer.transform } }
 }
 
 function updatePointer(event: PointerEvent) {
@@ -857,6 +861,18 @@ defineExpose({
   >
     <div class="context-bar">
       <span>{{ activeTool }}</span>
+      <label
+        v-if="activeTool === 'move'"
+        class="auto-select-control"
+        title="Ao desativar, clicar no documento mantém e move a camada selecionada"
+      >
+        <input
+          :checked="autoSelectLayer"
+          type="checkbox"
+          @change="emit('update:autoSelectLayer', ($event.target as HTMLInputElement).checked)"
+        />
+        <span>Seleção automática</span>
+      </label>
       <span v-if="activeTool === 'brush' || activeTool === 'eraser'">{{ brushSize }} px</span>
       <span>{{ document.width }} × {{ document.height }}</span>
       <span>{{ document.unit === 'cm' ? `${document.physicalWidth} × ${document.physicalHeight} cm` : 'pixels' }}</span>

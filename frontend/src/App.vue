@@ -29,6 +29,7 @@ import type {
 } from './types/editor'
 
 const activeTool = ref<EditorTool>('move')
+const autoSelectLayer = ref(true)
 const zoom = ref(100)
 const brushSize = ref(24)
 const statusText = ref('Inicializando…')
@@ -462,6 +463,7 @@ onBeforeUnmount(() => {
         ref="canvasViewport"
         :active-layer-id="activeLayerId"
         :active-tool="activeTool"
+        :auto-select-layer="autoSelectLayer"
         :brush-size="brushSize"
         :document="activeDocument"
         :layers="layers"
@@ -470,6 +472,7 @@ onBeforeUnmount(() => {
         @create-text="addTextLayer"
         @select-layer="activeLayerId = $event"
         @update-transform="updateLayerTransform"
+        @update:auto-select-layer="autoSelectLayer = $event"
         @update:zoom="setZoom"
       />
 

@@ -199,6 +199,23 @@ select:focus-visible {
   text-transform: capitalize;
 }
 
+.auto-select-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  text-transform: none;
+  user-select: none;
+}
+
+.auto-select-control input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #58c4b3;
+  cursor: pointer;
+}
+
 .zoom-actions {
   display: inline-flex;
   gap: 4px;
