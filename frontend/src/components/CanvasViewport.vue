@@ -80,7 +80,6 @@ const transformInteraction = ref<
   | null
 >(null)
 let resizeObserver: ResizeObserver | undefined
-let navigationFrame = 0
 let interactionFrame = 0
 let wheelZoomFrame = 0
 let pendingInteractionFrame: (() => void) | undefined
@@ -635,10 +634,10 @@ function applyPendingNavigation() {
 }
 
 function schedulePendingNavigation() {
-  void nextTick(() => {
-    cancelAnimationFrame(navigationFrame)
-    navigationFrame = requestAnimationFrame(applyPendingNavigation)
-  })
+  // Vue applies the new scale before resolving nextTick. Updating the scroll
+  // here keeps both operations in the same browser frame and avoids exposing
+  // an intermediate, incorrectly anchored canvas during continuous zoom.
+  void nextTick(applyPendingNavigation)
 }
 
 function requestZoom(value: number, clientX?: number, clientY?: number) {
@@ -710,7 +709,6 @@ async function initializeViewport() {
   await nextTick()
 
   if (initialization !== viewportInitialization) return
-  cancelAnimationFrame(navigationFrame)
   applyPendingNavigation()
   isViewportReady.value = true
 }
@@ -753,7 +751,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('keyup', handleWindowKeyup)
   window.removeEventListener('blur', resetInteractionKeys)
-  cancelAnimationFrame(navigationFrame)
   cancelAnimationFrame(interactionFrame)
   cancelAnimationFrame(wheelZoomFrame)
   resizeObserver?.disconnect()

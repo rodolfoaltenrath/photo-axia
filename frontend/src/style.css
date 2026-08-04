@@ -311,7 +311,9 @@ select:focus-visible {
   border: 1px solid #343d48;
   box-shadow: 0 16px 36px rgb(0 0 0 / 42%);
   contain: layout paint style;
+  backface-visibility: hidden;
   transform-origin: top left;
+  will-change: transform;
   user-select: none;
 }
 
