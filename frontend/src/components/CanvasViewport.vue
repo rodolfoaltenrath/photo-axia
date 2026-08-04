@@ -41,6 +41,7 @@ const surface = ref<HTMLDivElement | null>(null)
 const isPanning = ref(false)
 const isSpacePressed = ref(false)
 const modifierKeys = ref({ alt: false, command: false, shift: false })
+const visualZoom = ref(props.zoom)
 const zoomTarget = ref(props.zoom)
 const viewportSize = ref({ width: 1, height: 1 })
 const isViewportReady = ref(false)
@@ -82,15 +83,17 @@ const transformInteraction = ref<
 let resizeObserver: ResizeObserver | undefined
 let interactionFrame = 0
 let wheelZoomFrame = 0
+let wheelZoomFrameTime = 0
+let navigationScheduled = false
 let pendingInteractionFrame: (() => void) | undefined
-let pendingWheelZoom: { value: number; clientX: number; clientY: number } | undefined
+let wheelZoomAnchor: { clientX: number; clientY: number } | undefined
 let viewportInitialization = 0
 let pendingNavigation:
-  | { type: 'anchor'; clientX: number; clientY: number; documentX: number; documentY: number }
+  | { type: 'anchor'; viewportX: number; viewportY: number; documentX: number; documentY: number }
   | { type: 'center' }
   | undefined
 
-const scale = computed(() => props.zoom / 100)
+const scale = computed(() => visualZoom.value / 100)
 const scaledDocumentSize = computed(() => ({
   width: Math.max(1, props.document.width * scale.value),
   height: Math.max(1, props.document.height * scale.value)
@@ -193,17 +196,9 @@ function handleWheel(event: WheelEvent) {
 
   if (event.ctrlKey || event.metaKey || event.altKey) {
     event.preventDefault()
-    const value = wheelZoomLevel(zoomTarget.value, event.deltaY)
-    zoomTarget.value = value
-    pendingWheelZoom = { value, clientX: event.clientX, clientY: event.clientY }
-    if (!wheelZoomFrame) {
-      wheelZoomFrame = requestAnimationFrame(() => {
-        wheelZoomFrame = 0
-        const pending = pendingWheelZoom
-        pendingWheelZoom = undefined
-        if (pending) requestZoom(pending.value, pending.clientX, pending.clientY)
-      })
-    }
+    zoomTarget.value = wheelZoomLevel(zoomTarget.value, event.deltaY)
+    wheelZoomAnchor = { clientX: event.clientX, clientY: event.clientY }
+    startWheelZoomAnimation()
     return
   }
 
@@ -601,14 +596,35 @@ function stopPointer(event: PointerEvent) {
 
 function defaultZoomAnchor() {
   const scroll = scrollArea.value
-  const canvas = surface.value
-  if (!scroll || !canvas) return undefined
+  if (!scroll) return undefined
 
   const viewport = scroll.getBoundingClientRect()
-  const bounds = canvas.getBoundingClientRect()
+  const canvasLeft = viewport.left + viewportSize.value.width - scroll.scrollLeft
+  const canvasTop = viewport.top + viewportSize.value.height - scroll.scrollTop
+  const canvasRight = canvasLeft + scaledDocumentSize.value.width
+  const canvasBottom = canvasTop + scaledDocumentSize.value.height
   return {
-    x: Math.max(bounds.left, Math.min(bounds.right, viewport.left + viewport.width / 2)),
-    y: Math.max(bounds.top, Math.min(bounds.bottom, viewport.top + viewport.height / 2))
+    x: Math.max(canvasLeft, Math.min(canvasRight, viewport.left + viewport.width / 2)),
+    y: Math.max(canvasTop, Math.min(canvasBottom, viewport.top + viewport.height / 2))
+  }
+}
+
+function captureZoomNavigation(clientX?: number, clientY?: number) {
+  const scroll = scrollArea.value
+  if (!scroll) return
+
+  const anchor = clientX === undefined || clientY === undefined ? defaultZoomAnchor() : { x: clientX, y: clientY }
+  if (!anchor) return
+
+  const viewport = scroll.getBoundingClientRect()
+  const viewportX = anchor.x - viewport.left
+  const viewportY = anchor.y - viewport.top
+  pendingNavigation = {
+    type: 'anchor',
+    viewportX,
+    viewportY,
+    documentX: (scroll.scrollLeft + viewportX - viewportSize.value.width) / scale.value,
+    documentY: (scroll.scrollTop + viewportY - viewportSize.value.height) / scale.value
   }
 }
 
@@ -624,41 +640,73 @@ function applyPendingNavigation() {
     return
   }
 
-  const canvas = surface.value
-  if (!canvas) return
-  const bounds = canvas.getBoundingClientRect()
-  const currentX = bounds.left + navigation.documentX * scale.value
-  const currentY = bounds.top + navigation.documentY * scale.value
-  scroll.scrollLeft += currentX - navigation.clientX
-  scroll.scrollTop += currentY - navigation.clientY
+  scroll.scrollLeft = viewportSize.value.width + navigation.documentX * scale.value - navigation.viewportX
+  scroll.scrollTop = viewportSize.value.height + navigation.documentY * scale.value - navigation.viewportY
 }
 
 function schedulePendingNavigation() {
+  if (navigationScheduled) return
+  navigationScheduled = true
+
   // Vue applies the new scale before resolving nextTick. Updating the scroll
   // here keeps both operations in the same browser frame and avoids exposing
   // an intermediate, incorrectly anchored canvas during continuous zoom.
-  void nextTick(applyPendingNavigation)
+  void nextTick(() => {
+    navigationScheduled = false
+    applyPendingNavigation()
+  })
+}
+
+function stageZoom(value: number, clientX?: number, clientY?: number) {
+  captureZoomNavigation(clientX, clientY)
+  visualZoom.value = clampZoom(value)
+  schedulePendingNavigation()
+}
+
+function stopWheelZoomAnimation() {
+  cancelAnimationFrame(wheelZoomFrame)
+  wheelZoomFrame = 0
+  wheelZoomFrameTime = 0
+  wheelZoomAnchor = undefined
+}
+
+function animateWheelZoom(timestamp: number) {
+  const elapsed = wheelZoomFrameTime ? Math.min(34, timestamp - wheelZoomFrameTime) : 16.67
+  wheelZoomFrameTime = timestamp
+
+  const current = visualZoom.value
+  const target = zoomTarget.value
+  const blend = 1 - Math.exp(-elapsed / 42)
+  const interpolated = current * Math.exp(Math.log(target / current) * blend)
+  const roundedZoom = clampZoom(interpolated)
+  const complete = Math.abs(Math.log(target / interpolated)) < 0.001 || roundedZoom === current
+  const nextZoom = complete ? target : roundedZoom
+  const anchor = wheelZoomAnchor
+
+  stageZoom(nextZoom, anchor?.clientX, anchor?.clientY)
+
+  if (complete) {
+    wheelZoomFrame = 0
+    wheelZoomFrameTime = 0
+    wheelZoomAnchor = undefined
+    emit('update:zoom', target)
+    return
+  }
+
+  wheelZoomFrame = requestAnimationFrame(animateWheelZoom)
+}
+
+function startWheelZoomAnimation() {
+  if (wheelZoomFrame) return
+  wheelZoomFrame = requestAnimationFrame(animateWheelZoom)
 }
 
 function requestZoom(value: number, clientX?: number, clientY?: number) {
   const nextZoom = clampZoom(value)
-  const canvas = surface.value
-  const anchor = clientX === undefined || clientY === undefined ? defaultZoomAnchor() : { x: clientX, y: clientY }
-
-  if (canvas && anchor) {
-    const bounds = canvas.getBoundingClientRect()
-    pendingNavigation = {
-      type: 'anchor',
-      clientX: anchor.x,
-      clientY: anchor.y,
-      documentX: (anchor.x - bounds.left) / scale.value,
-      documentY: (anchor.y - bounds.top) / scale.value
-    }
-  }
-
+  stopWheelZoomAnimation()
   zoomTarget.value = nextZoom
+  stageZoom(nextZoom, clientX, clientY)
   emit('update:zoom', nextZoom)
-  schedulePendingNavigation()
 }
 
 function zoomIn() {
@@ -678,7 +726,9 @@ function fitDocument() {
   const fittedZoom = clampZoom(
     Math.min(MAX_ZOOM / 100, availableWidth / props.document.width, availableHeight / props.document.height) * 100
   )
+  stopWheelZoomAnimation()
   pendingNavigation = { type: 'center' }
+  visualZoom.value = fittedZoom
   zoomTarget.value = fittedZoom
   emit('update:zoom', fittedZoom)
   schedulePendingNavigation()
@@ -717,7 +767,13 @@ watch(
   () => props.zoom,
   (value) => {
     zoomTarget.value = value
-    schedulePendingNavigation()
+    if (Math.abs(value - visualZoom.value) < 0.005) {
+      schedulePendingNavigation()
+      return
+    }
+
+    stopWheelZoomAnimation()
+    stageZoom(value)
   }
 )
 
@@ -752,7 +808,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keyup', handleWindowKeyup)
   window.removeEventListener('blur', resetInteractionKeys)
   cancelAnimationFrame(interactionFrame)
-  cancelAnimationFrame(wheelZoomFrame)
+  stopWheelZoomAnimation()
   resizeObserver?.disconnect()
 })
 
@@ -777,7 +833,7 @@ defineExpose({
       <span v-if="activeTool === 'brush' || activeTool === 'eraser'">{{ brushSize }} px</span>
       <span>{{ document.width }} × {{ document.height }}</span>
       <span>{{ document.unit === 'cm' ? `${document.physicalWidth} × ${document.physicalHeight} cm` : 'pixels' }}</span>
-      <span>{{ isViewportReady ? `${formatZoom(zoom)}%` : '—' }}</span>
+      <span>{{ isViewportReady ? `${formatZoom(visualZoom)}%` : '—' }}</span>
       <div v-if="isTransforming" class="zoom-actions transform-actions">
         <span>{{ activeDisplayTransform?.rotation ?? 0 }}°</span>
         <button type="button" title="Cancelar transformação (Esc)" @click="cancelFreeTransform">Cancelar</button>
