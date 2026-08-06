@@ -67,7 +67,10 @@ export function mergeEditorHistoryDelta(previous: EditorHistoryDelta, next: Edit
 }
 
 export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
-  return JSON.stringify(delta).length * 2 + 96
+  const referencedImageBytes = delta.type === 'layer:patch'
+    ? [delta.before.image, delta.after.image].reduce((total, image) => total + (image?.byteSize ?? 0), 0)
+    : 0
+  return JSON.stringify(delta).length * 2 + referencedImageBytes + 96
 }
 
 export function isEditorHistoryDeltaNoop(delta: EditorHistoryDelta) {
@@ -80,6 +83,22 @@ export function historyDeltaLayers(delta: EditorHistoryDelta) {
   return delta.type === 'layers:add' || delta.type === 'layers:remove'
     ? delta.items.map((item) => item.layer)
     : []
+}
+
+export function historyDeltaObjectUrls(delta: EditorHistoryDelta) {
+  const urls = new Set<string>()
+  const collect = (layer: Partial<LayerItem>) => {
+    for (const source of [layer.image?.sourceUrl, layer.image?.previewUrl]) {
+      if (source?.startsWith('blob:')) urls.add(source)
+    }
+  }
+  if (delta.type === 'layers:add' || delta.type === 'layers:remove') {
+    for (const item of delta.items) collect(item.layer)
+  } else if (delta.type === 'layer:patch') {
+    collect(delta.before)
+    collect(delta.after)
+  }
+  return [...urls]
 }
 
 export function applyEditorHistoryDelta(
@@ -122,7 +141,7 @@ export function applyEditorHistoryDelta(
     if (layer) {
       const patch = cloneLayerPatch(redo ? delta.after : delta.before)
       Object.assign(layer, patch)
-      if (layer.image && patch.transform) refreshLayerIds.push(layer.id)
+      if (layer.image && (patch.transform || patch.image)) refreshLayerIds.push(layer.id)
     }
   } else {
     const index = layers.findIndex((layer) => layer.id === delta.layerId)

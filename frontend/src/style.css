@@ -357,6 +357,46 @@ select:focus-visible {
   cursor: pointer;
 }
 
+.selection-options,
+.selection-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+}
+
+.selection-options {
+  min-width: 0;
+  gap: 10px;
+}
+
+.selection-options select {
+  height: 28px;
+  border: 1px solid #313944;
+  border-radius: 5px;
+  background: #1b2129;
+  color: #e8edf2;
+  padding: 0 6px;
+}
+
+.selection-tolerance input {
+  width: 84px;
+  accent-color: #58c4b3;
+}
+
+.selection-tolerance output {
+  min-width: 24px;
+  color: #e8edf2;
+  font-variant-numeric: tabular-nums;
+}
+
+.selection-contiguous input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #58c4b3;
+}
+
 .zoom-actions {
   display: inline-flex;
   gap: 4px;
@@ -438,6 +478,11 @@ select:focus-visible {
 .canvas-scroll--text:not(.canvas-scroll--panning),
 .canvas-scroll--text:not(.canvas-scroll--panning) .document-layer {
   cursor: text;
+}
+
+.canvas-scroll--selection:not(.canvas-scroll--panning),
+.canvas-scroll--selection:not(.canvas-scroll--panning) .document-layer {
+  cursor: crosshair;
 }
 
 .canvas-scroll--panning .document-layer {
@@ -551,6 +596,44 @@ select:focus-visible {
   transform-origin: center;
   will-change: transform;
   z-index: 10;
+}
+
+.selection-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 15;
+}
+
+.selection-overlay-fill {
+  fill: rgb(88 196 179 / 13%);
+  stroke: none;
+}
+
+.selection-overlay-outline {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.selection-overlay-outline--light {
+  stroke: rgb(255 255 255 / 90%);
+  stroke-width: 2px;
+}
+
+.selection-overlay-outline--ants {
+  animation: selection-marching-ants 0.65s linear infinite;
+  stroke: #111820;
+  stroke-dasharray: 5 5;
+  stroke-width: 2px;
+}
+
+@keyframes selection-marching-ants {
+  to {
+    stroke-dashoffset: -10;
+  }
 }
 
 .free-transform-box {

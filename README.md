@@ -57,6 +57,8 @@ No Linux, os scripts usam `-tags webkit2_41`, que e o caminho recomendado para d
 - Transformacao livre de camadas com escala proporcional, escala central e rotacao.
 - Zoom ancorado no cursor, ajuste a tela e navegacao com a ferramenta Mao, tecla Espaco ou botao do meio.
 - Exportacao da composicao em PNG.
+- Selecao retangular, eliptica, por laco livre e varinha magica com tolerancia configuravel.
+- Exclusao destrutiva dos pixels selecionados com suporte completo a desfazer e refazer.
 
 As ferramentas ainda nao implementadas aparecem desabilitadas para manter a interface coerente com os recursos disponiveis.
 
@@ -82,3 +84,12 @@ No macOS, use `Command` no lugar de `Ctrl`.
 - `Alt` + arrastar uma alca: redimensionar a partir do centro.
 - Arraste o controle circular: girar livremente; `Shift` encaixa a rotacao em passos de 15 graus.
 - `Enter` ou duplo clique: aplicar; `Esc`: cancelar e restaurar a transformacao anterior.
+
+## Selecao e recorte
+
+- `C`: ativar a ferramenta de recorte e selecao.
+- Retangulo e elipse: arraste para selecionar; segure `Shift` para criar quadrado ou circulo.
+- Laco livre: desenhe o contorno diretamente sobre o documento.
+- Varinha magica: clique em uma cor e ajuste a tolerancia; o modo contiguo limita a area a pixels conectados.
+- `Delete` ou `Backspace`: apagar os pixels selecionados da camada de imagem ativa.
+- `Ctrl` + `A`: selecionar todo o documento; `Ctrl` + `D` ou `Esc`: desmarcar.

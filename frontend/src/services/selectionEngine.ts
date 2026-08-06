@@ -1,0 +1,173 @@
+import {
+  invertMatrix,
+  layerSourceToDocumentMatrix,
+  magicWandSpans,
+  multiplyMatrices,
+  transformSelectionPoint,
+  type PixelSelection,
+  type SelectionPoint,
+  type SelectionRegion,
+  type WandResult
+} from '../editor/selection'
+import type { ImageAsset, LayerTransform } from '../types/editor'
+
+interface PendingWand {
+  resolve: (result: WandResult) => void
+  reject: (error: Error) => void
+}
+
+let wandWorker: Worker | undefined
+let nextRequestId = 1
+const pendingWands = new Map<number, PendingWand>()
+
+function workerInstance() {
+  if (typeof Worker === 'undefined') return undefined
+  if (wandWorker) return wandWorker
+  wandWorker = new Worker(new URL('../workers/magicWand.worker.ts', import.meta.url), { type: 'module' })
+  wandWorker.onmessage = (event: MessageEvent<{ id: number; result?: WandResult; error?: string }>) => {
+    const pending = pendingWands.get(event.data.id)
+    if (!pending) return
+    pendingWands.delete(event.data.id)
+    if (event.data.error) pending.reject(new Error(event.data.error))
+    else if (event.data.result) pending.resolve(event.data.result)
+    else pending.reject(new Error('A varinha retornou uma seleção inválida.'))
+  }
+  wandWorker.onerror = () => {
+    for (const pending of pendingWands.values()) pending.reject(new Error('A varinha mágica foi interrompida.'))
+    pendingWands.clear()
+    wandWorker?.terminate()
+    wandWorker = undefined
+  }
+  return wandWorker
+}
+
+async function fallbackWand(blob: Blob, x: number, y: number, tolerance: number, contiguous: boolean) {
+  const bitmap = await createImageBitmap(blob)
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) throw new Error('O sistema não disponibilizou leitura de pixels.')
+  context.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  const image = context.getImageData(0, 0, canvas.width, canvas.height)
+  canvas.width = 1
+  canvas.height = 1
+  return magicWandSpans(image.data, image.width, image.height, x, y, tolerance, contiguous)
+}
+
+async function runWand(blob: Blob, x: number, y: number, tolerance: number, contiguous: boolean) {
+  const worker = workerInstance()
+  if (!worker) return fallbackWand(blob, x, y, tolerance, contiguous)
+  const id = nextRequestId++
+  return new Promise<WandResult>((resolve, reject) => {
+    pendingWands.set(id, { resolve, reject })
+    worker.postMessage({ id, blob, x, y, tolerance, contiguous })
+  })
+}
+
+export async function createMagicWandSelection(
+  layerId: string,
+  asset: ImageAsset,
+  transform: LayerTransform,
+  documentPoint: SelectionPoint,
+  tolerance: number,
+  contiguous: boolean
+): Promise<PixelSelection> {
+  const sourceToDocument = layerSourceToDocumentMatrix(transform, asset.width, asset.height)
+  const sourcePoint = transformSelectionPoint(invertMatrix(sourceToDocument), documentPoint)
+  if (sourcePoint.x < 0 || sourcePoint.y < 0 || sourcePoint.x >= asset.width || sourcePoint.y >= asset.height) {
+    throw new Error('Clique dentro dos pixels da camada ativa.')
+  }
+  const response = await fetch(asset.sourceUrl)
+  if (!response.ok) throw new Error('Não foi possível carregar os pixels da camada ativa.')
+  const result = await runWand(await response.blob(), sourcePoint.x, sourcePoint.y, tolerance, contiguous)
+  return {
+    kind: 'pixels',
+    layerId,
+    sourceWidth: asset.width,
+    sourceHeight: asset.height,
+    sourceToDocument,
+    ...result
+  }
+}
+
+function drawVectorSelection(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, selection: SelectionRegion) {
+  if (selection.kind === 'pixels') {
+    context.beginPath()
+    for (const span of selection.spans) context.rect(span.x0, span.y, span.x1 - span.x0, 1)
+    context.fill()
+    return
+  }
+
+  context.beginPath()
+  if (selection.kind === 'rectangle') {
+    const { x, y, width, height } = selection.bounds
+    context.rect(x, y, width, height)
+  } else if (selection.kind === 'ellipse') {
+    const { x, y, width, height } = selection.bounds
+    context.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2)
+  } else {
+    const first = selection.points[0]
+    if (!first) return
+    context.moveTo(first.x, first.y)
+    for (let index = 1; index < selection.points.length; index++) {
+      const point = selection.points[index]!
+      context.lineTo(point.x, point.y)
+    }
+    context.closePath()
+  }
+  context.fill()
+}
+
+async function encodeCanvas(canvas: HTMLCanvasElement | OffscreenCanvas) {
+  if ('convertToBlob' in canvas) return canvas.convertToBlob({ type: 'image/png' })
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('Não foi possível codificar a imagem editada.'))),
+      'image/png'
+    )
+  })
+}
+
+export async function eraseImageSelection(
+  asset: ImageAsset,
+  transform: LayerTransform,
+  selection: SelectionRegion
+) {
+  const response = await fetch(asset.sourceUrl)
+  if (!response.ok) throw new Error('Não foi possível carregar a camada para edição.')
+  const bitmap = await createImageBitmap(await response.blob())
+  const canvas: HTMLCanvasElement | OffscreenCanvas =
+    typeof OffscreenCanvas === 'undefined'
+      ? Object.assign(document.createElement('canvas'), { width: asset.width, height: asset.height })
+      : new OffscreenCanvas(asset.width, asset.height)
+  const context = canvas.getContext('2d', { alpha: true }) as
+    | CanvasRenderingContext2D
+    | OffscreenCanvasRenderingContext2D
+    | null
+  if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
+  context.drawImage(bitmap, 0, 0, asset.width, asset.height)
+  bitmap.close()
+
+  const documentToSource = invertMatrix(layerSourceToDocumentMatrix(transform, asset.width, asset.height))
+  const matrix = selection.kind === 'pixels'
+    ? multiplyMatrices(documentToSource, selection.sourceToDocument)
+    : documentToSource
+  context.save()
+  context.globalCompositeOperation = 'destination-out'
+  context.setTransform(...matrix)
+  drawVectorSelection(context, selection)
+  context.restore()
+  const blob = await encodeCanvas(canvas)
+  canvas.width = 1
+  canvas.height = 1
+  return blob
+}
+
+export function disposeSelectionEngine() {
+  wandWorker?.terminate()
+  wandWorker = undefined
+  for (const pending of pendingWands.values()) pending.reject(new Error('Seleção cancelada.'))
+  pendingWands.clear()
+}

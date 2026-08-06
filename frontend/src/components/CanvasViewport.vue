@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasLayer from './CanvasLayer.vue'
+import SelectionOverlay from './SelectionOverlay.vue'
 import type { DocumentSpec, EditorTool, ImportedImage, LayerItem, LayerTransform } from '../types/editor'
 import { readBrowserImages } from '../services/imageImport'
 import {
@@ -19,6 +20,17 @@ import {
   type DocumentPoint,
   type TransformHandle
 } from '../editor/freeTransform'
+import {
+  clampSelectionPoint,
+  constrainedSelectionEndpoint,
+  createLassoSelection,
+  createShapeSelection,
+  pointsBounds,
+  selectionIsEmpty,
+  type SelectionMode,
+  type SelectionPoint,
+  type SelectionRegion
+} from '../editor/selection'
 
 const props = defineProps<{
   activeLayerId: string
@@ -27,6 +39,10 @@ const props = defineProps<{
   brushSize: number
   document: DocumentSpec
   layers: LayerItem[]
+  magicWandContiguous: boolean
+  magicWandTolerance: number
+  selection: SelectionRegion | null
+  selectionMode: SelectionMode
   zoom: number
 }>()
 
@@ -34,9 +50,15 @@ const emit = defineEmits<{
   (event: 'update:zoom', zoom: number): void
   (event: 'createText', point: DocumentPoint): void
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
+  (event: 'deleteSelection'): void
+  (event: 'magicWandSelect', point: SelectionPoint): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
   (event: 'update:autoSelectLayer', enabled: boolean): void
+  (event: 'update:magicWandContiguous', enabled: boolean): void
+  (event: 'update:magicWandTolerance', tolerance: number): void
+  (event: 'update:selection', selection: SelectionRegion | null): void
+  (event: 'update:selectionMode', mode: SelectionMode): void
 }>()
 
 const scrollArea = ref<HTMLDivElement | null>(null)
@@ -83,6 +105,13 @@ const transformInteraction = ref<
     }
   | null
 >(null)
+const selectionDraft = shallowRef<SelectionRegion | null>(null)
+const selectionInteraction = ref<{
+  pointerId: number
+  mode: Exclude<SelectionMode, 'magic-wand'>
+  start: SelectionPoint
+  points: SelectionPoint[]
+} | null>(null)
 let resizeObserver: ResizeObserver | undefined
 let interactionFrame = 0
 let wheelZoomFrame = 0
@@ -140,6 +169,7 @@ const backgroundStyle = computed(() => {
   }
 })
 const activeLayer = computed(() => props.layers.find((layer) => layer.id === props.activeLayerId))
+const visibleSelection = computed(() => selectionDraft.value ?? props.selection)
 const isTransforming = computed(() => Boolean(transformSession.value))
 const activeDisplayTransform = computed(() => {
   const layer = activeLayer.value
@@ -160,6 +190,7 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--ready': isViewportReady.value,
   'canvas-scroll--panning': isPanning.value,
   'canvas-scroll--text': props.activeTool === 'text',
+  'canvas-scroll--selection': props.activeTool === 'crop',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
   'canvas-scroll--zoom-in':
@@ -262,6 +293,12 @@ function handleWindowKeydown(event: KeyboardEvent) {
   updateModifierKeys(event)
   if (isEditableTarget(event.target)) return
 
+  if ((event.key === 'Delete' || event.key === 'Backspace') && props.selection) {
+    event.preventDefault()
+    emit('deleteSelection')
+    return
+  }
+
   if (isTransforming.value && event.key === 'Escape') {
     event.preventDefault()
     cancelFreeTransform()
@@ -280,6 +317,30 @@ function handleWindowKeydown(event: KeyboardEvent) {
   }
 
   if (!event.ctrlKey && !event.metaKey) return
+
+  if (event.code === 'KeyD') {
+    event.preventDefault()
+    emit('update:selection', null)
+    return
+  }
+
+  if (event.key === 'Escape' && (selectionInteraction.value || props.selection)) {
+    event.preventDefault()
+    discardInteractionFrame()
+    selectionInteraction.value = null
+    selectionDraft.value = null
+    emit('update:selection', null)
+    return
+  }
+
+  if (event.code === 'KeyA') {
+    event.preventDefault()
+    emit('update:selection', {
+      kind: 'rectangle',
+      bounds: { x: 0, y: 0, width: props.document.width, height: props.document.height }
+    })
+    return
+  }
 
   if (event.code === 'KeyT') {
     event.preventDefault()
@@ -443,6 +504,34 @@ function startTransformRotate(event: PointerEvent) {
   }
 }
 
+function pointInsideDocument(point: SelectionPoint) {
+  return point.x >= 0 && point.y >= 0 && point.x <= props.document.width && point.y <= props.document.height
+}
+
+function startSelectionPointer(event: PointerEvent, point: SelectionPoint) {
+  const scroll = scrollArea.value
+  if (!scroll || event.button !== 0 || !pointInsideDocument(point)) return false
+  event.preventDefault()
+  event.stopPropagation()
+  if (props.selectionMode === 'magic-wand') {
+    emit('magicWandSelect', point)
+    return true
+  }
+
+  const start = clampSelectionPoint(point, props.document.width, props.document.height)
+  scroll.setPointerCapture(event.pointerId)
+  selectionInteraction.value = {
+    pointerId: event.pointerId,
+    mode: props.selectionMode,
+    start,
+    points: [start]
+  }
+  selectionDraft.value = props.selectionMode === 'lasso'
+    ? { kind: 'lasso', points: [start], bounds: { x: start.x, y: start.y, width: 0, height: 0 } }
+    : createShapeSelection(props.selectionMode, start, start)
+  return true
+}
+
 function startViewportPointer(event: PointerEvent) {
   const scroll = scrollArea.value
   if (!scroll) return
@@ -458,6 +547,11 @@ function startViewportPointer(event: PointerEvent) {
     target?.closest('.free-transform-box')
   )
     return
+
+  if (props.activeTool === 'crop' && !isSpacePressed.value) {
+    const point = pointerToDocument(event)
+    if (point && startSelectionPointer(event, point)) return
+  }
 
   const textLayerTarget = target?.closest('.document-layer[data-layer-kind="text"]')
   if (event.button === 0 && props.activeTool === 'text' && !isSpacePressed.value && !textLayerTarget) {
@@ -559,6 +653,40 @@ function updatePointer(event: PointerEvent) {
     return
   }
 
+  const activeSelection = selectionInteraction.value
+  if (activeSelection?.pointerId === event.pointerId) {
+    const rawPoint = pointerToDocument(event)
+    if (!rawPoint) return
+    event.preventDefault()
+    const point = clampSelectionPoint(rawPoint, props.document.width, props.document.height)
+    if (activeSelection.mode === 'lasso') {
+      const previous = activeSelection.points.at(-1)!
+      const minimumDistance = Math.max(0.25, 1.5 / scale.value)
+      if ((point.x - previous.x) ** 2 + (point.y - previous.y) ** 2 < minimumDistance ** 2) return
+      activeSelection.points.push(point)
+      const points = activeSelection.points.slice()
+      scheduleInteractionFrame(() => {
+        if (selectionInteraction.value?.pointerId !== event.pointerId) return
+        selectionDraft.value = { kind: 'lasso', points, bounds: pointsBounds(points) }
+      })
+    } else {
+      const endpoint = event.shiftKey
+        ? constrainedSelectionEndpoint(
+            activeSelection.start,
+            point,
+            props.document.width,
+            props.document.height
+          )
+        : point
+      const selection = createShapeSelection(activeSelection.mode, activeSelection.start, endpoint, event.shiftKey)
+      scheduleInteractionFrame(() => {
+        if (selectionInteraction.value?.pointerId !== event.pointerId) return
+        selectionDraft.value = selection
+      })
+    }
+    return
+  }
+
   const interaction = transformInteraction.value
   if (interaction?.pointerId === event.pointerId && transformSession.value) {
     const pointer = pointerToDocument(event)
@@ -610,6 +738,15 @@ function updatePointer(event: PointerEvent) {
 
 function stopPointer(event: PointerEvent) {
   flushInteractionFrame()
+  if (selectionInteraction.value?.pointerId === event.pointerId) {
+    let completed = selectionDraft.value
+    if (completed?.kind === 'lasso') {
+      completed = createLassoSelection(completed.points, Math.max(0.2, 0.75 / scale.value))
+    }
+    emit('update:selection', completed && !selectionIsEmpty(completed) ? completed : null)
+    selectionInteraction.value = null
+    selectionDraft.value = null
+  }
   if (transformInteraction.value?.pointerId === event.pointerId) transformInteraction.value = null
   if (dragState.value?.pointerId === event.pointerId) {
     const preview = layerDragPreview.value
@@ -820,6 +957,16 @@ watch(
   }
 )
 
+watch(
+  () => props.activeTool,
+  (tool) => {
+    if (tool === 'crop' || !selectionInteraction.value) return
+    discardInteractionFrame()
+    selectionInteraction.value = null
+    selectionDraft.value = null
+  }
+)
+
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown)
   window.addEventListener('keyup', handleWindowKeyup)
@@ -861,6 +1008,45 @@ defineExpose({
   >
     <div class="context-bar">
       <span>{{ activeTool }}</span>
+      <div v-if="activeTool === 'crop'" class="selection-options">
+        <label>
+          Modo
+          <select
+            :value="selectionMode"
+            @change="emit('update:selectionMode', ($event.target as HTMLSelectElement).value as SelectionMode)"
+          >
+            <option value="rectangle">Retângulo</option>
+            <option value="ellipse">Elipse</option>
+            <option value="lasso">Laço livre</option>
+            <option value="magic-wand">Varinha mágica</option>
+          </select>
+        </label>
+        <label v-if="selectionMode === 'magic-wand'" class="selection-tolerance">
+          Tolerância
+          <input
+            :value="magicWandTolerance"
+            max="255"
+            min="0"
+            type="range"
+            @input="emit('update:magicWandTolerance', Number(($event.target as HTMLInputElement).value))"
+          />
+          <output>{{ magicWandTolerance }}</output>
+        </label>
+        <label v-if="selectionMode === 'magic-wand'" class="selection-contiguous">
+          <input
+            :checked="magicWandContiguous"
+            type="checkbox"
+            @change="emit('update:magicWandContiguous', ($event.target as HTMLInputElement).checked)"
+          />
+          Contíguo
+        </label>
+        <button :disabled="!visibleSelection" type="button" title="Apagar pixels selecionados (Delete)" @click="emit('deleteSelection')">
+          Apagar
+        </button>
+        <button :disabled="!visibleSelection" type="button" title="Desmarcar (Ctrl+D)" @click="emit('update:selection', null)">
+          Desmarcar
+        </button>
+      </div>
       <label
         v-if="activeTool === 'move'"
         class="auto-select-control"
@@ -916,6 +1102,12 @@ defineExpose({
                 @pointerdown="startLayerPointer($event, layer)"
               />
             </div>
+            <SelectionOverlay
+              v-if="visibleSelection"
+              :document-height="document.height"
+              :document-width="document.width"
+              :selection="visibleSelection"
+            />
             <div v-if="selectionStyle" class="layer-selection" :style="selectionStyle"></div>
             <div
               v-if="freeTransformStyle"

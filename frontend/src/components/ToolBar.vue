@@ -19,7 +19,7 @@ const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boole
   { id: 'select', icon: selectIcon, label: 'Selecionar (M)', enabled: true },
   { id: 'brush', icon: brushIcon, label: 'Pincel (em breve)', enabled: false },
   { id: 'eraser', icon: eraserIcon, label: 'Borracha (em breve)', enabled: false },
-  { id: 'crop', icon: cropIcon, label: 'Cortar (em breve)', enabled: false },
+  { id: 'crop', icon: cropIcon, label: 'Recorte e seleção (C)', enabled: true },
   { id: 'text', icon: textIcon, label: 'Texto (T)', enabled: true },
   { id: 'hand', icon: handIcon, label: 'Mão (H)', enabled: true },
   { id: 'zoom', icon: zoomIcon, label: 'Zoom (Z)', enabled: true }

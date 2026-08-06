@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   applyEditorHistoryDelta,
   estimateEditorHistoryBytes,
+  historyDeltaObjectUrls,
   isEditorHistoryDeltaNoop,
   mergeEditorHistoryDelta
 } from '../src/editor/editorHistory.ts'
@@ -12,6 +13,26 @@ const deltaOptions = {
   estimateBytes: (delta) => JSON.stringify(delta).length * 2,
   merge: (previous, next) => ({ before: previous.before, after: next.after })
 }
+
+test('mantém assets raster do antes e depois disponíveis para desfazer', () => {
+  const delta = {
+    type: 'layer:patch',
+    layerId: 'image',
+    before: { image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:before', byteSize: 120 } },
+    after: {
+      image: {
+        width: 10,
+        height: 10,
+        mimeType: 'image/png',
+        sourceUrl: 'blob:after',
+        previewUrl: 'blob:preview',
+        byteSize: 140
+      }
+    }
+  }
+  assert.deepEqual(historyDeltaObjectUrls(delta).sort(), ['blob:after', 'blob:before', 'blob:preview'])
+  assert.ok(estimateEditorHistoryBytes(delta) >= 260)
+})
 
 test('desfaz e refaz usando somente o delta da ação', () => {
   const history = useHistory(deltaOptions)

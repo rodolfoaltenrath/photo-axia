@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import CanvasViewport from './components/CanvasViewport.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
@@ -27,6 +27,7 @@ import {
   cloneLayerState,
   estimateEditorHistoryBytes,
   historyDeltaLayers,
+  historyDeltaObjectUrls,
   isEditorHistoryDeltaNoop,
   mergeEditorHistoryDelta,
   type EditorHistoryDelta
@@ -34,6 +35,8 @@ import {
 import { useHistory, type HistoryRecordOptions, type HistoryStep } from './editor/history'
 import { clampZoom } from './editor/viewport'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
+import { selectionIsEmpty, type SelectionMode, type SelectionPoint, type SelectionRegion } from './editor/selection'
+import { createMagicWandSelection, disposeSelectionEngine, eraseImageSelection } from './services/selectionEngine'
 import type {
   DocumentSpec,
   EditorTool,
@@ -48,6 +51,10 @@ const activeTool = ref<EditorTool>('move')
 const autoSelectLayer = ref(true)
 const zoom = ref(100)
 const brushSize = ref(24)
+const selectionMode = ref<SelectionMode>('rectangle')
+const magicWandTolerance = ref(32)
+const magicWandContiguous = ref(true)
+const selection = shallowRef<SelectionRegion | null>(null)
 const statusText = ref('Inicializando…')
 const errorText = ref('')
 const isBusy = ref(false)
@@ -72,6 +79,9 @@ const layers = ref<LayerItem[]>([createBackgroundLayer()])
 const zoomEventOptions = { capture: true, passive: false }
 const previewGenerations = new Map<string, number>()
 const trackedObjectUrls = new Set<string>()
+const transientObjectUrls = new Set<string>()
+let selectionGeneration = 0
+let pendingSelectionTasks = 0
 
 const history = useHistory<EditorHistoryDelta>(
   {
@@ -101,7 +111,9 @@ function createBackgroundLayer(): LayerItem {
 
 function recordHistory(label: string, delta: EditorHistoryDelta, options?: HistoryRecordOptions) {
   const discarded = history.record(label, delta, options)
-  if (discarded.some((entry) => historyDeltaLayers(entry.delta).length)) collectUnusedObjectUrls()
+  if (discarded.some((entry) => historyDeltaLayers(entry.delta).length || historyDeltaObjectUrls(entry.delta).length)) {
+    collectUnusedObjectUrls()
+  }
 }
 
 function layerObjectUrls(layer: LayerItem) {
@@ -125,6 +137,10 @@ function collectUnusedObjectUrls() {
   for (const layer of [...layers.value, ...retainedHistoryLayers()]) {
     for (const source of layerObjectUrls(layer)) retainedUrls.add(source)
   }
+  for (const entry of history.entries()) {
+    for (const source of historyDeltaObjectUrls(entry.delta)) retainedUrls.add(source)
+  }
+  for (const source of transientObjectUrls) retainedUrls.add(source)
 
   for (const source of trackedObjectUrls) {
     if (retainedUrls.has(source)) continue
@@ -155,13 +171,17 @@ function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
 
   for (const layerId of refreshIds) {
     const layer = layers.value.find((item) => item.id === layerId)
-    if (layer?.image) void refreshLayerPreview(layer)
+    if (layer?.image) {
+      trackLayerAssets([layer])
+      void refreshLayerPreview(layer)
+    }
   }
   if (resourcesMayBeUnused) collectUnusedObjectUrls()
 }
 
 function undoHistory() {
   canvasViewport.value?.commitPendingTransform()
+  selection.value = null
   const transition = history.undo()
   if (!transition) return
   applyHistorySteps(transition.steps)
@@ -171,6 +191,7 @@ function undoHistory() {
 
 function redoHistory() {
   canvasViewport.value?.commitPendingTransform()
+  selection.value = null
   const transition = history.redo()
   if (!transition) return
   applyHistorySteps(transition.steps)
@@ -180,6 +201,7 @@ function redoHistory() {
 
 function jumpHistory(position: number) {
   canvasViewport.value?.commitPendingTransform()
+  selection.value = null
   const transition = history.jump(position)
   if (!transition) return
   applyHistorySteps(transition.steps)
@@ -503,6 +525,8 @@ async function createDocument(settings: NewDocumentSettings) {
     releaseAllEditorAssets()
     history.clear('Documento criado')
     previewGenerations.clear()
+    selection.value = null
+    selectionGeneration++
     activeDocument.value = document
     layers.value = [createBackgroundLayer()]
     activeLayerId.value = 'layer-bg'
@@ -587,6 +611,8 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
     layers.value = [...imageLayers, ...layers.value]
     activeLayerId.value = imageLayers[0]!.id
     activeTool.value = 'move'
+    selection.value = null
+    selectionGeneration++
     recordHistory(images.length === 1 ? 'Importar imagem' : 'Importar imagens', {
       type: 'layers:add',
       items: imageLayers.map((layer, index) => ({ index, layer: cloneLayerState(layer) })),
@@ -597,6 +623,106 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
   }
 
   errorText.value = errors.join('\n')
+}
+
+async function selectWithMagicWand(point: SelectionPoint) {
+  if (isBusy.value) return
+  const layer = activeLayer.value
+  if (layer.kind !== 'image' || !layer.image || !layer.transform) {
+    showError(new Error('A varinha mágica precisa de uma camada de imagem ativa.'), 'Seleção indisponível.')
+    return
+  }
+
+  const generation = ++selectionGeneration
+  pendingSelectionTasks++
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Analisando cores com a varinha mágica…'
+  try {
+    const result = await createMagicWandSelection(
+      layer.id,
+      layer.image,
+      layer.transform,
+      point,
+      magicWandTolerance.value,
+      magicWandContiguous.value
+    )
+    if (generation !== selectionGeneration) return
+    selection.value = result
+    statusText.value = `${result.pixelCount.toLocaleString('pt-BR')} pixels selecionados`
+  } catch (error) {
+    if (generation === selectionGeneration) showError(error, 'Não foi possível criar a seleção.')
+  } finally {
+    pendingSelectionTasks--
+    if (pendingSelectionTasks === 0) isBusy.value = false
+  }
+}
+
+function setSelectionMode(mode: SelectionMode) {
+  selectionGeneration++
+  selectionMode.value = mode
+}
+
+function updateSelection(value: SelectionRegion | null) {
+  selectionGeneration++
+  selection.value = selectionIsEmpty(value) ? null : value
+  if (selection.value) statusText.value = 'Seleção criada — pressione Delete para apagar os pixels'
+  else statusText.value = 'Seleção removida'
+}
+
+async function deleteSelectedPixels() {
+  if (isBusy.value) return
+  const currentSelection = selection.value
+  const layer = activeLayer.value
+  if (!currentSelection || selectionIsEmpty(currentSelection)) return
+  if (layer.kind !== 'image' || !layer.image || !layer.transform) {
+    showError(new Error('Selecione uma camada de imagem para apagar pixels.'), 'Não foi possível apagar a seleção.')
+    return
+  }
+
+  canvasViewport.value?.commitPendingTransform()
+  const beforeImage = { ...layer.image }
+  for (const source of [beforeImage.sourceUrl, beforeImage.previewUrl]) {
+    if (source?.startsWith('blob:')) transientObjectUrls.add(source)
+  }
+  let createdSource: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Apagando pixels selecionados…'
+  try {
+    const blob = await eraseImageSelection(beforeImage, layer.transform, currentSelection)
+    createdSource = URL.createObjectURL(blob)
+    trackedObjectUrls.add(createdSource)
+    layer.image = {
+      width: beforeImage.width,
+      height: beforeImage.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: blob.size
+    }
+    await refreshLayerPreview(layer, true)
+    recordHistory('Apagar seleção', {
+      type: 'layer:patch',
+      layerId: layer.id,
+      before: { image: beforeImage },
+      after: { image: { ...layer.image } }
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    selection.value = null
+    selectionGeneration++
+    statusText.value = 'Pixels apagados'
+  } catch (error) {
+    layer.image = beforeImage
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível apagar a seleção.')
+  } finally {
+    isBusy.value = false
+  }
 }
 
 async function importImages() {
@@ -695,6 +821,7 @@ function handleShortcut(event: KeyboardEvent) {
   const toolsByKey: Record<string, EditorTool> = {
     v: 'move',
     m: 'select',
+    c: 'crop',
     t: 'text',
     h: 'hand',
     z: 'zoom'
@@ -719,6 +846,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  disposeSelectionEngine()
   releaseAllEditorAssets()
   window.removeEventListener('wheel', blockBrowserWheelZoom, true)
   window.removeEventListener('keydown', handleShortcut)
@@ -771,10 +899,20 @@ onBeforeUnmount(() => {
         :brush-size="brushSize"
         :document="activeDocument"
         :layers="layers"
+        :magic-wand-contiguous="magicWandContiguous"
+        :magic-wand-tolerance="magicWandTolerance"
+        :selection="selection"
+        :selection-mode="selectionMode"
         :zoom="zoom"
+        @delete-selection="deleteSelectedPixels"
         @images-dropped="addImportedImages"
+        @magic-wand-select="selectWithMagicWand"
         @create-text="addTextLayer"
         @select-layer="activeLayerId = $event"
+        @update:magic-wand-contiguous="magicWandContiguous = $event"
+        @update:magic-wand-tolerance="magicWandTolerance = $event"
+        @update:selection="updateSelection"
+        @update:selection-mode="setSelectionMode"
         @update-transform="updateLayerTransform"
         @update:auto-select-layer="autoSelectLayer = $event"
         @update:zoom="setZoom"

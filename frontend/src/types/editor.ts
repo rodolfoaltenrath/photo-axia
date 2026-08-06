@@ -47,6 +47,7 @@ export interface ImageAsset {
   height: number
   mimeType: string
   sourceUrl: string
+  byteSize?: number
   previewUrl?: string
   previewWidth?: number
   previewHeight?: number
