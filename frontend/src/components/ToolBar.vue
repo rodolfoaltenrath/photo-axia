@@ -5,7 +5,6 @@ import cropIcon from '../assets/icons/crop.svg'
 import eraserIcon from '../assets/icons/eraser.svg'
 import handIcon from '../assets/icons/hand.svg'
 import moveIcon from '../assets/icons/move.svg'
-import selectIcon from '../assets/icons/select.svg'
 import textIcon from '../assets/icons/text.svg'
 import zoomIcon from '../assets/icons/zoom.svg'
 
@@ -16,7 +15,6 @@ const emit = defineEmits<{
 
 const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boolean }> = [
   { id: 'move', icon: moveIcon, label: 'Mover (V)', enabled: true },
-  { id: 'select', icon: selectIcon, label: 'Selecionar (M)', enabled: true },
   { id: 'brush', icon: brushIcon, label: 'Pincel (em breve)', enabled: false },
   { id: 'eraser', icon: eraserIcon, label: 'Borracha (em breve)', enabled: false },
   { id: 'crop', icon: cropIcon, label: 'Recorte e seleção (C)', enabled: true },

@@ -21,7 +21,7 @@ import {
   type TransformHandle
 } from '../editor/freeTransform'
 import {
-  clampSelectionPoint,
+  clampSelectionToBounds,
   constrainedSelectionEndpoint,
   createLassoSelection,
   createShapeSelection,
@@ -175,11 +175,6 @@ const activeDisplayTransform = computed(() => {
   const layer = activeLayer.value
   if (!layer) return undefined
   return displayTransform(layer)
-})
-const selectionStyle = computed(() => {
-  const transform = activeDisplayTransform.value
-  if (!transform || !activeLayer.value?.visible || isTransforming.value) return undefined
-  return positionedTransformStyle(transform)
 })
 const freeTransformStyle = computed(() => {
   const transform = activeDisplayTransform.value
@@ -504,6 +499,12 @@ function startTransformRotate(event: PointerEvent) {
   }
 }
 
+function selectionBounds() {
+  const transform = activeLayer.value?.transform
+  if (!transform) return { x: 0, y: 0, width: props.document.width, height: props.document.height }
+  return { x: transform.x, y: transform.y, width: transform.width, height: transform.height }
+}
+
 function pointInsideDocument(point: SelectionPoint) {
   return point.x >= 0 && point.y >= 0 && point.x <= props.document.width && point.y <= props.document.height
 }
@@ -518,7 +519,7 @@ function startSelectionPointer(event: PointerEvent, point: SelectionPoint) {
     return true
   }
 
-  const start = clampSelectionPoint(point, props.document.width, props.document.height)
+  const start = point
   scroll.setPointerCapture(event.pointerId)
   selectionInteraction.value = {
     pointerId: event.pointerId,
@@ -616,7 +617,7 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
     emit('selectLayer', layer.id)
     return
   }
-  if (props.activeTool !== 'move' && props.activeTool !== 'select') return
+  if (props.activeTool !== 'move') return
 
   if (transformSession.value) commitFreeTransform()
 
@@ -658,7 +659,7 @@ function updatePointer(event: PointerEvent) {
     const rawPoint = pointerToDocument(event)
     if (!rawPoint) return
     event.preventDefault()
-    const point = clampSelectionPoint(rawPoint, props.document.width, props.document.height)
+    const point = rawPoint
     if (activeSelection.mode === 'lasso') {
       const previous = activeSelection.points.at(-1)!
       const minimumDistance = Math.max(0.25, 1.5 / scale.value)
@@ -674,8 +675,10 @@ function updatePointer(event: PointerEvent) {
         ? constrainedSelectionEndpoint(
             activeSelection.start,
             point,
-            props.document.width,
-            props.document.height
+            Number.POSITIVE_INFINITY,
+            Number.POSITIVE_INFINITY,
+            Number.NEGATIVE_INFINITY,
+            Number.NEGATIVE_INFINITY
           )
         : point
       const selection = createShapeSelection(activeSelection.mode, activeSelection.start, endpoint, event.shiftKey)
@@ -743,6 +746,7 @@ function stopPointer(event: PointerEvent) {
     if (completed?.kind === 'lasso') {
       completed = createLassoSelection(completed.points, Math.max(0.2, 0.75 / scale.value))
     }
+    if (completed) completed = clampSelectionToBounds(completed, selectionBounds())
     emit('update:selection', completed && !selectionIsEmpty(completed) ? completed : null)
     selectionInteraction.value = null
     selectionDraft.value = null
@@ -1108,7 +1112,6 @@ defineExpose({
               :document-width="document.width"
               :selection="visibleSelection"
             />
-            <div v-if="selectionStyle" class="layer-selection" :style="selectionStyle"></div>
             <div
               v-if="freeTransformStyle"
               class="free-transform-box"

@@ -3,8 +3,10 @@ import {
   layerSourceToDocumentMatrix,
   magicWandSpans,
   multiplyMatrices,
+  opaquePixelBounds,
   transformSelectionPoint,
   type PixelSelection,
+  type SelectionBounds,
   type SelectionPoint,
   type SelectionRegion,
   type WandResult
@@ -130,23 +132,39 @@ async function encodeCanvas(canvas: HTMLCanvasElement | OffscreenCanvas) {
   })
 }
 
-export async function eraseImageSelection(
-  asset: ImageAsset,
-  transform: LayerTransform,
-  selection: SelectionRegion
-) {
-  const response = await fetch(asset.sourceUrl)
-  if (!response.ok) throw new Error('Não foi possível carregar a camada para edição.')
-  const bitmap = await createImageBitmap(await response.blob())
-  const canvas: HTMLCanvasElement | OffscreenCanvas =
-    typeof OffscreenCanvas === 'undefined'
-      ? Object.assign(document.createElement('canvas'), { width: asset.width, height: asset.height })
-      : new OffscreenCanvas(asset.width, asset.height)
-  const context = canvas.getContext('2d', { alpha: true }) as
+export interface EraseSelectionResult {
+  blob: Blob
+  width: number
+  height: number
+  /** Bounds of the remaining opaque pixels, in the *original* asset's source-pixel space. Null when nothing was trimmed. */
+  trimmedBounds: SelectionBounds | null
+}
+
+function makeCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas {
+  return typeof OffscreenCanvas === 'undefined'
+    ? Object.assign(document.createElement('canvas'), { width, height })
+    : new OffscreenCanvas(width, height)
+}
+
+function canvas2dContext(canvas: HTMLCanvasElement | OffscreenCanvas) {
+  const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true }) as
     | CanvasRenderingContext2D
     | OffscreenCanvasRenderingContext2D
     | null
   if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
+  return context
+}
+
+export async function eraseImageSelection(
+  asset: ImageAsset,
+  transform: LayerTransform,
+  selection: SelectionRegion
+): Promise<EraseSelectionResult> {
+  const response = await fetch(asset.sourceUrl)
+  if (!response.ok) throw new Error('Não foi possível carregar a camada para edição.')
+  const bitmap = await createImageBitmap(await response.blob())
+  const canvas = makeCanvas(asset.width, asset.height)
+  const context = canvas2dContext(canvas)
   context.drawImage(bitmap, 0, 0, asset.width, asset.height)
   bitmap.close()
 
@@ -159,10 +177,40 @@ export async function eraseImageSelection(
   context.setTransform(...matrix)
   drawVectorSelection(context, selection)
   context.restore()
-  const blob = await encodeCanvas(canvas)
+
+  const image = context.getImageData(0, 0, asset.width, asset.height)
+  const opaqueBounds = opaquePixelBounds(image.data, asset.width, asset.height)
+  const fullyTrimmed =
+    opaqueBounds &&
+    (opaqueBounds.x > 0 ||
+      opaqueBounds.y > 0 ||
+      opaqueBounds.width < asset.width ||
+      opaqueBounds.height < asset.height)
+
+  if (!opaqueBounds || !fullyTrimmed) {
+    const blob = await encodeCanvas(canvas)
+    canvas.width = 1
+    canvas.height = 1
+    return { blob, width: asset.width, height: asset.height, trimmedBounds: null }
+  }
+
+  const trimmedCanvas = makeCanvas(opaqueBounds.width, opaqueBounds.height)
+  const trimmedContext = canvas2dContext(trimmedCanvas)
+  trimmedContext.putImageData(
+    image,
+    -opaqueBounds.x,
+    -opaqueBounds.y,
+    opaqueBounds.x,
+    opaqueBounds.y,
+    opaqueBounds.width,
+    opaqueBounds.height
+  )
+  const blob = await encodeCanvas(trimmedCanvas)
   canvas.width = 1
   canvas.height = 1
-  return blob
+  trimmedCanvas.width = 1
+  trimmedCanvas.height = 1
+  return { blob, width: opaqueBounds.width, height: opaqueBounds.height, trimmedBounds: opaqueBounds }
 }
 
 export function disposeSelectionEngine() {

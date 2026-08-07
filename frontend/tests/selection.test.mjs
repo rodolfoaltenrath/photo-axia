@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  clampSelectionToBounds,
   createLassoSelection,
   constrainedSelectionEndpoint,
   dragSelectionBounds,
   invertMatrix,
   layerSourceToDocumentMatrix,
   magicWandSpans,
+  opaquePixelBounds,
   pixelSpansOutlinePath,
   transformSelectionPoint
 } from '../src/editor/selection.ts'
@@ -87,6 +89,52 @@ test('varinha global seleciona todas as cores dentro da tolerância', () => {
   const result = magicWandSpans(image, 4, 2, 0, 0, 4, false)
   assert.equal(result.pixelCount, 5)
   assert.deepEqual(result.bounds, { x: 0, y: 0, width: 4, height: 2 })
+})
+
+test('clampSelectionToBounds recorta um retângulo que passa da camada', () => {
+  const selection = { kind: 'rectangle', bounds: { x: -50, y: -50, width: 200, height: 200 } }
+  const layerBounds = { x: 0, y: 0, width: 100, height: 100 }
+  assert.deepEqual(clampSelectionToBounds(selection, layerBounds), {
+    kind: 'rectangle',
+    bounds: { x: 0, y: 0, width: 100, height: 100 }
+  })
+})
+
+test('clampSelectionToBounds recorta um laço que passa da camada', () => {
+  const selection = {
+    kind: 'lasso',
+    points: [
+      { x: -20, y: 10 },
+      { x: 50, y: -20 },
+      { x: 50, y: 50 }
+    ],
+    bounds: { x: -20, y: -20, width: 70, height: 70 }
+  }
+  const layerBounds = { x: 0, y: 0, width: 100, height: 100 }
+  const clamped = clampSelectionToBounds(selection, layerBounds)
+  assert.deepEqual(clamped.points, [
+    { x: 0, y: 10 },
+    { x: 50, y: 0 },
+    { x: 50, y: 50 }
+  ])
+})
+
+test('opaquePixelBounds recorta para os pixels não transparentes restantes', () => {
+  const width = 4
+  const height = 4
+  const data = new Uint8ClampedArray(width * height * 4)
+  // apenas o pixel (1,1) e (2,2) têm alfa > 0
+  const setAlpha = (x, y, alpha) => {
+    data[(y * width + x) * 4 + 3] = alpha
+  }
+  setAlpha(1, 1, 255)
+  setAlpha(2, 2, 128)
+  assert.deepEqual(opaquePixelBounds(data, width, height), { x: 1, y: 1, width: 2, height: 2 })
+})
+
+test('opaquePixelBounds retorna null quando tudo está transparente', () => {
+  const data = new Uint8ClampedArray(4 * 4 * 4)
+  assert.equal(opaquePixelBounds(data, 4, 4), null)
 })
 
 test('contorno RLE elimina arestas horizontais internas', () => {

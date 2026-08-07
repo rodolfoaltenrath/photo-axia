@@ -59,10 +59,16 @@ export interface WandResult {
 
 const IDENTITY_MATRIX: Matrix2D = [1, 0, 0, 1, 0, 0]
 
-export function clampSelectionPoint(point: SelectionPoint, width: number, height: number): SelectionPoint {
+export function clampSelectionPoint(
+  point: SelectionPoint,
+  width: number,
+  height: number,
+  minX = 0,
+  minY = 0
+): SelectionPoint {
   return {
-    x: Math.max(0, Math.min(width, point.x)),
-    y: Math.max(0, Math.min(height, point.y))
+    x: Math.max(minX, Math.min(width, point.x)),
+    y: Math.max(minY, Math.min(height, point.y))
   }
 }
 
@@ -91,12 +97,14 @@ export function constrainedSelectionEndpoint(
   start: SelectionPoint,
   end: SelectionPoint,
   width: number,
-  height: number
+  height: number,
+  minX = 0,
+  minY = 0
 ) {
   const deltaX = end.x - start.x
   const deltaY = end.y - start.y
-  const availableX = deltaX < 0 ? start.x : width - start.x
-  const availableY = deltaY < 0 ? start.y : height - start.y
+  const availableX = deltaX < 0 ? start.x - minX : width - start.x
+  const availableY = deltaY < 0 ? start.y - minY : height - start.y
   const size = Math.max(0, Math.min(Math.max(Math.abs(deltaX), Math.abs(deltaY)), availableX, availableY))
   return {
     x: start.x + Math.sign(deltaX || 1) * size,
@@ -173,6 +181,25 @@ export function createShapeSelection(
 export function createLassoSelection(points: SelectionPoint[], tolerance = 0.75): LassoSelection {
   const simplified = simplifySelectionPoints(points, tolerance)
   return { kind: 'lasso', points: simplified, bounds: pointsBounds(simplified) }
+}
+
+export function intersectSelectionBounds(a: SelectionBounds, b: SelectionBounds): SelectionBounds {
+  const x0 = Math.max(a.x, b.x)
+  const y0 = Math.max(a.y, b.y)
+  const x1 = Math.min(a.x + a.width, b.x + b.width)
+  const y1 = Math.min(a.y + a.height, b.y + b.height)
+  return { x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) }
+}
+
+export function clampSelectionToBounds(selection: SelectionRegion, bounds: SelectionBounds): SelectionRegion {
+  if (selection.kind === 'pixels') return selection
+  if (selection.kind === 'lasso') {
+    const points = selection.points.map((point) =>
+      clampSelectionPoint(point, bounds.x + bounds.width, bounds.y + bounds.height, bounds.x, bounds.y)
+    )
+    return { kind: 'lasso', points, bounds: pointsBounds(points) }
+  }
+  return { ...selection, bounds: intersectSelectionBounds(selection.bounds, bounds) }
 }
 
 export function selectionIsEmpty(selection: SelectionRegion | null | undefined) {
@@ -276,6 +303,30 @@ export function invertMatrix(matrix: Matrix2D): Matrix2D {
 export function transformSelectionPoint(matrix: Matrix2D, point: SelectionPoint): SelectionPoint {
   const [a, b, c, d, e, f] = matrix
   return { x: a * point.x + c * point.y + e, y: b * point.x + d * point.y + f }
+}
+
+export function opaquePixelBounds(
+  pixels: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  alphaThreshold = 0
+): SelectionBounds | null {
+  let minX = width
+  let minY = height
+  let maxX = -1
+  let maxY = -1
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width
+    for (let x = 0; x < width; x++) {
+      if (pixels[(rowOffset + x) * 4 + 3]! <= alphaThreshold) continue
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+  }
+  if (maxX < minX || maxY < minY) return null
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
 }
 
 export function layerSourceToDocumentMatrix(

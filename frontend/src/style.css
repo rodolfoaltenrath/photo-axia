@@ -22,6 +22,13 @@ body {
   margin: 0;
   min-width: 960px;
   overflow: hidden;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
 }
 
 button,
@@ -584,18 +591,6 @@ select:focus-visible {
 .document-layer--active {
   cursor: move;
   will-change: transform;
-}
-
-.layer-selection {
-  position: absolute;
-  border: 2px solid #58c4b3;
-  box-shadow:
-    0 0 0 1px rgb(7 17 15 / 80%),
-    inset 0 0 0 1px rgb(255 255 255 / 25%);
-  pointer-events: none;
-  transform-origin: center;
-  will-change: transform;
-  z-index: 10;
 }
 
 .selection-overlay {

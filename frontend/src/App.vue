@@ -35,7 +35,14 @@ import {
 import { useHistory, type HistoryRecordOptions, type HistoryStep } from './editor/history'
 import { clampZoom } from './editor/viewport'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
-import { selectionIsEmpty, type SelectionMode, type SelectionPoint, type SelectionRegion } from './editor/selection'
+import {
+  layerSourceToDocumentMatrix,
+  selectionIsEmpty,
+  transformSelectionPoint,
+  type SelectionMode,
+  type SelectionPoint,
+  type SelectionRegion
+} from './editor/selection'
 import { createMagicWandSelection, disposeSelectionEngine, eraseImageSelection } from './services/selectionEngine'
 import type {
   DocumentSpec,
@@ -682,6 +689,7 @@ async function deleteSelectedPixels() {
 
   canvasViewport.value?.commitPendingTransform()
   const beforeImage = { ...layer.image }
+  const beforeTransform = { ...layer.transform }
   for (const source of [beforeImage.sourceUrl, beforeImage.previewUrl]) {
     if (source?.startsWith('blob:')) transientObjectUrls.add(source)
   }
@@ -690,22 +698,41 @@ async function deleteSelectedPixels() {
   errorText.value = ''
   statusText.value = 'Apagando pixels selecionados…'
   try {
-    const blob = await eraseImageSelection(beforeImage, layer.transform, currentSelection)
-    createdSource = URL.createObjectURL(blob)
+    const result = await eraseImageSelection(beforeImage, beforeTransform, currentSelection)
+    createdSource = URL.createObjectURL(result.blob)
     trackedObjectUrls.add(createdSource)
     layer.image = {
-      width: beforeImage.width,
-      height: beforeImage.height,
+      width: result.width,
+      height: result.height,
       mimeType: 'image/png',
       sourceUrl: createdSource,
-      byteSize: blob.size
+      byteSize: result.blob.size
+    }
+    if (result.trimmedBounds) {
+      const bounds = result.trimmedBounds
+      const oldMatrix = layerSourceToDocumentMatrix(beforeTransform, beforeImage.width, beforeImage.height)
+      const center = transformSelectionPoint(oldMatrix, {
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2
+      })
+      const scaleX = beforeTransform.width / beforeImage.width
+      const scaleY = beforeTransform.height / beforeImage.height
+      const newWidth = bounds.width * scaleX
+      const newHeight = bounds.height * scaleY
+      layer.transform = {
+        ...beforeTransform,
+        x: center.x - newWidth / 2,
+        y: center.y - newHeight / 2,
+        width: newWidth,
+        height: newHeight
+      }
     }
     await refreshLayerPreview(layer, true)
     recordHistory('Apagar seleção', {
       type: 'layer:patch',
       layerId: layer.id,
-      before: { image: beforeImage },
-      after: { image: { ...layer.image } }
+      before: { image: beforeImage, transform: beforeTransform },
+      after: { image: { ...layer.image }, transform: { ...layer.transform } }
     })
     transientObjectUrls.clear()
     collectUnusedObjectUrls()
@@ -714,6 +741,7 @@ async function deleteSelectedPixels() {
     statusText.value = 'Pixels apagados'
   } catch (error) {
     layer.image = beforeImage
+    layer.transform = beforeTransform
     if (createdSource) {
       URL.revokeObjectURL(createdSource)
       trackedObjectUrls.delete(createdSource)
@@ -820,7 +848,6 @@ function handleShortcut(event: KeyboardEvent) {
 
   const toolsByKey: Record<string, EditorTool> = {
     v: 'move',
-    m: 'select',
     c: 'crop',
     t: 'text',
     h: 'hand',

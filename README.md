@@ -64,7 +64,7 @@ As ferramentas ainda nao implementadas aparecem desabilitadas para manter a inte
 
 ## Atalhos de navegacao
 
-- `V`, `M`, `H` e `Z`: Mover, Selecionar, Mao e Zoom.
+- `V`, `H` e `Z`: Mover, Mao e Zoom.
 - `Espaco` + arrastar ou botao do meio + arrastar: navegar pela imagem.
 - `Ctrl` + `Espaco` + clique: zoom temporario; `Alt` + `Espaco` + clique: reduzir temporariamente.
 - `Ctrl` + roda do mouse ou `Alt` + roda: zoom suave sob o cursor.
