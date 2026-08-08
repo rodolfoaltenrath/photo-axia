@@ -505,13 +505,9 @@ function selectionBounds() {
   return { x: transform.x, y: transform.y, width: transform.width, height: transform.height }
 }
 
-function pointInsideDocument(point: SelectionPoint) {
-  return point.x >= 0 && point.y >= 0 && point.x <= props.document.width && point.y <= props.document.height
-}
-
 function startSelectionPointer(event: PointerEvent, point: SelectionPoint) {
   const scroll = scrollArea.value
-  if (!scroll || event.button !== 0 || !pointInsideDocument(point)) return false
+  if (!scroll || event.button !== 0) return false
   event.preventDefault()
   event.stopPropagation()
   if (props.selectionMode === 'magic-wand') {

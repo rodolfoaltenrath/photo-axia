@@ -462,10 +462,6 @@ select:focus-visible {
   background: #536172;
 }
 
-.canvas-scroll:focus-visible {
-  box-shadow: inset 0 0 0 1px #58c4b3;
-}
-
 .canvas-scroll--panning {
   cursor: grabbing;
 }
