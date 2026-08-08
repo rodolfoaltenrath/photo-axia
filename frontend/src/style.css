@@ -528,7 +528,8 @@ select:focus-visible {
   user-select: none;
 }
 
-.canvas-scroll--panning .canvas-surface {
+.canvas-scroll--panning .canvas-surface,
+.canvas-scroll--scrolling .canvas-surface {
   box-shadow: none;
 }
 

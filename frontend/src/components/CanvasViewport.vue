@@ -64,6 +64,8 @@ const emit = defineEmits<{
 const scrollArea = ref<HTMLDivElement | null>(null)
 const surface = ref<HTMLDivElement | null>(null)
 const isPanning = ref(false)
+const isNativeScrolling = ref(false)
+let nativeScrollTimeout: ReturnType<typeof setTimeout> | undefined
 const isSpacePressed = ref(false)
 const modifierKeys = ref({ alt: false, command: false, shift: false })
 const visualZoom = ref(props.zoom)
@@ -181,9 +183,18 @@ const freeTransformStyle = computed(() => {
   if (!transform || !activeLayer.value?.visible || !isTransforming.value) return undefined
   return positionedTransformStyle(transform)
 })
+function handleNativeScroll() {
+  isNativeScrolling.value = true
+  if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
+  nativeScrollTimeout = setTimeout(() => {
+    isNativeScrolling.value = false
+  }, 120)
+}
+
 const viewportCursorClass = computed(() => ({
   'canvas-scroll--ready': isViewportReady.value,
   'canvas-scroll--panning': isPanning.value,
+  'canvas-scroll--scrolling': isNativeScrolling.value,
   'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--selection': props.activeTool === 'crop',
   'canvas-scroll--pan-ready':
@@ -988,6 +999,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(interactionFrame)
   stopWheelZoomAnimation()
   resizeObserver?.disconnect()
+  if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
 })
 
 defineExpose({
@@ -1086,6 +1098,7 @@ defineExpose({
       @pointerdown.capture="startViewportPointer"
       @pointermove="updatePointer"
       @pointerup="stopPointer"
+      @scroll.passive="handleNativeScroll"
     >
       <div class="canvas-pasteboard" :style="pasteboardStyle">
         <div class="canvas-frame" :style="frameStyle">
