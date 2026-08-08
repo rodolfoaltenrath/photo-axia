@@ -26,6 +26,89 @@ type App struct {
 	assetsMu     sync.RWMutex
 	imagePaths   map[string]string
 	previewSlots chan struct{}
+	previewCache *previewCache
+}
+
+// previewCacheCapacityBytes and previewCacheMaxEntries are vars (not consts) so
+// tests can temporarily shrink them to exercise eviction.
+var previewCacheCapacityBytes int64 = 64 * 1024 * 1024
+var previewCacheMaxEntries = 200
+
+type previewCacheKey struct {
+	id     string
+	width  int
+	height int
+}
+
+type previewCacheEntry struct {
+	key         previewCacheKey
+	modTime     time.Time
+	size        int64
+	contentType string
+	data        []byte
+}
+
+// previewCache is a small in-memory LRU for generated image previews, keyed by
+// (asset id, width, height). Entries are validated against the source file's
+// mtime/size on every read so a changed file on disk is never served stale.
+//
+// Deliberately a slice scanned linearly instead of a container/list+map: the
+// expected working set is tiny (bounded by previewCacheCapacityBytes), so the
+// O(n) scan is irrelevant in practice and this avoids the classic bug of a
+// list and a map drifting out of sync on eviction.
+type previewCache struct {
+	mu      sync.Mutex
+	entries []*previewCacheEntry // ordered oldest (least recently used) -> newest
+	bytes   int64
+}
+
+func newPreviewCache() *previewCache {
+	return &previewCache{}
+}
+
+func (c *previewCache) get(key previewCacheKey, modTime time.Time, size int64) (previewCacheEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for index, entry := range c.entries {
+		if entry.key != key {
+			continue
+		}
+		if !entry.modTime.Equal(modTime) || entry.size != size {
+			return previewCacheEntry{}, false
+		}
+		c.entries = append(c.entries[:index], c.entries[index+1:]...)
+		c.entries = append(c.entries, entry)
+		return *entry, true
+	}
+	return previewCacheEntry{}, false
+}
+
+func (c *previewCache) put(entry previewCacheEntry) {
+	if int64(len(entry.data)) > previewCacheCapacityBytes {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for index, existing := range c.entries {
+		if existing.key == entry.key {
+			c.bytes -= int64(len(existing.data))
+			c.entries = append(c.entries[:index], c.entries[index+1:]...)
+			break
+		}
+	}
+
+	stored := entry
+	c.entries = append(c.entries, &stored)
+	c.bytes += int64(len(entry.data))
+
+	for len(c.entries) > 0 && (c.bytes > previewCacheCapacityBytes || len(c.entries) > previewCacheMaxEntries) {
+		oldest := c.entries[0]
+		c.entries = c.entries[1:]
+		c.bytes -= int64(len(oldest.data))
+	}
 }
 
 type DocumentSpec struct {
@@ -61,6 +144,7 @@ func NewApp() *App {
 	return &App{
 		imagePaths:   make(map[string]string),
 		previewSlots: make(chan struct{}, 1),
+		previewCache: newPreviewCache(),
 	}
 }
 
@@ -262,15 +346,37 @@ func (a *App) assetHandler() http.Handler {
 				http.Error(response, "dimensoes de previa invalidas", http.StatusBadRequest)
 				return
 			}
+
+			key := previewCacheKey{id: id, width: previewWidth, height: previewHeight}
+			if info, statErr := os.Stat(path); statErr == nil {
+				if entry, ok := a.previewCache.get(key, info.ModTime(), info.Size()); ok {
+					writePreviewEntry(response, entry)
+					return
+				}
+			}
+
 			select {
 			case a.previewSlots <- struct{}{}:
 				defer func() { <-a.previewSlots }()
 			case <-request.Context().Done():
 				return
 			}
-			if err := serveImagePreview(response, path, previewWidth, previewHeight); err != nil {
-				http.Error(response, "falha ao gerar previa", http.StatusInternalServerError)
+
+			if info, statErr := os.Stat(path); statErr == nil {
+				if entry, ok := a.previewCache.get(key, info.ModTime(), info.Size()); ok {
+					writePreviewEntry(response, entry)
+					return
+				}
 			}
+
+			entry, err := generateImagePreview(path, previewWidth, previewHeight)
+			if err != nil {
+				http.Error(response, "falha ao gerar previa", http.StatusInternalServerError)
+				return
+			}
+			entry.key = key
+			a.previewCache.put(entry)
+			writePreviewEntry(response, entry)
 			return
 		}
 
@@ -279,16 +385,21 @@ func (a *App) assetHandler() http.Handler {
 	})
 }
 
-func serveImagePreview(response http.ResponseWriter, path string, width int, height int) error {
+func generateImagePreview(path string, width int, height int) (previewCacheEntry, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return previewCacheEntry{}, err
 	}
 	defer file.Close()
 
+	info, err := file.Stat()
+	if err != nil {
+		return previewCacheEntry{}, err
+	}
+
 	source, format, err := image.Decode(file)
 	if err != nil {
-		return err
+		return previewCacheEntry{}, err
 	}
 
 	preview := image.NewRGBA(image.Rect(0, 0, width, height))
@@ -305,14 +416,22 @@ func serveImagePreview(response http.ResponseWriter, path string, width int, hei
 		err = encoder.Encode(&encoded, preview)
 	}
 	if err != nil {
-		return err
+		return previewCacheEntry{}, err
 	}
 
+	return previewCacheEntry{
+		modTime:     info.ModTime(),
+		size:        info.Size(),
+		contentType: contentType,
+		data:        encoded.Bytes(),
+	}, nil
+}
+
+func writePreviewEntry(response http.ResponseWriter, entry previewCacheEntry) {
 	response.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	response.Header().Set("Content-Type", contentType)
-	response.Header().Set("Content-Length", strconv.Itoa(encoded.Len()))
-	_, err = response.Write(encoded.Bytes())
-	return err
+	response.Header().Set("Content-Type", entry.contentType)
+	response.Header().Set("Content-Length", strconv.Itoa(len(entry.data)))
+	response.Write(entry.data)
 }
 
 func (a *App) assetMiddleware(next http.Handler) http.Handler {

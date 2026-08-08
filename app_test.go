@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -8,8 +9,213 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
+
+// writeSolidPNG writes a width x height PNG filled with the given color to path.
+// The alpha channel is kept below 255 so image.RGBA.Opaque() reports false,
+// which keeps generateImagePreview on the lossless PNG encoding path instead
+// of JPEG — required for exact pixel-color comparisons in these tests.
+func writeSolidPNG(t *testing.T, path string, width, height int, fill color.RGBA) {
+	t.Helper()
+	fill.A = 254
+
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			source.Set(x, y, fill)
+		}
+	}
+	if err := png.Encode(file, source); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func requestPreview(t *testing.T, app *App, sourceURL string, width, height int) *httptest.ResponseRecorder {
+	t.Helper()
+	url := fmt.Sprintf("%s?previewWidth=%d&previewHeight=%d", sourceURL, width, height)
+	request := httptest.NewRequest(http.MethodGet, url, nil)
+	response := httptest.NewRecorder()
+	app.assetHandler().ServeHTTP(response, request)
+	return response
+}
+
+// corruptFilePreservingStat overwrites path with undecodable bytes of the exact
+// same length, then restores the original mtime. The cache's staleness check
+// (mtime+size) will see no change, so a real cache hit keeps serving the old
+// (valid) cached bytes without ever reopening the file; only a cache miss
+// would try to decode the garbage and fail. This proves cache behavior
+// deterministically without depending on file permissions or deletion, which
+// can behave differently across environments (e.g. root bypassing chmod).
+func corruptFilePreservingStat(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	garbage := make([]byte, info.Size())
+	for index := range garbage {
+		garbage[index] = 0xff
+	}
+	if err := os.WriteFile(path, garbage, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPreviewCacheServesRepeatedRequestWithoutReReading(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.png")
+	writeSolidPNG(t, path, 40, 20, color.RGBA{R: 200, G: 40, B: 40})
+
+	app := NewApp()
+	imported, err := app.readImageFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := requestPreview(t, app, imported.SourceURL, 10, 5)
+	if first.Code != http.StatusOK {
+		t.Fatalf("unexpected first response status: %d", first.Code)
+	}
+
+	corruptFilePreservingStat(t, path)
+
+	second := requestPreview(t, app, imported.SourceURL, 10, 5)
+	if second.Code != http.StatusOK {
+		t.Fatalf("expected cached response despite corrupted source, got status: %d", second.Code)
+	}
+	if first.Body.String() != second.Body.String() {
+		t.Fatal("cached response body differs from the original preview")
+	}
+}
+
+func TestPreviewCacheInvalidatesOnFileChange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.png")
+	writeSolidPNG(t, path, 40, 20, color.RGBA{R: 200, G: 40, B: 40})
+
+	app := NewApp()
+	imported, err := app.readImageFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := requestPreview(t, app, imported.SourceURL, 10, 5)
+	if first.Code != http.StatusOK {
+		t.Fatalf("unexpected first response status: %d", first.Code)
+	}
+	firstPreview, _, err := image.Decode(first.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _, _, _ := firstPreview.At(0, 0).RGBA(); r>>8 < 150 {
+		t.Fatalf("expected reddish first preview, got: %v", firstPreview.At(0, 0))
+	}
+
+	writeSolidPNG(t, path, 40, 20, color.RGBA{R: 40, G: 40, B: 200})
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	second := requestPreview(t, app, imported.SourceURL, 10, 5)
+	if second.Code != http.StatusOK {
+		t.Fatalf("unexpected second response status: %d", second.Code)
+	}
+	secondPreview, _, err := image.Decode(second.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, b, _ := secondPreview.At(0, 0).RGBA()
+	if b>>8 < 150 {
+		t.Fatalf("expected updated (blue) preview after file change, got: %v", secondPreview.At(0, 0))
+	}
+}
+
+func TestPreviewCacheEvictsLeastRecentlyUsed(t *testing.T) {
+	originalMaxEntries := previewCacheMaxEntries
+	previewCacheMaxEntries = 1
+	t.Cleanup(func() { previewCacheMaxEntries = originalMaxEntries })
+
+	pathA := filepath.Join(t.TempDir(), "a.png")
+	pathB := filepath.Join(t.TempDir(), "b.png")
+	writeSolidPNG(t, pathA, 40, 20, color.RGBA{R: 200, G: 40, B: 40})
+	writeSolidPNG(t, pathB, 40, 20, color.RGBA{R: 40, G: 40, B: 200})
+
+	app := NewApp()
+	importedA, err := app.readImageFile(pathA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importedB, err := app.readImageFile(pathB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if response := requestPreview(t, app, importedA.SourceURL, 10, 5); response.Code != http.StatusOK {
+		t.Fatalf("unexpected status caching A: %d", response.Code)
+	}
+	if response := requestPreview(t, app, importedB.SourceURL, 10, 5); response.Code != http.StatusOK {
+		t.Fatalf("unexpected status caching B: %d", response.Code)
+	}
+
+	corruptFilePreservingStat(t, pathA)
+	if response := requestPreview(t, app, importedA.SourceURL, 10, 5); response.Code != http.StatusInternalServerError {
+		t.Fatalf("expected A to have been evicted (regeneration from corrupted file fails), got status: %d", response.Code)
+	}
+
+	corruptFilePreservingStat(t, pathB)
+	if response := requestPreview(t, app, importedB.SourceURL, 10, 5); response.Code != http.StatusOK {
+		t.Fatalf("expected B to still be cached (most recently used), got status: %d", response.Code)
+	}
+}
+
+func TestPreviewCacheHandlesConcurrentRequestsForSamePreview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.png")
+	writeSolidPNG(t, path, 40, 20, color.RGBA{R: 200, G: 40, B: 40})
+
+	app := NewApp()
+	imported, err := app.readImageFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const concurrency = 8
+	bodies := make([]string, concurrency)
+	codes := make([]int, concurrency)
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for index := 0; index < concurrency; index++ {
+		go func(index int) {
+			defer wg.Done()
+			response := requestPreview(t, app, imported.SourceURL, 10, 5)
+			codes[index] = response.Code
+			bodies[index] = response.Body.String()
+		}(index)
+	}
+	wg.Wait()
+
+	for index, code := range codes {
+		if code != http.StatusOK {
+			t.Fatalf("request %d unexpected status: %d", index, code)
+		}
+		if bodies[index] != bodies[0] {
+			t.Fatalf("request %d body differs from request 0", index)
+		}
+	}
+}
 
 func TestReadImageFileRegistersAsset(t *testing.T) {
 	temporaryPath := filepath.Join(t.TempDir(), "sample.png")
