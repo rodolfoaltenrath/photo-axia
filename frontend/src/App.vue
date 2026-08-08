@@ -694,6 +694,7 @@ async function deleteSelectedPixels() {
     if (source?.startsWith('blob:')) transientObjectUrls.add(source)
   }
   let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
   isBusy.value = true
   errorText.value = ''
   statusText.value = 'Apagando pixels selecionados…'
@@ -701,13 +702,8 @@ async function deleteSelectedPixels() {
     const result = await eraseImageSelection(beforeImage, beforeTransform, currentSelection)
     createdSource = URL.createObjectURL(result.blob)
     trackedObjectUrls.add(createdSource)
-    layer.image = {
-      width: result.width,
-      height: result.height,
-      mimeType: 'image/png',
-      sourceUrl: createdSource,
-      byteSize: result.blob.size
-    }
+
+    let newTransform = beforeTransform
     if (result.trimmedBounds) {
       const bounds = result.trimmedBounds
       const oldMatrix = layerSourceToDocumentMatrix(beforeTransform, beforeImage.width, beforeImage.height)
@@ -719,7 +715,7 @@ async function deleteSelectedPixels() {
       const scaleY = beforeTransform.height / beforeImage.height
       const newWidth = bounds.width * scaleX
       const newHeight = bounds.height * scaleY
-      layer.transform = {
+      newTransform = {
         ...beforeTransform,
         x: center.x - newWidth / 2,
         y: center.y - newHeight / 2,
@@ -727,7 +723,27 @@ async function deleteSelectedPixels() {
         height: newHeight
       }
     }
-    await refreshLayerPreview(layer, true)
+
+    const newAsset = {
+      width: result.width,
+      height: result.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: result.blob.size
+    }
+    const preview = await createImagePreview(newAsset, newTransform.width, newTransform.height)
+    createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+    await Promise.all([preloadImage(newAsset.sourceUrl), preview ? preloadImage(preview.url) : Promise.resolve()])
+
+    layer.image = {
+      ...newAsset,
+      previewUrl: preview?.url,
+      previewWidth: preview?.width ?? newAsset.width,
+      previewHeight: preview?.height ?? newAsset.height
+    }
+    layer.transform = newTransform
+
     recordHistory('Apagar seleção', {
       type: 'layer:patch',
       layerId: layer.id,
@@ -746,11 +762,24 @@ async function deleteSelectedPixels() {
       URL.revokeObjectURL(createdSource)
       trackedObjectUrls.delete(createdSource)
     }
+    if (createdPreviewUrl) {
+      URL.revokeObjectURL(createdPreviewUrl)
+      trackedObjectUrls.delete(createdPreviewUrl)
+    }
     transientObjectUrls.clear()
     showError(error, 'Não foi possível apagar a seleção.')
   } finally {
     isBusy.value = false
   }
+}
+
+function preloadImage(url: string) {
+  return new Promise<void>((resolve) => {
+    const image = new Image()
+    image.onload = () => resolve()
+    image.onerror = () => resolve()
+    image.src = url
+  })
 }
 
 async function importImages() {
