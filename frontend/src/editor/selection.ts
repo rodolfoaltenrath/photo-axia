@@ -269,6 +269,37 @@ export function pixelSpansOutlinePath(spans: PixelSpan[]) {
   return path.join('')
 }
 
+export function drawVectorSelection(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  selection: SelectionRegion
+) {
+  if (selection.kind === 'pixels') {
+    context.beginPath()
+    for (const span of selection.spans) context.rect(span.x0, span.y, span.x1 - span.x0, 1)
+    context.fill()
+    return
+  }
+
+  context.beginPath()
+  if (selection.kind === 'rectangle') {
+    const { x, y, width, height } = selection.bounds
+    context.rect(x, y, width, height)
+  } else if (selection.kind === 'ellipse') {
+    const { x, y, width, height } = selection.bounds
+    context.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2)
+  } else {
+    const first = selection.points[0]
+    if (!first) return
+    context.moveTo(first.x, first.y)
+    for (let index = 1; index < selection.points.length; index++) {
+      const point = selection.points[index]!
+      context.lineTo(point.x, point.y)
+    }
+    context.closePath()
+  }
+  context.fill()
+}
+
 export function matrixToSvg(matrix: Matrix2D) {
   return `matrix(${matrix.join(' ')})`
 }

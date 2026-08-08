@@ -1,4 +1,5 @@
 import {
+  drawVectorSelection,
   invertMatrix,
   layerSourceToDocumentMatrix,
   magicWandSpans,
@@ -21,6 +22,44 @@ interface PendingWand {
 let wandWorker: Worker | undefined
 let nextRequestId = 1
 const pendingWands = new Map<number, PendingWand>()
+
+export interface EraseSelectionResult {
+  blob: Blob
+  width: number
+  height: number
+  /** Bounds of the remaining opaque pixels, in the *original* asset's source-pixel space. Null when nothing was trimmed. */
+  trimmedBounds: SelectionBounds | null
+}
+
+interface PendingErase {
+  resolve: (result: EraseSelectionResult) => void
+  reject: (error: Error) => void
+}
+
+let eraseWorker: Worker | undefined
+let nextEraseRequestId = 1
+const pendingErases = new Map<number, PendingErase>()
+
+function eraseWorkerInstance() {
+  if (typeof Worker === 'undefined') return undefined
+  if (eraseWorker) return eraseWorker
+  eraseWorker = new Worker(new URL('../workers/eraseSelection.worker.ts', import.meta.url), { type: 'module' })
+  eraseWorker.onmessage = (event: MessageEvent<{ id: number; result?: EraseSelectionResult; error?: string }>) => {
+    const pending = pendingErases.get(event.data.id)
+    if (!pending) return
+    pendingErases.delete(event.data.id)
+    if (event.data.error) pending.reject(new Error(event.data.error))
+    else if (event.data.result) pending.resolve(event.data.result)
+    else pending.reject(new Error('O apagar retornou um resultado inválido.'))
+  }
+  eraseWorker.onerror = () => {
+    for (const pending of pendingErases.values()) pending.reject(new Error('O apagar de pixels foi interrompido.'))
+    pendingErases.clear()
+    eraseWorker?.terminate()
+    eraseWorker = undefined
+  }
+  return eraseWorker
+}
 
 function workerInstance() {
   if (typeof Worker === 'undefined') return undefined
@@ -94,34 +133,6 @@ export async function createMagicWandSelection(
   }
 }
 
-function drawVectorSelection(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, selection: SelectionRegion) {
-  if (selection.kind === 'pixels') {
-    context.beginPath()
-    for (const span of selection.spans) context.rect(span.x0, span.y, span.x1 - span.x0, 1)
-    context.fill()
-    return
-  }
-
-  context.beginPath()
-  if (selection.kind === 'rectangle') {
-    const { x, y, width, height } = selection.bounds
-    context.rect(x, y, width, height)
-  } else if (selection.kind === 'ellipse') {
-    const { x, y, width, height } = selection.bounds
-    context.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2)
-  } else {
-    const first = selection.points[0]
-    if (!first) return
-    context.moveTo(first.x, first.y)
-    for (let index = 1; index < selection.points.length; index++) {
-      const point = selection.points[index]!
-      context.lineTo(point.x, point.y)
-    }
-    context.closePath()
-  }
-  context.fill()
-}
-
 async function encodeCanvas(canvas: HTMLCanvasElement | OffscreenCanvas) {
   if ('convertToBlob' in canvas) return canvas.convertToBlob({ type: 'image/png' })
   return new Promise<Blob>((resolve, reject) => {
@@ -130,14 +141,6 @@ async function encodeCanvas(canvas: HTMLCanvasElement | OffscreenCanvas) {
       'image/png'
     )
   })
-}
-
-export interface EraseSelectionResult {
-  blob: Blob
-  width: number
-  height: number
-  /** Bounds of the remaining opaque pixels, in the *original* asset's source-pixel space. Null when nothing was trimmed. */
-  trimmedBounds: SelectionBounds | null
 }
 
 function makeCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas {
@@ -155,14 +158,13 @@ function canvas2dContext(canvas: HTMLCanvasElement | OffscreenCanvas) {
   return context
 }
 
-export async function eraseImageSelection(
+async function fallbackErase(
+  sourceBlob: Blob,
   asset: ImageAsset,
   transform: LayerTransform,
   selection: SelectionRegion
 ): Promise<EraseSelectionResult> {
-  const response = await fetch(asset.sourceUrl)
-  if (!response.ok) throw new Error('Não foi possível carregar a camada para edição.')
-  const bitmap = await createImageBitmap(await response.blob())
+  const bitmap = await createImageBitmap(sourceBlob)
   const canvas = makeCanvas(asset.width, asset.height)
   const context = canvas2dContext(canvas)
   context.drawImage(bitmap, 0, 0, asset.width, asset.height)
@@ -213,9 +215,32 @@ export async function eraseImageSelection(
   return { blob, width: opaqueBounds.width, height: opaqueBounds.height, trimmedBounds: opaqueBounds }
 }
 
+export async function eraseImageSelection(
+  asset: ImageAsset,
+  transform: LayerTransform,
+  selection: SelectionRegion
+): Promise<EraseSelectionResult> {
+  const response = await fetch(asset.sourceUrl)
+  if (!response.ok) throw new Error('Não foi possível carregar a camada para edição.')
+  const blob = await response.blob()
+
+  const worker = eraseWorkerInstance()
+  if (!worker) return fallbackErase(blob, asset, transform, selection)
+
+  const id = nextEraseRequestId++
+  return new Promise<EraseSelectionResult>((resolve, reject) => {
+    pendingErases.set(id, { resolve, reject })
+    worker.postMessage({ id, blob, assetWidth: asset.width, assetHeight: asset.height, transform, selection })
+  })
+}
+
 export function disposeSelectionEngine() {
   wandWorker?.terminate()
   wandWorker = undefined
   for (const pending of pendingWands.values()) pending.reject(new Error('Seleção cancelada.'))
   pendingWands.clear()
+  eraseWorker?.terminate()
+  eraseWorker = undefined
+  for (const pending of pendingErases.values()) pending.reject(new Error('Apagar cancelado.'))
+  pendingErases.clear()
 }

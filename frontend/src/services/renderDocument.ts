@@ -27,10 +27,19 @@ export async function renderDocumentPNG(document: DocumentSpec, layers: LayerIte
     context.restore()
   }
 
-  for (const layer of [...layers].reverse()) {
+  const orderedLayers = [...layers].reverse()
+  const images = new Map(
+    await Promise.all(
+      orderedLayers
+        .filter((layer) => layer.visible && layer.transform && layer.kind === 'image' && layer.image)
+        .map(async (layer) => [layer.id, await loadImage(layer.image!.sourceUrl)] as const)
+    )
+  )
+
+  for (const layer of orderedLayers) {
     if (!layer.visible || !layer.transform) continue
 
-    const image = layer.kind === 'image' && layer.image ? await loadImage(layer.image.sourceUrl) : undefined
+    const image = images.get(layer.id)
     if (!image && (layer.kind !== 'text' || !layer.text)) continue
 
     const centerX = layer.transform.x + layer.transform.width / 2
