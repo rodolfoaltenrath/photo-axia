@@ -5,11 +5,13 @@ import type { EditorTool, LayerItem, TextLayerContent } from '../types/editor'
 const props = defineProps<{
   activeLayer: LayerItem
   activeTool: EditorTool
+  brushColor: string
   brushSize: number
   zoom: number
 }>()
 
 defineEmits<{
+  (event: 'update:brushColor', value: string): void
   (event: 'update:brushSize', value: number): void
   (event: 'update:layerOpacity', value: number): void
   (event: 'update:text', patch: Partial<TextLayerContent>): void
@@ -51,6 +53,16 @@ watch(
           min="1"
           type="range"
           @input="$emit('update:brushSize', Number(($event.target as HTMLInputElement).value))"
+        />
+      </label>
+
+      <label v-if="activeTool === 'brush'" class="compact-range">
+        <span>Cor</span>
+        <input
+          class="text-color-input"
+          :value="brushColor"
+          type="color"
+          @input="$emit('update:brushColor', ($event.target as HTMLInputElement).value)"
         />
       </label>
 

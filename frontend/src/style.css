@@ -547,8 +547,15 @@ select:focus-visible {
 
 .document-layers,
 .document-layer,
-.document-layer img {
+.document-layer img,
+.brush-preview {
   position: absolute;
+}
+
+.brush-preview {
+  inset: 0 auto auto 0;
+  pointer-events: none;
+  z-index: 15;
 }
 
 .document-layers {

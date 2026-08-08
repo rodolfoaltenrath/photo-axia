@@ -10,6 +10,7 @@ import {
   magicWandSpans,
   opaquePixelBounds,
   pixelSpansOutlinePath,
+  sourceScaleFactor,
   transformSelectionPoint
 } from '../src/editor/selection.ts'
 
@@ -65,6 +66,20 @@ test('matriz de camada preserva ida e volta com escala e rotação', () => {
   const restored = transformSelectionPoint(invertMatrix(matrix), documentPoint)
   assert.ok(Math.abs(restored.x - source.x) < 1e-8)
   assert.ok(Math.abs(restored.y - source.y) < 1e-8)
+})
+
+test('sourceScaleFactor converte escala uniforme exatamente', () => {
+  const transform = { x: 0, y: 0, width: 400, height: 200 }
+  assert.equal(sourceScaleFactor(transform, 200, 100), 2)
+})
+
+test('sourceScaleFactor usa a média geométrica para escala não uniforme', () => {
+  const transform = { x: 0, y: 0, width: 800, height: 200 }
+  assert.equal(sourceScaleFactor(transform, 100, 100), 4)
+})
+
+test('sourceScaleFactor não quebra com dimensões de origem inválidas', () => {
+  assert.equal(sourceScaleFactor({ x: 0, y: 0, width: 10, height: 10 }, 0, 0), 1)
 })
 
 test('varinha contígua não atravessa uma região de outra cor', () => {

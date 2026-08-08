@@ -15,7 +15,7 @@ const emit = defineEmits<{
 
 const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boolean }> = [
   { id: 'move', icon: moveIcon, label: 'Mover (V)', enabled: true },
-  { id: 'brush', icon: brushIcon, label: 'Pincel (em breve)', enabled: false },
+  { id: 'brush', icon: brushIcon, label: 'Pincel (B)', enabled: true },
   { id: 'eraser', icon: eraserIcon, label: 'Borracha (em breve)', enabled: false },
   { id: 'crop', icon: cropIcon, label: 'Recorte e seleção (C)', enabled: true },
   { id: 'text', icon: textIcon, label: 'Texto (T)', enabled: true },

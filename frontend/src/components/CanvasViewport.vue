@@ -25,8 +25,12 @@ import {
   constrainedSelectionEndpoint,
   createLassoSelection,
   createShapeSelection,
+  invertMatrix,
+  layerSourceToDocumentMatrix,
   pointsBounds,
   selectionIsEmpty,
+  sourceScaleFactor,
+  transformSelectionPoint,
   type SelectionMode,
   type SelectionPoint,
   type SelectionRegion
@@ -36,8 +40,10 @@ const props = defineProps<{
   activeLayerId: string
   activeTool: EditorTool
   autoSelectLayer: boolean
+  brushColor: string
   brushSize: number
   document: DocumentSpec
+  isBusy: boolean
   layers: LayerItem[]
   magicWandContiguous: boolean
   magicWandTolerance: number
@@ -52,6 +58,7 @@ const emit = defineEmits<{
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
   (event: 'deleteSelection'): void
   (event: 'magicWandSelect', point: SelectionPoint): void
+  (event: 'paintStroke', points: SelectionPoint[], size: number, color: string): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
   (event: 'update:autoSelectLayer', enabled: boolean): void
@@ -114,6 +121,8 @@ const selectionInteraction = ref<{
   start: SelectionPoint
   points: SelectionPoint[]
 } | null>(null)
+const brushInteraction = ref<{ pointerId: number; layerId: string; points: SelectionPoint[] } | null>(null)
+const brushPreviewCanvas = ref<HTMLCanvasElement | null>(null)
 let resizeObserver: ResizeObserver | undefined
 let interactionFrame = 0
 let wheelZoomFrame = 0
@@ -183,6 +192,16 @@ const freeTransformStyle = computed(() => {
   if (!transform || !activeLayer.value?.visible || !isTransforming.value) return undefined
   return positionedTransformStyle(transform)
 })
+const paintableLayer = computed(() => {
+  const layer = activeLayer.value
+  if (!layer || layer.kind !== 'image' || !layer.image || !layer.transform) return undefined
+  return layer
+})
+const brushPreviewStyle = computed(() => {
+  const transform = activeDisplayTransform.value
+  if (!transform || !paintableLayer.value || !brushInteraction.value) return undefined
+  return positionedTransformStyle(transform)
+})
 function handleNativeScroll() {
   isNativeScrolling.value = true
   if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
@@ -196,7 +215,7 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--panning': isPanning.value,
   'canvas-scroll--scrolling': isNativeScrolling.value,
   'canvas-scroll--text': props.activeTool === 'text',
-  'canvas-scroll--selection': props.activeTool === 'crop',
+  'canvas-scroll--selection': props.activeTool === 'crop' || props.activeTool === 'brush',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
   'canvas-scroll--zoom-in':
@@ -336,6 +355,14 @@ function handleWindowKeydown(event: KeyboardEvent) {
     selectionInteraction.value = null
     selectionDraft.value = null
     emit('update:selection', null)
+    return
+  }
+
+  if (event.key === 'Escape' && brushInteraction.value) {
+    event.preventDefault()
+    discardInteractionFrame()
+    clearBrushPreview()
+    brushInteraction.value = null
     return
   }
 
@@ -540,6 +567,60 @@ function startSelectionPointer(event: PointerEvent, point: SelectionPoint) {
   return true
 }
 
+function redrawBrushPreview() {
+  const interaction = brushInteraction.value
+  const layer = paintableLayer.value
+  const canvas = brushPreviewCanvas.value
+  if (!interaction || !layer?.image || !layer.transform || !canvas) return
+  const context = canvas.getContext('2d')
+  if (!context) return
+  context.clearRect(0, 0, canvas.width, canvas.height)
+
+  const documentToSource = invertMatrix(
+    layerSourceToDocumentMatrix(layer.transform, layer.image.width, layer.image.height)
+  )
+  const sourcePoints = interaction.points.map((point) => transformSelectionPoint(documentToSource, point))
+  const scaleFactor = sourceScaleFactor(layer.transform, layer.image.width, layer.image.height)
+  const lineWidth = props.brushSize / (scaleFactor || 1)
+
+  context.save()
+  context.strokeStyle = props.brushColor
+  context.fillStyle = props.brushColor
+  context.lineWidth = lineWidth
+  context.lineCap = 'round'
+  context.lineJoin = 'round'
+  context.beginPath()
+  const first = sourcePoints[0]
+  if (first) {
+    context.moveTo(first.x, first.y)
+    for (let index = 1; index < sourcePoints.length; index++) {
+      const point = sourcePoints[index]!
+      context.lineTo(point.x, point.y)
+    }
+    if (sourcePoints.length === 1) context.lineTo(first.x, first.y)
+    context.stroke()
+  }
+  context.restore()
+}
+
+function clearBrushPreview() {
+  const canvas = brushPreviewCanvas.value
+  const context = canvas?.getContext('2d')
+  context?.clearRect(0, 0, canvas!.width, canvas!.height)
+}
+
+function startBrushPointer(event: PointerEvent, point: SelectionPoint) {
+  const scroll = scrollArea.value
+  const layer = paintableLayer.value
+  if (!scroll || event.button !== 0 || props.isBusy || !layer) return false
+  event.preventDefault()
+  event.stopPropagation()
+  scroll.setPointerCapture(event.pointerId)
+  brushInteraction.value = { pointerId: event.pointerId, layerId: layer.id, points: [point] }
+  nextTick(() => redrawBrushPreview())
+  return true
+}
+
 function startViewportPointer(event: PointerEvent) {
   const scroll = scrollArea.value
   if (!scroll) return
@@ -559,6 +640,11 @@ function startViewportPointer(event: PointerEvent) {
   if (props.activeTool === 'crop' && !isSpacePressed.value) {
     const point = pointerToDocument(event)
     if (point && startSelectionPointer(event, point)) return
+  }
+
+  if (props.activeTool === 'brush' && !isSpacePressed.value) {
+    const point = pointerToDocument(event)
+    if (point && startBrushPointer(event, point)) return
   }
 
   const textLayerTarget = target?.closest('.document-layer[data-layer-kind="text"]')
@@ -697,6 +783,19 @@ function updatePointer(event: PointerEvent) {
     return
   }
 
+  const activeBrush = brushInteraction.value
+  if (activeBrush?.pointerId === event.pointerId) {
+    const point = pointerToDocument(event)
+    if (!point) return
+    event.preventDefault()
+    activeBrush.points.push(point)
+    scheduleInteractionFrame(() => {
+      if (brushInteraction.value?.pointerId !== event.pointerId) return
+      redrawBrushPreview()
+    })
+    return
+  }
+
   const interaction = transformInteraction.value
   if (interaction?.pointerId === event.pointerId && transformSession.value) {
     const pointer = pointerToDocument(event)
@@ -757,6 +856,14 @@ function stopPointer(event: PointerEvent) {
     emit('update:selection', completed && !selectionIsEmpty(completed) ? completed : null)
     selectionInteraction.value = null
     selectionDraft.value = null
+  }
+  if (brushInteraction.value?.pointerId === event.pointerId) {
+    const interaction = brushInteraction.value
+    clearBrushPreview()
+    brushInteraction.value = null
+    if (interaction.points.length > 0) {
+      emit('paintStroke', interaction.points, props.brushSize, props.brushColor)
+    }
   }
   if (transformInteraction.value?.pointerId === event.pointerId) transformInteraction.value = null
   if (dragState.value?.pointerId === event.pointerId) {
@@ -971,10 +1078,16 @@ watch(
 watch(
   () => props.activeTool,
   (tool) => {
-    if (tool === 'crop' || !selectionInteraction.value) return
-    discardInteractionFrame()
-    selectionInteraction.value = null
-    selectionDraft.value = null
+    if (tool !== 'crop' && selectionInteraction.value) {
+      discardInteractionFrame()
+      selectionInteraction.value = null
+      selectionDraft.value = null
+    }
+    if (tool !== 'brush' && brushInteraction.value) {
+      discardInteractionFrame()
+      clearBrushPreview()
+      brushInteraction.value = null
+    }
   }
 )
 
@@ -1115,6 +1228,14 @@ defineExpose({
                 @pointerdown="startLayerPointer($event, layer)"
               />
             </div>
+            <canvas
+              v-if="brushPreviewStyle && paintableLayer?.image"
+              ref="brushPreviewCanvas"
+              class="brush-preview"
+              :style="brushPreviewStyle"
+              :width="paintableLayer.image.width"
+              :height="paintableLayer.image.height"
+            ></canvas>
             <SelectionOverlay
               v-if="visibleSelection"
               :document-height="document.height"

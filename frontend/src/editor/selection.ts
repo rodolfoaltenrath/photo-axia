@@ -380,6 +380,23 @@ export function layerSourceToDocumentMatrix(
   return [a, b, c, d, centerX - a * sourceWidth / 2 - c * sourceHeight / 2, centerY - b * sourceWidth / 2 - d * sourceHeight / 2]
 }
 
+/**
+ * Converts a document-space distance (e.g. a brush radius) into the layer's
+ * local source-pixel space, using the geometric mean of the x/y scale as an
+ * approximation. Exact for uniform scale + rotation; for a non-uniformly
+ * stretched layer a "round" document-space brush becomes a slightly
+ * elliptical stroke in source pixels — which is self-correcting on screen
+ * (transforming it back through the same non-uniform scale looks round
+ * again), but the stored pixels themselves are not perfectly circular. This
+ * is a deliberate v1 approximation, not a bug.
+ */
+export function sourceScaleFactor(transform: LayerTransform, sourceWidth: number, sourceHeight: number) {
+  if (sourceWidth <= 0 || sourceHeight <= 0) return 1
+  const scaleX = transform.width / sourceWidth
+  const scaleY = transform.height / sourceHeight
+  return Math.sqrt(scaleX * scaleY)
+}
+
 function colorMatches(
   pixels: Uint8ClampedArray | Uint8Array,
   pixelIndex: number,

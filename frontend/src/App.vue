@@ -44,6 +44,7 @@ import {
   type SelectionRegion
 } from './editor/selection'
 import { createMagicWandSelection, disposeSelectionEngine, eraseImageSelection } from './services/selectionEngine'
+import { disposeBrushEngine, paintBrushStroke } from './services/brushEngine'
 import type {
   DocumentSpec,
   EditorTool,
@@ -58,6 +59,7 @@ const activeTool = ref<EditorTool>('move')
 const autoSelectLayer = ref(true)
 const zoom = ref(100)
 const brushSize = ref(24)
+const brushColor = ref('#000000')
 const selectionMode = ref<SelectionMode>('rectangle')
 const magicWandTolerance = ref(32)
 const magicWandContiguous = ref(true)
@@ -773,6 +775,72 @@ async function deleteSelectedPixels() {
   }
 }
 
+async function commitBrushStroke(points: SelectionPoint[], size: number, color: string) {
+  if (isBusy.value) return
+  const layer = activeLayer.value
+  if (layer.kind !== 'image' || !layer.image || !layer.transform || points.length === 0) return
+
+  const beforeImage = { ...layer.image }
+  const beforeTransform = { ...layer.transform }
+  const strokePoints = points.map((point) => ({ x: point.x, y: point.y }))
+  for (const source of [beforeImage.sourceUrl, beforeImage.previewUrl]) {
+    if (source?.startsWith('blob:')) transientObjectUrls.add(source)
+  }
+  let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Pintando…'
+  try {
+    const result = await paintBrushStroke(beforeImage, beforeTransform, strokePoints, size, color)
+    createdSource = URL.createObjectURL(result.blob)
+    trackedObjectUrls.add(createdSource)
+
+    const newAsset = {
+      width: result.width,
+      height: result.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: result.blob.size
+    }
+    const preview = await createImagePreview(newAsset, beforeTransform.width, beforeTransform.height)
+    createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+    await Promise.all([preloadImage(newAsset.sourceUrl), preview ? preloadImage(preview.url) : Promise.resolve()])
+
+    layer.image = {
+      ...newAsset,
+      previewUrl: preview?.url,
+      previewWidth: preview?.width ?? newAsset.width,
+      previewHeight: preview?.height ?? newAsset.height
+    }
+
+    recordHistory('Pincelada', {
+      type: 'layer:patch',
+      layerId: layer.id,
+      before: { image: beforeImage },
+      after: { image: { ...layer.image } }
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = 'Pincelada aplicada'
+  } catch (error) {
+    layer.image = beforeImage
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    if (createdPreviewUrl) {
+      URL.revokeObjectURL(createdPreviewUrl)
+      trackedObjectUrls.delete(createdPreviewUrl)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível aplicar a pincelada.')
+  } finally {
+    isBusy.value = false
+  }
+}
+
 function preloadImage(url: string) {
   return new Promise<void>((resolve) => {
     const image = new Image()
@@ -877,6 +945,7 @@ function handleShortcut(event: KeyboardEvent) {
 
   const toolsByKey: Record<string, EditorTool> = {
     v: 'move',
+    b: 'brush',
     c: 'crop',
     t: 'text',
     h: 'hand',
@@ -903,6 +972,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   disposeSelectionEngine()
+  disposeBrushEngine()
   releaseAllEditorAssets()
   window.removeEventListener('wheel', blockBrowserWheelZoom, true)
   window.removeEventListener('keydown', handleShortcut)
@@ -952,8 +1022,10 @@ onBeforeUnmount(() => {
         :active-layer-id="activeLayerId"
         :active-tool="activeTool"
         :auto-select-layer="autoSelectLayer"
+        :brush-color="brushColor"
         :brush-size="brushSize"
         :document="activeDocument"
+        :is-busy="isBusy"
         :layers="layers"
         :magic-wand-contiguous="magicWandContiguous"
         :magic-wand-tolerance="magicWandTolerance"
@@ -963,6 +1035,7 @@ onBeforeUnmount(() => {
         @delete-selection="deleteSelectedPixels"
         @images-dropped="addImportedImages"
         @magic-wand-select="selectWithMagicWand"
+        @paint-stroke="commitBrushStroke"
         @create-text="addTextLayer"
         @select-layer="activeLayerId = $event"
         @update:magic-wand-contiguous="magicWandContiguous = $event"
@@ -978,8 +1051,10 @@ onBeforeUnmount(() => {
         <PropertiesPanel
           :active-layer="activeLayer"
           :active-tool="activeTool"
+          :brush-color="brushColor"
           :brush-size="brushSize"
           :zoom="zoom"
+          @update:brush-color="brushColor = $event"
           @update:brush-size="brushSize = $event"
           @update:layer-opacity="updateLayerOpacity"
           @update:text="updateTextLayer(activeLayer.id, $event)"
