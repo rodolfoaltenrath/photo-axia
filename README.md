@@ -1,8 +1,10 @@
 # Axia
 
-Axia e um prototipo de editor de imagem desktop para Linux, construido com Go, Wails, Vue 3, TypeScript e Vite.
+![Axia](docs/banner.png)
 
-## Configuracao no Fedora
+Axia é um protótipo de editor de imagem desktop para Linux, construído com Go, Wails, Vue 3, TypeScript e Vite.
+
+## Configuração no Fedora
 
 O instalador configura as bibliotecas nativas do Fedora, Go 1.23.12, Wails 2.12 e Node.js 24 localmente para o projeto:
 
@@ -10,7 +12,7 @@ O instalador configura as bibliotecas nativas do Fedora, Go 1.23.12, Wails 2.12 
 ./scripts/setup-fedora.sh
 ```
 
-O `sudo` e usado somente pelo `dnf`. Go, Wails e Node ficam em `.toolchains`, sem alterar instalacoes globais.
+O `sudo` é usado somente pelo `dnf`. Go, Wails e Node ficam em `.toolchains`, sem alterar instalações globais.
 
 Para disponibilizar `go`, `wails`, `node` e `npm` no terminal atual:
 
@@ -20,7 +22,7 @@ source ./scripts/env.sh
 
 ## Desenvolvimento
 
-Em outras distribuicoes, instale GTK 3, WebKit2GTK 4.1, um compilador C/C++ e pkg-config. Depois execute:
+Em outras distribuições, instale GTK 3, WebKit2GTK 4.1, um compilador C/C++ e pkg-config. Depois execute:
 
 ```sh
 ./scripts/setup-go.sh
@@ -40,56 +42,64 @@ Gerar build:
 ./scripts/wails-build.sh
 ```
 
-No Linux, os scripts usam `-tags webkit2_41`, que e o caminho recomendado para distros recentes onde `webkit2gtk-4.0` nao esta mais disponivel.
+No Linux, os scripts usam `-tags webkit2_41`, que é o caminho recomendado para distros recentes onde `webkit2gtk-4.0` não está mais disponível.
 
 ## Estrutura
 
 - `app.go`: API Go exposta ao frontend pelo Wails.
-- `main.go`: configuracao da janela desktop e bootstrap Wails.
+- `main.go`: configuração da janela desktop e bootstrap Wails.
 - `frontend/src`: interface Vue/TypeScript do editor.
 - `frontend/wailsjs`: bindings TypeScript gerados pelo Wails.
 
 ## Recursos atuais
 
-- Criacao de documentos em pixels ou centimetros.
-- Importacao de PNG, JPEG e GIF por seletor ou arrastar e soltar.
-- Selecao, movimentacao, visibilidade e opacidade de camadas.
-- Transformacao livre de camadas com escala proporcional, escala central e rotacao.
-- Zoom ancorado no cursor, ajuste a tela e navegacao com a ferramenta Mao, tecla Espaco ou botao do meio.
-- Exportacao da composicao em PNG.
-- Selecao retangular, eliptica, por laco livre e varinha magica com tolerancia configuravel.
-- Exclusao destrutiva dos pixels selecionados com suporte completo a desfazer e refazer.
+- Criação de documentos em pixels ou centímetros.
+- Importação de PNG, JPEG e GIF por seletor ou arrastar e soltar.
+- Seleção, movimentação, visibilidade e opacidade de camadas.
+- Transformação livre de camadas com escala proporcional, escala central e rotação.
+- Zoom ancorado no cursor, ajuste à tela e navegação com a ferramenta Mão, tecla Espaço ou botão do meio.
+- Exportação da composição em PNG.
+- Seleção retangular, elíptica, por laço livre e varinha mágica com tolerância configurável.
+- Exclusão destrutiva dos pixels selecionados com suporte completo a desfazer e refazer.
+- Pincel redondo de cor sólida para pintura livre sobre camadas de imagem.
 
-As ferramentas ainda nao implementadas aparecem desabilitadas para manter a interface coerente com os recursos disponiveis.
+As ferramentas ainda não implementadas aparecem desabilitadas para manter a interface coerente com os recursos disponíveis.
 
-## Atalhos de navegacao
+## Atalhos de navegação
 
-- `V`, `H` e `Z`: Mover, Mao e Zoom.
-- `Espaco` + arrastar ou botao do meio + arrastar: navegar pela imagem.
-- `Ctrl` + `Espaco` + clique: zoom temporario; `Alt` + `Espaco` + clique: reduzir temporariamente.
+- `V`, `H` e `Z`: Mover, Mão e Zoom.
+- `Espaço` + arrastar ou botão do meio + arrastar: navegar pela imagem.
+- `Ctrl` + `Espaço` + clique: zoom temporário; `Alt` + `Espaço` + clique: reduzir temporariamente.
 - `Ctrl` + roda do mouse ou `Alt` + roda: zoom suave sob o cursor.
 - `Z` + clique: aumentar; `Alt` + clique: reduzir.
-- `Ctrl` + `+` / `-`: proximo nivel de zoom.
-- `Ctrl` + `0`: ajustar a tela; `Ctrl` + `1`: 100%; `Ctrl` + `2`: 200%.
-- Duplo clique na Mao ajusta a tela; duplo clique no Zoom retorna a 100%.
+- `Ctrl` + `+` / `-`: próximo nível de zoom.
+- `Ctrl` + `0`: ajustar à tela; `Ctrl` + `1`: 100%; `Ctrl` + `2`: 200%.
+- Duplo clique na Mão ajusta à tela; duplo clique no Zoom retorna a 100%.
 - Roda do mouse: navegar verticalmente; `Shift` + roda: navegar horizontalmente.
 
 No macOS, use `Command` no lugar de `Ctrl`.
 
-## Transformacao livre
+## Transformação livre
 
 - `Ctrl` + `T`: transformar a camada ativa.
 - Arraste dentro da caixa: mover a camada.
-- Arraste um canto: redimensionar mantendo a proporcao; `Shift` alterna para escala livre.
-- `Alt` + arrastar uma alca: redimensionar a partir do centro.
-- Arraste o controle circular: girar livremente; `Shift` encaixa a rotacao em passos de 15 graus.
-- `Enter` ou duplo clique: aplicar; `Esc`: cancelar e restaurar a transformacao anterior.
+- Arraste um canto: redimensionar mantendo a proporção; `Shift` alterna para escala livre.
+- `Alt` + arrastar uma alça: redimensionar a partir do centro.
+- Arraste o controle circular: girar livremente; `Shift` encaixa a rotação em passos de 15 graus.
+- `Enter` ou duplo clique: aplicar; `Esc`: cancelar e restaurar a transformação anterior.
 
-## Selecao e recorte
+## Seleção e recorte
 
-- `C`: ativar a ferramenta de recorte e selecao.
-- Retangulo e elipse: arraste para selecionar; segure `Shift` para criar quadrado ou circulo.
-- Laco livre: desenhe o contorno diretamente sobre o documento.
-- Varinha magica: clique em uma cor e ajuste a tolerancia; o modo contiguo limita a area a pixels conectados.
+- `C`: ativar a ferramenta de recorte e seleção.
+- Retângulo e elipse: arraste para selecionar; segure `Shift` para criar quadrado ou círculo.
+- Laço livre: desenhe o contorno diretamente sobre o documento.
+- Varinha mágica: clique em uma cor e ajuste a tolerância; o modo contíguo limita a área a pixels conectados.
 - `Delete` ou `Backspace`: apagar os pixels selecionados da camada de imagem ativa.
 - `Ctrl` + `A`: selecionar todo o documento; `Ctrl` + `D` ou `Esc`: desmarcar.
+
+## Pincel
+
+- `B`: ativar a ferramenta de pincel.
+- Arraste sobre uma camada de imagem para pintar; o traço é recortado automaticamente pelos limites da camada.
+- Ajuste o tamanho e a cor no painel de Propriedades.
+- Cada traço completo (do clique até soltar o mouse) gera uma única entrada de desfazer/refazer.
