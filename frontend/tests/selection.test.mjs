@@ -10,6 +10,7 @@ import {
   magicWandSpans,
   opaquePixelBounds,
   pixelSpansOutlinePath,
+  SELECTION_EXTRACTION_ALPHA_THRESHOLD,
   selectionContainsPoint,
   selectionDocumentBounds,
   selectionExtractionGeometry,
@@ -287,4 +288,17 @@ test('máscara retangular só é rígida quando permanece alinhada ao raster', (
     0
   )
   assert.equal(rotated.hardRectangularMask, false)
+})
+
+test('limites de extracao ignoram residuos de alfa imperceptiveis', () => {
+  const data = new Uint8ClampedArray(5 * 2 * 4)
+  data[3] = SELECTION_EXTRACTION_ALPHA_THRESHOLD
+  data[(3 * 4) + 3] = SELECTION_EXTRACTION_ALPHA_THRESHOLD + 1
+  data[(4 * 4) + 3] = 255
+  assert.deepEqual(opaquePixelBounds(data, 5, 2, SELECTION_EXTRACTION_ALPHA_THRESHOLD), {
+    x: 3,
+    y: 0,
+    width: 2,
+    height: 1
+  })
 })

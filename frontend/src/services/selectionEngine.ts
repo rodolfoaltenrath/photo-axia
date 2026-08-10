@@ -6,6 +6,7 @@ import {
   magicWandSpans,
   multiplyMatrices,
   opaquePixelBounds,
+  SELECTION_EXTRACTION_ALPHA_THRESHOLD,
   selectionExtractionGeometry,
   transformSelectionPoint,
   type PixelSelection,
@@ -220,7 +221,12 @@ async function fallbackExtract(
   bitmap.close()
 
   const image = context.getImageData(0, 0, geometry.width, geometry.height)
-  const opaqueBounds = opaquePixelBounds(image.data, geometry.width, geometry.height)
+  const opaqueBounds = opaquePixelBounds(
+    image.data,
+    geometry.width,
+    geometry.height,
+    SELECTION_EXTRACTION_ALPHA_THRESHOLD
+  )
   if (!opaqueBounds) throw new Error('A seleção não contém pixels visíveis nesta camada.')
   const trimmed =
     opaqueBounds.x > 0 ||

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { LayerItem } from '../types/editor'
 import visibleIcon from '../assets/icons/visible.svg'
 
@@ -25,11 +25,51 @@ const emit = defineEmits<{
 
 const nameInput = ref<HTMLInputElement | null>(null)
 const draftName = ref(props.layer.name)
+const desiredThumbnailSource = computed(() => props.layer.image?.previewUrl ?? props.layer.image?.sourceUrl ?? null)
+const thumbnailSources = ref<[string | null, string | null]>([desiredThumbnailSource.value, null])
+const thumbnailReady = ref<[boolean, boolean]>([false, false])
+const activeThumbnailSlot = ref<0 | 1>(0)
 let dragPointerId = -1
 let dragStartX = 0
 let dragStartY = 0
 let pointerDragging = false
 let ignoreClickUntil = 0
+
+function activateThumbnail(slot: 0 | 1, source: string) {
+  if (thumbnailSources.value[slot] !== source || desiredThumbnailSource.value !== source) return
+  activeThumbnailSlot.value = slot
+}
+
+async function loadThumbnail(slot: 0 | 1, event: Event) {
+  const source = thumbnailSources.value[slot]
+  if (!source) return
+  const image = event.currentTarget as HTMLImageElement
+  try {
+    await image.decode()
+  } catch {
+    if (!image.complete || image.naturalWidth === 0) return
+  }
+  if (thumbnailSources.value[slot] !== source) return
+  const readiness = [...thumbnailReady.value] as [boolean, boolean]
+  readiness[slot] = true
+  thumbnailReady.value = readiness
+  if (source === desiredThumbnailSource.value) activateThumbnail(slot, source)
+}
+
+watch(desiredThumbnailSource, (source) => {
+  if (!source || thumbnailSources.value[activeThumbnailSlot.value] === source) return
+  const targetSlot: 0 | 1 = activeThumbnailSlot.value === 0 ? 1 : 0
+  if (thumbnailSources.value[targetSlot] === source && thumbnailReady.value[targetSlot]) {
+    activateThumbnail(targetSlot, source)
+    return
+  }
+  const sources = [...thumbnailSources.value] as [string | null, string | null]
+  const readiness = [...thumbnailReady.value] as [boolean, boolean]
+  sources[targetSlot] = source
+  readiness[targetSlot] = false
+  thumbnailSources.value = sources
+  thumbnailReady.value = readiness
+})
 
 const kindLabels: Record<LayerItem['kind'], string> = {
   pixel: 'Pixels',
@@ -151,14 +191,20 @@ function selectLayer(event: MouseEvent) {
     >
       <span class="layer-drag-handle" aria-hidden="true">⠿</span>
       <span class="layer-thumb" :class="{ 'layer-thumb--transparent': !layer.image }">
-        <img
-          v-if="layer.image"
-          alt=""
-          decoding="async"
-          draggable="false"
-          loading="lazy"
-          :src="layer.image.previewUrl ?? layer.image.sourceUrl"
-        />
+        <template v-if="layer.image">
+          <img
+            v-for="(source, slot) in thumbnailSources"
+            v-show="source"
+            :key="slot"
+            alt=""
+            class="layer-thumb-buffer"
+            :class="{ 'layer-thumb-buffer--active': activeThumbnailSlot === slot }"
+            decoding="async"
+            draggable="false"
+            :src="source ?? undefined"
+            @load="loadThumbnail(slot as 0 | 1, $event)"
+          />
+        </template>
         <span v-else-if="layer.kind === 'text'" class="layer-thumb-text" aria-hidden="true">T</span>
       </span>
       <span class="layer-copy">

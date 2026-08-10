@@ -559,6 +559,8 @@ export function transformSelectionPoint(matrix: Matrix2D, point: SelectionPoint)
   return { x: a * point.x + c * point.y + e, y: b * point.x + d * point.y + f }
 }
 
+export const SELECTION_EXTRACTION_ALPHA_THRESHOLD = 1
+
 export function opaquePixelBounds(
   pixels: Uint8ClampedArray | Uint8Array,
   width: number,

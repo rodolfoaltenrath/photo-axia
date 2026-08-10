@@ -652,9 +652,12 @@ select:focus-visible {
 }
 
 .free-transform-box {
+  --transform-accent: #268cff;
   position: absolute;
-  border: var(--transform-line-width) solid #f4f7fb;
-  box-shadow: 0 0 0 var(--transform-line-width) rgb(10 18 24 / 85%);
+  border: 0;
+  box-shadow:
+    inset 0 0 0 calc(var(--transform-line-width) / 2) var(--transform-accent),
+    0 0 0 calc(var(--transform-line-width) / 2) var(--transform-accent);
   transform-origin: center;
   will-change: transform, width, height;
   z-index: 20;
@@ -672,7 +675,7 @@ select:focus-visible {
   z-index: 3;
   width: var(--transform-handle-size);
   height: var(--transform-handle-size);
-  border: var(--transform-line-width) solid #152028;
+  border: var(--transform-line-width) solid var(--transform-accent);
   border-radius: 1px;
   padding: 0;
   background: #f8fafc;
@@ -682,8 +685,8 @@ select:focus-visible {
 
 .free-transform-handle:hover,
 .free-transform-rotate:hover {
-  border-color: #152028;
-  background: #58c4b3;
+  border-color: var(--transform-accent);
+  background: #b9d8ff;
 }
 
 .free-transform-rotate {
@@ -716,7 +719,7 @@ select:focus-visible {
 }
 
 .free-transform-rotate:hover .free-transform-rotate-icon {
-  stroke: #58c4b3;
+  stroke: var(--transform-accent);
 }
 
 .free-transform-rotate:hover .free-transform-rotate-icon-outline {
@@ -733,7 +736,7 @@ select:focus-visible {
   left: 50%;
   width: var(--transform-line-width);
   height: var(--transform-rotate-offset);
-  background: #f4f7fb;
+  background: var(--transform-accent);
   transform: translateX(-50%);
 }
 
@@ -744,9 +747,9 @@ select:focus-visible {
   z-index: 2;
   width: var(--transform-handle-size);
   height: var(--transform-handle-size);
-  border: var(--transform-line-width) solid #f4f7fb;
+  border: var(--transform-line-width) solid var(--transform-accent);
   border-radius: 50%;
-  box-shadow: 0 0 0 var(--transform-line-width) rgb(10 18 24 / 85%);
+  box-shadow: none;
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
@@ -1201,6 +1204,16 @@ select:focus-visible {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.layer-thumb img.layer-thumb-buffer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.layer-thumb img.layer-thumb-buffer--active {
+  opacity: 1;
 }
 
 .layer-thumb-text {
