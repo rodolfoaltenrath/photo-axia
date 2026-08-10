@@ -61,6 +61,7 @@ No Linux, os scripts usam `-tags webkit2_41`, que é o caminho recomendado para 
 - Exportação da composição em PNG.
 - Seleção retangular, elíptica, por laço livre e varinha mágica com tolerância configurável.
 - Exclusão destrutiva dos pixels selecionados com suporte completo a desfazer e refazer.
+- Movimentação destrutiva dos pixels selecionados, com expansão automática da camada e histórico atômico.
 - Pincel redondo de cor sólida para pintura livre sobre camadas de imagem.
 
 As ferramentas ainda não implementadas aparecem desabilitadas para manter a interface coerente com os recursos disponíveis.
@@ -94,6 +95,8 @@ No macOS, use `Command` no lugar de `Ctrl`.
 - Retângulo e elipse: arraste para selecionar; segure `Shift` para criar quadrado ou círculo.
 - Laço livre: desenhe o contorno diretamente sobre o documento.
 - Varinha mágica: clique em uma cor e ajuste a tolerância; o modo contíguo limita a área a pixels conectados.
+- Com a ferramenta Mover, arraste dentro da seleção para recortar e mover os pixels da camada de imagem ativa; o contorno acompanha o conteúdo.
+- Para mover a camada inteira, use `Ctrl` + `D` para desmarcar antes de arrastar.
 - `Delete` ou `Backspace`: apagar os pixels selecionados da camada de imagem ativa.
 - `Ctrl` + `A`: selecionar todo o documento; `Ctrl` + `D` ou `Esc`: desmarcar.
 

@@ -28,6 +28,7 @@ import {
 } from '../editor/brush'
 import {
   clampSelectionToBounds,
+  clipContextToSelection,
   constrainedSelectionEndpoint,
   createLassoSelection,
   createShapeSelection,
@@ -35,7 +36,9 @@ import {
   layerSourceToDocumentMatrix,
   multiplyMatrices,
   pointsBounds,
+  selectionContainsPoint,
   selectionIsEmpty,
+  translateSelection,
   type SelectionMode,
   type SelectionPoint,
   type SelectionRegion
@@ -63,6 +66,13 @@ const emit = defineEmits<{
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
   (event: 'deleteSelection'): void
   (event: 'magicWandSelect', point: SelectionPoint): void
+  (
+    event: 'moveSelection',
+    originalSelection: SelectionRegion,
+    movedSelection: SelectionRegion,
+    deltaX: number,
+    deltaY: number
+  ): void
   (
     event: 'paintStroke',
     points: SelectionPoint[],
@@ -141,17 +151,41 @@ const brushInteraction = shallowRef<{
   selectionPath: Path2D | null
   baseImageSource: string
 } | null>(null)
+const selectionMoveInteraction = shallowRef<{
+  pointerId: number
+  layerId: string
+  start: SelectionPoint
+  deltaX: number
+  deltaY: number
+  originalSelection: SelectionRegion
+  baseImageSource: string
+  previewWidth: number
+  previewHeight: number
+  transform: LayerTransform
+  opacity: number
+  baseCanvas?: HTMLCanvasElement
+  contentCanvas?: HTMLCanvasElement
+} | null>(null)
+const selectionMoveCanvas = ref<HTMLCanvasElement | null>(null)
+const selectionMoveReady = ref(false)
+const selectionMovePending = ref(false)
 const brushPreviewCanvas = ref<HTMLCanvasElement | null>(null)
 const brushPreviewPending = ref(false)
 let resizeObserver: ResizeObserver | undefined
 let interactionFrame = 0
 let pendingBrushBaseImageSource: string | undefined
 let pendingBrushCommittedImageSource: string | undefined
+let pendingSelectionMoveBaseSource: string | undefined
+let pendingSelectionMoveCommittedSource: string | undefined
 let wheelZoomFrame = 0
 let wheelZoomFrameTime = 0
 let navigationScheduled = false
 let pendingInteractionFrame: (() => void) | undefined
 let wheelZoomAnchor: { clientX: number; clientY: number } | undefined
+
+function captureSelectionMoveCanvas(element: unknown) {
+  selectionMoveCanvas.value = element instanceof HTMLCanvasElement ? element : null
+}
 let viewportInitialization = 0
 let pendingNavigation:
   | { type: 'anchor'; viewportX: number; viewportY: number; documentX: number; documentY: number }
@@ -231,11 +265,34 @@ const brushPreviewDimensions = computed(() => {
     typeof window === 'undefined' ? 1 : window.devicePixelRatio
   )
 })
+const selectionMovePreviewDimensions = computed(() =>
+  brushPreviewSize(
+    props.document.width * 2,
+    props.document.height * 2,
+    props.document.width,
+    props.document.height,
+    scale.value,
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio
+  )
+)
 const brushPreviewStyle = computed(() => {
   const transform = activeDisplayTransform.value
   if (!transform || !paintableLayer.value || (!brushInteraction.value && !brushPreviewPending.value)) return undefined
   return positionedTransformStyle(transform)
 })
+const selectionMovePreviewStyle = computed(() => {
+  const interaction = selectionMoveInteraction.value
+  if (!interaction) return undefined
+  return {
+    left: '0',
+    top: '0',
+    width: `${props.document.width}px`,
+    height: `${props.document.height}px`,
+    opacity: interaction.opacity / 100
+  }
+})
+const selectionMoveHidesLayer = (layerId: string) =>
+  selectionMoveReady.value && selectionMoveInteraction.value?.layerId === layerId
 function handleNativeScroll() {
   isNativeScrolling.value = true
   if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
@@ -380,6 +437,13 @@ function handleWindowKeydown(event: KeyboardEvent) {
     discardInteractionFrame()
     clearBrushPreview()
     brushInteraction.value = null
+    return
+  }
+
+  if (event.key === 'Escape' && selectionMoveInteraction.value && selectionMoveInteraction.value.pointerId !== -1) {
+    event.preventDefault()
+    discardInteractionFrame()
+    clearSelectionMovePreview()
     return
   }
 
@@ -601,6 +665,144 @@ function startSelectionPointer(event: PointerEvent, point: SelectionPoint) {
   return true
 }
 
+function clearSelectionMovePreview() {
+  unbindSelectionMoveWindowEvents()
+  const canvas = selectionMoveCanvas.value
+  canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+  selectionMoveInteraction.value = null
+  selectionMoveReady.value = false
+  selectionMovePending.value = false
+  selectionDraft.value = null
+  pendingSelectionMoveBaseSource = undefined
+  pendingSelectionMoveCommittedSource = undefined
+}
+
+function bindSelectionMoveWindowEvents() {
+  window.addEventListener('pointermove', updatePointer)
+  window.addEventListener('pointerup', stopPointer)
+  window.addEventListener('pointercancel', stopPointer)
+}
+
+function unbindSelectionMoveWindowEvents() {
+  window.removeEventListener('pointermove', updatePointer)
+  window.removeEventListener('pointerup', stopPointer)
+  window.removeEventListener('pointercancel', stopPointer)
+}
+
+function redrawSelectionMovePreview() {
+  const interaction = selectionMoveInteraction.value
+  const canvas = selectionMoveCanvas.value
+  const baseCanvas = interaction?.baseCanvas
+  const contentCanvas = interaction?.contentCanvas
+  if (!interaction || !canvas || !baseCanvas || !contentCanvas) return
+  const context = canvas.getContext('2d')
+  if (!context) return
+  const deltaX = interaction.deltaX * (canvas.width / props.document.width)
+  const deltaY = interaction.deltaY * (canvas.height / props.document.height)
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  context.drawImage(baseCanvas, 0, 0)
+  context.drawImage(contentCanvas, deltaX, deltaY)
+}
+
+async function prepareSelectionMovePreview() {
+  const interaction = selectionMoveInteraction.value
+  const canvas = selectionMoveCanvas.value
+  const layer = paintableLayer.value
+  if (!interaction || !canvas || !layer?.image) return
+  const layerElements = surface.value?.querySelectorAll<HTMLElement>('.document-layer')
+  const layerElement = layerElements
+    ? Array.from(layerElements).find((element) => element.dataset.layerId === interaction.layerId)
+    : undefined
+  const image = layerElement?.querySelector<HTMLImageElement>('img.layer-image-buffer--active')
+  if (!image?.complete || image.naturalWidth === 0) return
+
+  const baseCanvas = document.createElement('canvas')
+  baseCanvas.width = canvas.width
+  baseCanvas.height = canvas.height
+  const baseContext = baseCanvas.getContext('2d', { alpha: true })
+  const contentCanvas = document.createElement('canvas')
+  contentCanvas.width = canvas.width
+  contentCanvas.height = canvas.height
+  const contentContext = contentCanvas.getContext('2d', { alpha: true })
+  if (!baseContext || !contentContext) return
+  const documentToPreview: [number, number, number, number, number, number] = [
+    canvas.width / props.document.width,
+    0,
+    0,
+    canvas.height / props.document.height,
+    0,
+    0
+  ]
+  const imageToPreview = multiplyMatrices(
+    documentToPreview,
+    layerSourceToDocumentMatrix(interaction.transform, image.naturalWidth, image.naturalHeight)
+  )
+  baseContext.setTransform(...imageToPreview)
+  baseContext.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight)
+  baseContext.setTransform(1, 0, 0, 1, 0, 0)
+
+  contentContext.save()
+  clipContextToSelection(contentContext, interaction.originalSelection, documentToPreview)
+  contentContext.setTransform(...imageToPreview)
+  contentContext.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight)
+  contentContext.restore()
+  baseContext.save()
+  baseContext.globalCompositeOperation = 'destination-out'
+  clipContextToSelection(baseContext, interaction.originalSelection, documentToPreview)
+  baseContext.setTransform(1, 0, 0, 1, 0, 0)
+  baseContext.fillRect(0, 0, canvas.width, canvas.height)
+  baseContext.restore()
+
+  if (selectionMoveInteraction.value !== interaction) return
+  interaction.baseCanvas = baseCanvas
+  interaction.contentCanvas = contentCanvas
+  redrawSelectionMovePreview()
+  selectionMoveReady.value = true
+}
+
+function startSelectionMove(event: PointerEvent, point: SelectionPoint, selection: SelectionRegion) {
+  const scroll = scrollArea.value
+  const layer = paintableLayer.value
+  if (
+    !scroll ||
+    !layer?.image ||
+    !selectionContainsPoint(selection, point) ||
+    props.isBusy
+  ) return false
+  event.preventDefault()
+  event.stopPropagation()
+  bindSelectionMoveWindowEvents()
+  selectionMoveInteraction.value = {
+    pointerId: event.pointerId,
+    layerId: layer.id,
+    start: point,
+    deltaX: 0,
+    deltaY: 0,
+    originalSelection: selection,
+    baseImageSource: layer.image.previewUrl ?? layer.image.sourceUrl,
+    previewWidth: selectionMovePreviewDimensions.value.width,
+    previewHeight: selectionMovePreviewDimensions.value.height,
+    transform: { ...layer.transform! },
+    opacity: layer.opacity
+  }
+  selectionDraft.value = selection
+  nextTick(() => void prepareSelectionMovePreview())
+  return true
+}
+
+function selectionMoveDelta(start: SelectionPoint, point: SelectionPoint, constrain: boolean) {
+  let deltaX = point.x - start.x
+  let deltaY = point.y - start.y
+  if (constrain && (deltaX || deltaY)) {
+    const distance = Math.hypot(deltaX, deltaY)
+    const angle = Math.round(Math.atan2(deltaY, deltaX) / (Math.PI / 4)) * (Math.PI / 4)
+    deltaX = Math.cos(angle) * distance
+    deltaY = Math.sin(angle) * distance
+  }
+  return { deltaX: Math.round(deltaX), deltaY: Math.round(deltaY) }
+}
+
 function drawPendingBrushPreview() {
   const interaction = brushInteraction.value
   const layer = paintableLayer.value
@@ -649,6 +851,16 @@ function handleLayerImageLoaded(layerId: string, source: string) {
   ) {
     clearBrushPreview()
   }
+  if (selectionMovePending.value && source !== pendingSelectionMoveBaseSource) {
+    pendingSelectionMoveCommittedSource = source
+  }
+  if (
+    selectionMovePending.value &&
+    layerId === selectionMoveInteraction.value?.layerId &&
+    source === pendingSelectionMoveCommittedSource
+  ) {
+    clearSelectionMovePreview()
+  }
 }
 
 function handleLayerImageError(layerId: string, source: string) {
@@ -658,6 +870,13 @@ function handleLayerImageError(layerId: string, source: string) {
     source === pendingBrushCommittedImageSource
   ) {
     clearBrushPreview()
+  }
+  if (
+    selectionMovePending.value &&
+    layerId === selectionMoveInteraction.value?.layerId &&
+    source === pendingSelectionMoveCommittedSource
+  ) {
+    clearSelectionMovePreview()
   }
 }
 
@@ -721,6 +940,11 @@ function startViewportPointer(event: PointerEvent) {
     target?.closest('.free-transform-box')
   )
     return
+
+  if (props.activeTool === 'move' && props.selection && !isSpacePressed.value) {
+    const point = pointerToDocument(event)
+    if (point && startSelectionMove(event, point, props.selection)) return
+  }
 
   if (props.activeTool === 'crop' && !isSpacePressed.value) {
     const point = pointerToDocument(event)
@@ -798,6 +1022,14 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
   if (props.activeTool !== 'move') return
 
   if (transformSession.value) commitFreeTransform()
+
+  if (props.selection && !selectionIsEmpty(props.selection)) {
+    event.stopPropagation()
+    event.preventDefault()
+    const point = pointerToDocument(event)
+    if (point && activeLayer.value?.kind === 'image') startSelectionMove(event, point, props.selection)
+    return
+  }
 
   event.stopPropagation()
   event.preventDefault()
@@ -886,6 +1118,27 @@ function updatePointer(event: PointerEvent) {
     return
   }
 
+  const activeSelectionMove = selectionMoveInteraction.value
+  if (activeSelectionMove?.pointerId === event.pointerId) {
+    const point = pointerToDocument(event)
+    if (!point) return
+    event.preventDefault()
+    const delta = selectionMoveDelta(activeSelectionMove.start, point, event.shiftKey)
+    scheduleInteractionFrame(() => {
+      const interaction = selectionMoveInteraction.value
+      if (!interaction || interaction.pointerId !== event.pointerId) return
+      interaction.deltaX = delta.deltaX
+      interaction.deltaY = delta.deltaY
+      selectionDraft.value = translateSelection(
+        interaction.originalSelection,
+        interaction.deltaX,
+        interaction.deltaY
+      )
+      redrawSelectionMovePreview()
+    })
+    return
+  }
+
   const interaction = transformInteraction.value
   if (interaction?.pointerId === event.pointerId && transformSession.value) {
     const pointer = pointerToDocument(event)
@@ -960,6 +1213,31 @@ function stopPointer(event: PointerEvent) {
       emit('paintStroke', interaction.points, props.brushSize, props.brushColor, interaction.selection)
     } else {
       clearBrushPreview()
+    }
+  }
+  if (selectionMoveInteraction.value?.pointerId === event.pointerId) {
+    const interaction = selectionMoveInteraction.value
+    unbindSelectionMoveWindowEvents()
+    if (event.type === 'pointercancel' || (!interaction.deltaX && !interaction.deltaY)) {
+      clearSelectionMovePreview()
+    } else {
+      const movedSelection = translateSelection(
+        interaction.originalSelection,
+        interaction.deltaX,
+        interaction.deltaY
+      )
+      interaction.pointerId = -1
+      selectionMovePending.value = true
+      pendingSelectionMoveBaseSource = interaction.baseImageSource
+      pendingSelectionMoveCommittedSource = undefined
+      selectionDraft.value = movedSelection
+      emit(
+        'moveSelection',
+        interaction.originalSelection,
+        movedSelection,
+        interaction.deltaX,
+        interaction.deltaY
+      )
     }
   }
   if (transformInteraction.value?.pointerId === event.pointerId) transformInteraction.value = null
@@ -1178,18 +1456,30 @@ watch(
     if (brushPreviewPending.value && source && source !== pendingBrushBaseImageSource) {
       pendingBrushCommittedImageSource = source
     }
+    if (selectionMovePending.value && source && source !== pendingSelectionMoveBaseSource) {
+      pendingSelectionMoveCommittedSource = source
+    }
   }
 )
 
 watch(
   () => props.isBusy,
   (busy) => {
-    if (busy || !brushPreviewPending.value) return
+    if (busy) return
     const currentSource = paintableLayer.value?.image?.previewUrl ?? paintableLayer.value?.image?.sourceUrl
-    if (currentSource && currentSource !== pendingBrushBaseImageSource) {
-      pendingBrushCommittedImageSource = currentSource
-    } else {
-      clearBrushPreview()
+    if (brushPreviewPending.value) {
+      if (currentSource && currentSource !== pendingBrushBaseImageSource) {
+        pendingBrushCommittedImageSource = currentSource
+      } else {
+        clearBrushPreview()
+      }
+    }
+    if (selectionMovePending.value) {
+      if (currentSource && currentSource !== pendingSelectionMoveBaseSource) {
+        pendingSelectionMoveCommittedSource = currentSource
+      } else {
+        clearSelectionMovePreview()
+      }
     }
   }
 )
@@ -1206,6 +1496,14 @@ watch(
       discardInteractionFrame()
       clearBrushPreview()
       brushInteraction.value = null
+    }
+    if (
+      tool !== 'move' &&
+      selectionMoveInteraction.value &&
+      selectionMoveInteraction.value.pointerId !== -1
+    ) {
+      discardInteractionFrame()
+      clearSelectionMovePreview()
     }
   }
 )
@@ -1225,6 +1523,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unbindSelectionMoveWindowEvents()
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('keyup', handleWindowKeyup)
   window.removeEventListener('blur', resetInteractionKeys)
@@ -1291,8 +1590,11 @@ defineExpose({
           Desmarcar
         </button>
       </div>
+      <span v-if="activeTool === 'move' && visibleSelection" class="selection-move-hint">
+        Arraste dentro da seleção para mover os pixels · Ctrl+D move a camada inteira
+      </span>
       <label
-        v-if="activeTool === 'move'"
+        v-else-if="activeTool === 'move'"
         class="auto-select-control"
         title="Ao desativar, clicar no documento mantém e move a camada selecionada"
       >
@@ -1338,16 +1640,28 @@ defineExpose({
             <div class="transparent-grid"></div>
             <div class="document-background" :style="backgroundStyle"></div>
             <div class="document-layers">
-              <CanvasLayer
-                v-for="layer in renderedLayers"
-                :key="layer.id"
-                :active="layer.id === activeLayerId"
-                :layer="layer"
-                :transform="displayTransform(layer) ?? defaultLayerTransform"
-                @image-error="handleLayerImageError"
-                @image-loaded="handleLayerImageLoaded"
-                @pointerdown="startLayerPointer($event, layer)"
-              />
+              <template v-for="layer in renderedLayers" :key="layer.id">
+                <CanvasLayer
+                  :active="layer.id === activeLayerId"
+                  :content-hidden="selectionMoveHidesLayer(layer.id)"
+                  :layer="layer"
+                  :transform="displayTransform(layer) ?? defaultLayerTransform"
+                  @image-error="handleLayerImageError"
+                  @image-loaded="handleLayerImageLoaded"
+                  @pointerdown="startLayerPointer($event, layer)"
+                />
+                <canvas
+                  v-if="
+                    selectionMovePreviewStyle &&
+                    selectionMoveInteraction?.layerId === layer.id
+                  "
+                  :ref="captureSelectionMoveCanvas"
+                  class="selection-move-preview"
+                  :style="selectionMovePreviewStyle"
+                  :width="selectionMoveInteraction.previewWidth"
+                  :height="selectionMoveInteraction.previewHeight"
+                ></canvas>
+              </template>
             </div>
             <canvas
               v-if="brushPreviewStyle && paintableLayer?.image"

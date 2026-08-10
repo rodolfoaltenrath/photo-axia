@@ -1,5 +1,6 @@
 import type { LayerItem } from '../types/editor'
 import type { HistoryDirection } from './history'
+import type { SelectionRegion } from './selection'
 
 interface SelectionDelta {
   activeBefore?: string
@@ -26,6 +27,8 @@ export interface PatchLayerDelta extends SelectionDelta {
   layerId: string
   before: Partial<LayerItem>
   after: Partial<LayerItem>
+  selectionBefore?: SelectionRegion | null
+  selectionAfter?: SelectionRegion | null
 }
 
 export interface ReorderLayerDelta extends SelectionDelta {
@@ -62,7 +65,8 @@ export function mergeEditorHistoryDelta(previous: EditorHistoryDelta, next: Edit
   return {
     ...next,
     before: previous.before,
-    activeBefore: previous.activeBefore
+    activeBefore: previous.activeBefore,
+    selectionBefore: previous.selectionBefore
   } satisfies PatchLayerDelta
 }
 
@@ -74,7 +78,10 @@ export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
 }
 
 export function isEditorHistoryDeltaNoop(delta: EditorHistoryDelta) {
-  if (delta.type === 'layer:patch') return JSON.stringify(delta.before) === JSON.stringify(delta.after)
+  if (delta.type === 'layer:patch') {
+    return JSON.stringify(delta.before) === JSON.stringify(delta.after) &&
+      JSON.stringify(delta.selectionBefore) === JSON.stringify(delta.selectionAfter)
+  }
   if (delta.type === 'layer:reorder') return delta.beforeIndex === delta.afterIndex
   return false
 }

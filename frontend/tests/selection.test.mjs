@@ -10,8 +10,12 @@ import {
   magicWandSpans,
   opaquePixelBounds,
   pixelSpansOutlinePath,
+  selectionContainsPoint,
+  selectionDocumentBounds,
+  selectionMoveGeometry,
   sourceScaleFactor,
-  transformSelectionPoint
+  transformSelectionPoint,
+  translateSelection
 } from '../src/editor/selection.ts'
 
 function pixels(width, rows) {
@@ -160,4 +164,50 @@ test('contorno RLE elimina arestas horizontais internas', () => {
   assert.equal(outline.includes('M1 1H4'), false)
   assert.equal(outline.includes('M1 0H4'), true)
   assert.equal(outline.includes('M1 2H4'), true)
+})
+
+test('translada seleção vetorial sem alterar suas dimensões', () => {
+  assert.deepEqual(
+    translateSelection({ kind: 'rectangle', bounds: { x: 10, y: 20, width: 30, height: 40 } }, 7, -3),
+    { kind: 'rectangle', bounds: { x: 17, y: 17, width: 30, height: 40 } }
+  )
+})
+
+test('translada seleção de pixels pela matriz sem alterar os spans', () => {
+  const selection = {
+    kind: 'pixels',
+    layerId: 'layer',
+    sourceWidth: 10,
+    sourceHeight: 10,
+    sourceToDocument: [2, 0, 0, 2, 5, 6],
+    spans: [{ y: 2, x0: 1, x1: 4 }],
+    bounds: { x: 1, y: 2, width: 3, height: 1 },
+    pixelCount: 3
+  }
+  const moved = translateSelection(selection, 8, 9)
+  assert.deepEqual(moved.sourceToDocument, [2, 0, 0, 2, 13, 15])
+  assert.equal(moved.spans, selection.spans)
+  assert.deepEqual(selectionDocumentBounds(moved), { x: 15, y: 19, width: 6, height: 2 })
+})
+
+test('hit-test respeita retângulo, elipse, laço e spans da varinha', () => {
+  assert.equal(selectionContainsPoint({ kind: 'rectangle', bounds: { x: 0, y: 0, width: 10, height: 10 } }, { x: 5, y: 5 }), true)
+  assert.equal(selectionContainsPoint({ kind: 'ellipse', bounds: { x: 0, y: 0, width: 10, height: 10 } }, { x: 0, y: 0 }), false)
+  assert.equal(selectionContainsPoint({ kind: 'lasso', points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 10 }], bounds: { x: 0, y: 0, width: 10, height: 10 } }, { x: 5, y: 4 }), true)
+  assert.equal(selectionContainsPoint({ kind: 'pixels', layerId: 'layer', sourceWidth: 5, sourceHeight: 5, sourceToDocument: [2, 0, 0, 2, 10, 20], spans: [{ y: 1, x0: 1, x1: 3 }], bounds: { x: 1, y: 1, width: 2, height: 1 }, pixelCount: 2 }, { x: 13, y: 23 }), true)
+})
+
+test('movimento expande o raster quando os pixels ultrapassam os limites da camada', () => {
+  const geometry = selectionMoveGeometry(
+    100,
+    80,
+    { x: 0, y: 0, width: 100, height: 80, rotation: 0 },
+    { kind: 'rectangle', bounds: { x: 70, y: 20, width: 20, height: 30 } },
+    25,
+    -30
+  )
+  assert.deepEqual(
+    { originX: geometry.originX, originY: geometry.originY, width: geometry.width, height: geometry.height },
+    { originX: 0, originY: -10, width: 115, height: 90 }
+  )
 })

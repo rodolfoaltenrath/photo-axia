@@ -4,6 +4,7 @@ import type { LayerItem, LayerTransform } from '../types/editor'
 
 const props = defineProps<{
   active: boolean
+  contentHidden: boolean
   layer: LayerItem
   transform: LayerTransform
 }>()
@@ -92,7 +93,8 @@ const textStyle = computed(() => {
 <template>
   <div
     class="document-layer"
-    :class="{ 'document-layer--active': active }"
+    :class="{ 'document-layer--active': active, 'document-layer--content-hidden': contentHidden }"
+    :data-layer-id="layer.id"
     :data-layer-kind="layer.kind"
     :style="layerStyle"
     @pointerdown="emit('pointerdown', $event)"

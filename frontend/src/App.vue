@@ -37,6 +37,7 @@ import { useHistory, type HistoryRecordOptions, type HistoryStep } from './edito
 import { clampZoom } from './editor/viewport'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
 import {
+  cloneSelection,
   layerSourceToDocumentMatrix,
   selectionIsEmpty,
   transformSelectionPoint,
@@ -46,6 +47,7 @@ import {
 } from './editor/selection'
 import { createMagicWandSelection, disposeSelectionEngine, eraseImageSelection } from './services/selectionEngine'
 import { disposeBrushEngine, paintBrushStroke } from './services/brushEngine'
+import { disposeSelectionMoveEngine, moveImageSelection } from './services/selectionMoveEngine'
 import type {
   DocumentSpec,
   EditorTool,
@@ -168,6 +170,7 @@ function releaseAllEditorAssets() {
 function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
   const refreshIds = new Set<string>()
   let resourcesMayBeUnused = false
+  let restoredSelection: SelectionRegion | null | undefined
   for (const { delta, direction } of steps) {
     const result = applyEditorHistoryDelta(layers.value, activeLayerId.value, delta, direction)
     activeLayerId.value = result.activeLayerId
@@ -177,6 +180,9 @@ function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
     }
     for (const layerId of result.refreshLayerIds) refreshIds.add(layerId)
     if (result.removedLayerIds.length) resourcesMayBeUnused = true
+    if (delta.type === 'layer:patch' && ('selectionBefore' in delta || 'selectionAfter' in delta)) {
+      restoredSelection = cloneSelection(direction === 'redo' ? delta.selectionAfter ?? null : delta.selectionBefore ?? null)
+    }
   }
 
   for (const layerId of refreshIds) {
@@ -187,6 +193,10 @@ function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
     }
   }
   if (resourcesMayBeUnused) collectUnusedObjectUrls()
+  if (restoredSelection !== undefined) {
+    selection.value = restoredSelection
+    selectionGeneration++
+  }
 }
 
 function undoHistory() {
@@ -776,6 +786,106 @@ async function deleteSelectedPixels() {
   }
 }
 
+async function commitSelectionMove(
+  originalSelection: SelectionRegion,
+  movedSelection: SelectionRegion,
+  deltaX: number,
+  deltaY: number
+) {
+  if (isBusy.value || (!deltaX && !deltaY)) return
+  const layer = activeLayer.value
+  if (layer.kind !== 'image' || !layer.image || !layer.transform) {
+    showError(new Error('Selecione uma camada de imagem para mover pixels.'), 'Não foi possível mover a seleção.')
+    return
+  }
+
+  canvasViewport.value?.commitPendingTransform()
+  const beforeImage = { ...layer.image }
+  const beforeTransform = { ...layer.transform }
+  const beforeSelection = cloneSelection(originalSelection)!
+  const afterSelection = cloneSelection(movedSelection)!
+  for (const source of [beforeImage.sourceUrl, beforeImage.previewUrl]) {
+    if (source?.startsWith('blob:')) transientObjectUrls.add(source)
+  }
+  let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Movendo pixels selecionados…'
+  try {
+    const result = await moveImageSelection(
+      beforeImage,
+      beforeTransform,
+      beforeSelection,
+      deltaX,
+      deltaY
+    )
+    createdSource = URL.createObjectURL(result.blob)
+    trackedObjectUrls.add(createdSource)
+    createdPreviewUrl = result.previewBlob ? URL.createObjectURL(result.previewBlob) : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+
+    const oldMatrix = layerSourceToDocumentMatrix(beforeTransform, beforeImage.width, beforeImage.height)
+    const center = transformSelectionPoint(oldMatrix, {
+      x: result.originX + result.width / 2,
+      y: result.originY + result.height / 2
+    })
+    const newWidth = result.width * (beforeTransform.width / beforeImage.width)
+    const newHeight = result.height * (beforeTransform.height / beforeImage.height)
+    const newTransform = {
+      ...beforeTransform,
+      x: center.x - newWidth / 2,
+      y: center.y - newHeight / 2,
+      width: newWidth,
+      height: newHeight
+    }
+    const newAsset = {
+      width: result.width,
+      height: result.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: result.blob.size,
+      previewUrl: createdPreviewUrl,
+      previewWidth: result.previewWidth,
+      previewHeight: result.previewHeight
+    }
+    await preloadImage(newAsset.previewUrl ?? newAsset.sourceUrl)
+
+    layer.image = newAsset
+    layer.transform = newTransform
+    selection.value = afterSelection
+    selectionGeneration++
+    recordHistory('Mover seleção', {
+      type: 'layer:patch',
+      layerId: layer.id,
+      before: { image: beforeImage, transform: beforeTransform },
+      after: { image: { ...newAsset }, transform: { ...newTransform } },
+      selectionBefore: beforeSelection,
+      selectionAfter: afterSelection
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = 'Pixels selecionados movidos'
+  } catch (error) {
+    layer.image = beforeImage
+    layer.transform = beforeTransform
+    selection.value = beforeSelection
+    selectionGeneration++
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    if (createdPreviewUrl) {
+      URL.revokeObjectURL(createdPreviewUrl)
+      trackedObjectUrls.delete(createdPreviewUrl)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível mover os pixels selecionados.')
+  } finally {
+    isBusy.value = false
+  }
+}
+
 async function commitBrushStroke(
   points: SelectionPoint[],
   size: number,
@@ -988,6 +1098,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   disposeSelectionEngine()
   disposeBrushEngine()
+  disposeSelectionMoveEngine()
   releaseAllEditorAssets()
   window.removeEventListener('wheel', blockBrowserWheelZoom, true)
   window.removeEventListener('keydown', handleShortcut)
@@ -1050,6 +1161,7 @@ onBeforeUnmount(() => {
         @delete-selection="deleteSelectedPixels"
         @images-dropped="addImportedImages"
         @magic-wand-select="selectWithMagicWand"
+        @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"
         @create-text="addTextLayer"
         @select-layer="activeLayerId = $event"

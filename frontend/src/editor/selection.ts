@@ -297,6 +297,138 @@ export function traceSelectionPath(
   }
 }
 
+export function translateSelection(
+  selection: SelectionRegion,
+  deltaX: number,
+  deltaY: number
+): SelectionRegion {
+  if (selection.kind === 'pixels') {
+    return {
+      ...selection,
+      sourceToDocument: multiplyMatrices([1, 0, 0, 1, deltaX, deltaY], selection.sourceToDocument)
+    }
+  }
+  if (selection.kind === 'lasso') {
+    return {
+      ...selection,
+      points: selection.points.map((point) => ({ x: point.x + deltaX, y: point.y + deltaY })),
+      bounds: { ...selection.bounds, x: selection.bounds.x + deltaX, y: selection.bounds.y + deltaY }
+    }
+  }
+  return {
+    ...selection,
+    bounds: { ...selection.bounds, x: selection.bounds.x + deltaX, y: selection.bounds.y + deltaY }
+  }
+}
+
+export function cloneSelection(selection: SelectionRegion | null): SelectionRegion | null {
+  if (!selection) return null
+  if (selection.kind === 'pixels') {
+    return {
+      ...selection,
+      sourceToDocument: [...selection.sourceToDocument],
+      spans: selection.spans.map((span) => ({ ...span })),
+      bounds: { ...selection.bounds }
+    }
+  }
+  if (selection.kind === 'lasso') {
+    return {
+      ...selection,
+      points: selection.points.map((point) => ({ ...point })),
+      bounds: { ...selection.bounds }
+    }
+  }
+  return { ...selection, bounds: { ...selection.bounds } }
+}
+
+export function transformSelectionBounds(matrix: Matrix2D, bounds: SelectionBounds): SelectionBounds {
+  const corners = [
+    transformSelectionPoint(matrix, { x: bounds.x, y: bounds.y }),
+    transformSelectionPoint(matrix, { x: bounds.x + bounds.width, y: bounds.y }),
+    transformSelectionPoint(matrix, { x: bounds.x + bounds.width, y: bounds.y + bounds.height }),
+    transformSelectionPoint(matrix, { x: bounds.x, y: bounds.y + bounds.height })
+  ]
+  return pointsBounds(corners)
+}
+
+export function selectionDocumentBounds(selection: SelectionRegion) {
+  return selection.kind === 'pixels'
+    ? transformSelectionBounds(selection.sourceToDocument, selection.bounds)
+    : { ...selection.bounds }
+}
+
+export function selectionContainsPoint(selection: SelectionRegion, point: SelectionPoint) {
+  if (selection.kind === 'pixels') {
+    const sourcePoint = transformSelectionPoint(invertMatrix(selection.sourceToDocument), point)
+    const y = Math.floor(sourcePoint.y)
+    return selection.spans.some((span) => span.y === y && sourcePoint.x >= span.x0 && sourcePoint.x < span.x1)
+  }
+  const { x, y, width, height } = selection.bounds
+  if (point.x < x || point.y < y || point.x > x + width || point.y > y + height) return false
+  if (selection.kind === 'rectangle') return true
+  if (selection.kind === 'ellipse') {
+    const radiusX = width / 2
+    const radiusY = height / 2
+    if (radiusX <= 0 || radiusY <= 0) return false
+    const normalizedX = (point.x - x - radiusX) / radiusX
+    const normalizedY = (point.y - y - radiusY) / radiusY
+    return normalizedX ** 2 + normalizedY ** 2 <= 1
+  }
+
+  let inside = false
+  for (let index = 0, previousIndex = selection.points.length - 1; index < selection.points.length; previousIndex = index++) {
+    const current = selection.points[index]!
+    const previous = selection.points[previousIndex]!
+    const intersects =
+      (current.y > point.y) !== (previous.y > point.y) &&
+      point.x < ((previous.x - current.x) * (point.y - current.y)) / (previous.y - current.y) + current.x
+    if (intersects) inside = !inside
+  }
+  return inside
+}
+
+export function selectionMoveGeometry(
+  sourceWidth: number,
+  sourceHeight: number,
+  transform: LayerTransform,
+  selection: SelectionRegion,
+  deltaX: number,
+  deltaY: number
+) {
+  const documentToSource = invertMatrix(layerSourceToDocumentMatrix(transform, sourceWidth, sourceHeight))
+  const sourceBounds = transformSelectionBounds(documentToSource, selectionDocumentBounds(selection))
+  const clippedBounds = intersectSelectionBounds(sourceBounds, { x: 0, y: 0, width: sourceWidth, height: sourceHeight })
+  const [a, b, c, d] = documentToSource
+  const sourceDeltaX = a * deltaX + c * deltaY
+  const sourceDeltaY = b * deltaX + d * deltaY
+  const selectionOriginX = Math.floor(clippedBounds.x)
+  const selectionOriginY = Math.floor(clippedBounds.y)
+  const selectionWidth = Math.max(0, Math.ceil(clippedBounds.x + clippedBounds.width) - selectionOriginX)
+  const selectionHeight = Math.max(0, Math.ceil(clippedBounds.y + clippedBounds.height) - selectionOriginY)
+  const hasSelectionArea = selectionWidth > 0 && selectionHeight > 0
+  const originX = hasSelectionArea ? Math.min(0, Math.floor(clippedBounds.x + sourceDeltaX)) : 0
+  const originY = hasSelectionArea ? Math.min(0, Math.floor(clippedBounds.y + sourceDeltaY)) : 0
+  const maxX = hasSelectionArea
+    ? Math.max(sourceWidth, Math.ceil(clippedBounds.x + clippedBounds.width + sourceDeltaX))
+    : sourceWidth
+  const maxY = hasSelectionArea
+    ? Math.max(sourceHeight, Math.ceil(clippedBounds.y + clippedBounds.height + sourceDeltaY))
+    : sourceHeight
+  return {
+    documentToSource,
+    sourceDeltaX,
+    sourceDeltaY,
+    selectionOriginX,
+    selectionOriginY,
+    selectionWidth,
+    selectionHeight,
+    originX,
+    originY,
+    width: Math.max(1, maxX - originX),
+    height: Math.max(1, maxY - originY)
+  }
+}
+
 export function drawVectorSelection(
   context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   selection: SelectionRegion

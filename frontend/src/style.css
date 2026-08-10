@@ -548,14 +548,23 @@ select:focus-visible {
 .document-layers,
 .document-layer,
 .document-layer img,
+.selection-move-preview,
 .brush-preview {
   position: absolute;
 }
 
-.brush-preview {
+.brush-preview,
+.selection-move-preview {
   inset: 0 auto auto 0;
   pointer-events: none;
+}
+
+.brush-preview {
   z-index: 15;
+}
+
+.selection-move-hint {
+  color: #d7e0e8;
 }
 
 .document-layers {
@@ -587,6 +596,10 @@ select:focus-visible {
 
 .document-layer img.layer-image-buffer--active {
   opacity: 1;
+}
+
+.document-layer--content-hidden img.layer-image-buffer {
+  opacity: 0;
 }
 
 .document-text {
