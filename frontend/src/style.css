@@ -1,6 +1,22 @@
 :root {
-  color: #e8edf2;
-  background: #15191f;
+  --ui-bg: #070708;
+  --ui-canvas: #0a0a0c;
+  --ui-surface: #111113;
+  --ui-surface-raised: #18181b;
+  --ui-control: #202024;
+  --ui-control-hover: #29292e;
+  --ui-border: #303036;
+  --ui-border-strong: #44444c;
+  --ui-text: #f2f2f3;
+  --ui-text-muted: #a0a0a8;
+  --ui-text-dim: #73737d;
+  --ui-accent: #5d5d66;
+  --ui-accent-hover: #767680;
+  --ui-accent-soft: #333338;
+  --ui-accent-soft-deep: #242428;
+  color: var(--ui-text);
+  background: var(--ui-bg);
+  color-scheme: dark;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -70,18 +86,16 @@ select {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  min-width: 0;
 }
 
-.brand-mark {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: 6px;
-  background: #58c4b3;
-  color: #091311;
-  font-weight: 800;
+.brand-logo {
+  display: block;
+  width: auto;
+  max-width: 120px;
+  height: 32px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .menu-actions {
@@ -1496,4 +1510,254 @@ select:focus-visible {
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+/* Axia theme: neutral surfaces with red reserved for interaction. */
+.app-shell {
+  background: var(--ui-bg);
+}
+
+.top-menu {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+
+.history-actions,
+.properties-panel-title,
+.layers-panel-title,
+.property-summary,
+.property-section,
+.layer-actions {
+  border-color: var(--ui-border);
+}
+
+.history-popover,
+.panel,
+.new-document-dialog {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-raised);
+}
+
+.history-popover-title,
+.dialog-header {
+  border-color: var(--ui-border);
+  color: var(--ui-text);
+}
+
+.history-popover-title span,
+.document-status,
+.panel label,
+.document-form label,
+.property-summary span,
+.layer-button small,
+.dialog-header span {
+  color: var(--ui-text-muted);
+}
+
+.document-status strong,
+.property-summary strong,
+.property-section h3,
+.selection-tolerance output {
+  color: var(--ui-text);
+}
+
+.menu-actions button,
+.context-bar button,
+.panel-title button,
+.tool-bar button,
+.dialog-header button,
+.preset-row button,
+.dialog-actions button {
+  border-color: var(--ui-border);
+  background: var(--ui-control);
+}
+
+.menu-actions button:hover,
+.context-bar button:hover,
+.panel-title button:hover,
+.tool-bar button:hover,
+.preset-row button:hover,
+.dialog-header button:hover,
+.dialog-actions button:hover {
+  border-color: var(--ui-accent);
+  background: var(--ui-control-hover);
+}
+
+.menu-actions .history-icon-button {
+  color: var(--ui-text-muted);
+}
+
+.menu-actions .history-icon-button:hover:not(:disabled),
+.history-menu[open] > .history-icon-button,
+.menu-actions .history-list button:hover {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-control-hover);
+}
+
+.menu-actions .history-list button {
+  color: var(--ui-text-muted);
+}
+
+.menu-actions .history-list .history-entry--current {
+  background: rgb(104 104 114 / 18%);
+  color: var(--ui-text);
+}
+
+.menu-actions .history-list .history-entry--future {
+  color: var(--ui-text-dim);
+}
+
+.history-entry-marker {
+  border-color: var(--ui-text-dim);
+}
+
+.history-entry--current .history-entry-marker {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent);
+  box-shadow: 0 0 0 3px rgb(104 104 114 / 20%);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline-color: var(--ui-accent);
+}
+
+input[type='range'],
+input[type='checkbox'] {
+  accent-color: var(--ui-accent);
+}
+
+.tool-bar,
+.side-panels {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+
+.tool-bar button[aria-pressed='true'] {
+  border-color: var(--ui-accent-hover);
+  background: var(--ui-accent);
+  color: var(--ui-text);
+}
+
+.tool-bar button[aria-pressed='true'] img {
+  filter: none;
+}
+
+.canvas-stage,
+.canvas-scroll::-webkit-scrollbar-track {
+  background: var(--ui-canvas);
+}
+
+.context-bar {
+  border-color: var(--ui-border);
+  color: var(--ui-text-muted);
+}
+
+.selection-options select,
+.panel input,
+.panel select,
+.panel textarea,
+.document-form input,
+.document-form select {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-bg);
+  color: var(--ui-text);
+}
+
+.canvas-scroll {
+  scrollbar-color: var(--ui-border-strong) var(--ui-canvas);
+}
+
+.canvas-scroll::-webkit-scrollbar-thumb {
+  border-color: var(--ui-canvas);
+  background: var(--ui-border-strong);
+}
+
+.canvas-scroll::-webkit-scrollbar-thumb:hover,
+.properties-scroll::-webkit-scrollbar-thumb,
+.layer-list::-webkit-scrollbar-thumb {
+  background-color: #5a5a63;
+}
+
+.canvas-surface {
+  border-color: var(--ui-border-strong);
+}
+
+.layer-count {
+  background: var(--ui-bg);
+  color: var(--ui-text-dim);
+}
+
+.visibility-button,
+.layer-button {
+  background: #141416;
+}
+
+.visibility-button:hover,
+.layer-button:hover,
+.layer-button:focus-visible {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-control);
+}
+
+.layer-row::before,
+.layer-row::after {
+  background: var(--ui-accent);
+}
+
+.layer-row--drop-before::before,
+.layer-row--drop-after::after {
+  box-shadow: 0 0 8px rgb(118 118 128 / 72%);
+}
+
+.layer-row--active .layer-button {
+  border-color: var(--ui-accent);
+  background: linear-gradient(90deg, var(--ui-accent-soft), var(--ui-accent-soft-deep));
+  box-shadow: inset 3px 0 var(--ui-accent);
+}
+
+.layer-row--dragging .layer-button,
+.layer-drag-preview {
+  border-color: var(--ui-accent);
+}
+
+.layer-thumb:not(.layer-thumb--transparent) {
+  background: linear-gradient(135deg, var(--ui-accent), #34343a);
+}
+
+.layer-thumb-text {
+  color: #111113;
+}
+
+.layer-drag-preview {
+  background: rgb(24 24 27 / 97%);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 52%), 0 0 0 1px rgb(118 118 128 / 20%);
+}
+
+.layer-drag-preview strong {
+  color: var(--ui-text);
+}
+
+.layer-drag-preview small {
+  color: #b8b8c0;
+}
+
+.layer-actions {
+  background: var(--ui-surface);
+}
+
+.layer-actions button:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-control-hover);
+}
+
+.dialog-backdrop {
+  background: rgb(0 0 0 / 72%);
+}
+
+.dialog-actions .primary-button {
+  border-color: var(--ui-accent-hover);
+  background: var(--ui-accent);
+  color: var(--ui-text);
 }

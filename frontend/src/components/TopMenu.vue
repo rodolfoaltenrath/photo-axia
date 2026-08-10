@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { HistoryTimelineItem } from '../editor/history'
+import axiaLogo from '../../../assets/Logo.png'
 
 const props = defineProps<{
   canRedo: boolean
@@ -69,8 +70,7 @@ onBeforeUnmount(() => {
 <template>
   <header class="top-menu">
     <div class="brand">
-      <span class="brand-mark">A</span>
-      <strong>Axia</strong>
+      <img class="brand-logo" :src="axiaLogo" alt="Axia Studio" />
     </div>
 
     <nav class="menu-actions" aria-label="Acoes principais">

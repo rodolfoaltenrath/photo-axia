@@ -40,7 +40,8 @@ coverage.out
 Thumbs.db
 
 # Material local usado apenas como referencia
-/assets/
+/assets/*
+!/assets/Logo.png
 /Exemplo de assets.html
 /Exemplo de assets_files/
 /Photopea _ Online Photo Editor_files/
