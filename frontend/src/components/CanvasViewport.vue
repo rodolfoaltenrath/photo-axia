@@ -20,6 +20,7 @@ import {
   type DocumentPoint,
   type TransformHandle
 } from '../editor/freeTransform'
+import { centeredScrollOffset, preserveViewportCenter } from '../editor/viewportNavigation'
 import {
   appendBrushPoint,
   brushPointSpacing,
@@ -1484,8 +1485,8 @@ function applyPendingNavigation() {
   if (!scroll || !navigation) return
 
   if (navigation.type === 'center') {
-    scroll.scrollLeft = (scroll.scrollWidth - scroll.clientWidth) / 2
-    scroll.scrollTop = (scroll.scrollHeight - scroll.clientHeight) / 2
+    scroll.scrollLeft = centeredScrollOffset(scroll.scrollWidth, scroll.clientWidth)
+    scroll.scrollTop = centeredScrollOffset(scroll.scrollHeight, scroll.clientHeight)
     return
   }
 
@@ -1583,7 +1584,7 @@ function fitDocument() {
   schedulePendingNavigation()
 }
 
-function syncViewportSize() {
+function syncViewportSize(preserveCenter = false) {
   const scroll = scrollArea.value
   if (!scroll) return
 
@@ -1591,7 +1592,16 @@ function syncViewportSize() {
   const height = scroll.clientHeight
   if (viewportSize.value.width === width && viewportSize.value.height === height) return
 
+  const previousSize = viewportSize.value
+  const centerNavigation =
+    preserveCenter && isViewportReady.value && !pendingNavigation
+      ? preserveViewportCenter(scroll.scrollLeft, scroll.scrollTop, previousSize, { width, height }, scale.value)
+      : undefined
   viewportSize.value = { width, height }
+  if (centerNavigation) {
+    pendingNavigation = centerNavigation
+    schedulePendingNavigation()
+  }
 }
 
 async function initializeViewport() {
@@ -1710,7 +1720,7 @@ onMounted(() => {
   if (scrollArea.value) {
     syncViewportSize()
     resizeObserver = new ResizeObserver(() => {
-      syncViewportSize()
+      syncViewportSize(true)
     })
     resizeObserver.observe(scrollArea.value)
     void initializeViewport()
