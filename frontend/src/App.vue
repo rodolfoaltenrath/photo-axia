@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasViewport from './components/CanvasViewport.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
@@ -40,6 +40,7 @@ import {
   cloneSelection,
   layerSourceToDocumentMatrix,
   selectionIsEmpty,
+  translateSelection,
   transformSelectionPoint,
   type SelectionMode,
   type SelectionPoint,
@@ -47,10 +48,16 @@ import {
 } from './editor/selection'
 import { createMagicWandSelection, disposeSelectionEngine, eraseImageSelection } from './services/selectionEngine'
 import { disposeBrushEngine, paintBrushStroke } from './services/brushEngine'
-import { disposeSelectionMoveEngine, moveImageSelection } from './services/selectionMoveEngine'
+import {
+  disposeSelectionMoveEngine,
+  moveImageSelection,
+  warmSelectionMove,
+  type MoveSelectionPreview
+} from './services/selectionMoveEngine'
 import type {
   DocumentSpec,
   EditorTool,
+  ImageAsset,
   ImportedImage,
   LayerItem,
   LayerTransform,
@@ -95,6 +102,18 @@ const transientObjectUrls = new Set<string>()
 let selectionGeneration = 0
 let pendingSelectionTasks = 0
 
+interface FloatingSelectionSession {
+  layerId: string
+  anchorImage: ImageAsset
+  anchorTransform: LayerTransform
+  anchorSelection: SelectionRegion
+  currentSelection: SelectionRegion
+  deltaX: number
+  deltaY: number
+}
+
+const floatingSelectionSession = shallowRef<FloatingSelectionSession | null>(null)
+
 const history = useHistory<EditorHistoryDelta>(
   {
     maxBytes: 8 * 1024 * 1024,
@@ -115,6 +134,30 @@ const undoLabel = history.undoLabel
 
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
+})
+const selectionMoveAnchor = computed(() => {
+  const session = floatingSelectionSession.value
+  if (!session) return null
+  return {
+    layerId: session.layerId,
+    image: session.anchorImage,
+    transform: session.anchorTransform,
+    selection: session.anchorSelection,
+    deltaX: session.deltaX,
+    deltaY: session.deltaY
+  }
+})
+
+watch(activeLayerId, (layerId) => {
+  if (floatingSelectionSession.value?.layerId !== layerId) clearFloatingSelectionSession()
+})
+
+watch(selection, (currentSelection) => {
+  const session = floatingSelectionSession.value
+  if (session && currentSelection !== session.currentSelection) clearFloatingSelectionSession()
+  if (!currentSelection) return
+  const image = session?.anchorImage ?? activeLayer.value.image
+  if (image) void warmSelectionMove(image).catch(() => undefined)
 })
 
 function createBackgroundLayer(): LayerItem {
@@ -153,6 +196,10 @@ function collectUnusedObjectUrls() {
     for (const source of historyDeltaObjectUrls(entry.delta)) retainedUrls.add(source)
   }
   for (const source of transientObjectUrls) retainedUrls.add(source)
+  const floatingAnchor = floatingSelectionSession.value?.anchorImage
+  for (const source of [floatingAnchor?.sourceUrl, floatingAnchor?.previewUrl]) {
+    if (source?.startsWith('blob:')) retainedUrls.add(source)
+  }
 
   for (const source of trackedObjectUrls) {
     if (retainedUrls.has(source)) continue
@@ -162,6 +209,7 @@ function collectUnusedObjectUrls() {
 }
 
 function releaseAllEditorAssets() {
+  floatingSelectionSession.value = null
   releaseLayerAssets([...layers.value, ...retainedHistoryLayers()])
   for (const source of trackedObjectUrls) URL.revokeObjectURL(source)
   trackedObjectUrls.clear()
@@ -506,6 +554,8 @@ function updateLayerTransform(layerId: string, transform: LayerTransform) {
   )
     return
 
+  if (floatingSelectionSession.value?.layerId === layerId) clearFloatingSelectionSession()
+
   const sizeChanged = previous?.width !== transform.width || previous?.height !== transform.height
   const onlyMoved =
     previous &&
@@ -647,6 +697,7 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
 
 async function selectWithMagicWand(point: SelectionPoint) {
   if (isBusy.value) return
+  clearFloatingSelectionSession()
   const layer = activeLayer.value
   if (layer.kind !== 'image' || !layer.image || !layer.transform) {
     showError(new Error('A varinha mágica precisa de uma camada de imagem ativa.'), 'Seleção indisponível.')
@@ -692,6 +743,7 @@ function updateSelection(value: SelectionRegion | null) {
 
 async function deleteSelectedPixels() {
   if (isBusy.value) return
+  clearFloatingSelectionSession()
   const currentSelection = selection.value
   const layer = activeLayer.value
   if (!currentSelection || selectionIsEmpty(currentSelection)) return
@@ -786,11 +838,19 @@ async function deleteSelectedPixels() {
   }
 }
 
+function clearFloatingSelectionSession(collectAssets = true) {
+  if (!floatingSelectionSession.value) return
+  floatingSelectionSession.value = null
+  if (collectAssets) collectUnusedObjectUrls()
+}
+
 async function commitSelectionMove(
   originalSelection: SelectionRegion,
-  movedSelection: SelectionRegion,
+  _movedSelection: SelectionRegion,
   deltaX: number,
-  deltaY: number
+  deltaY: number,
+  previewScaleX: number,
+  previewScaleY: number
 ) {
   if (isBusy.value || (!deltaX && !deltaY)) return
   const layer = activeLayer.value
@@ -803,57 +863,124 @@ async function commitSelectionMove(
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
   const beforeSelection = cloneSelection(originalSelection)!
-  const afterSelection = cloneSelection(movedSelection)!
-  for (const source of [beforeImage.sourceUrl, beforeImage.previewUrl]) {
+  const previousSession = floatingSelectionSession.value
+  const session =
+    previousSession?.layerId === layer.id && previousSession.currentSelection === originalSelection
+      ? previousSession
+      : {
+          layerId: layer.id,
+          anchorImage: beforeImage,
+          anchorTransform: beforeTransform,
+          anchorSelection: beforeSelection,
+          currentSelection: beforeSelection,
+          deltaX: 0,
+          deltaY: 0
+        }
+  const totalDeltaX = session.deltaX + deltaX
+  const totalDeltaY = session.deltaY + deltaY
+  const afterSelection = translateSelection(session.anchorSelection, totalDeltaX, totalDeltaY)
+  for (const source of [
+    beforeImage.sourceUrl,
+    beforeImage.previewUrl,
+    session.anchorImage.sourceUrl,
+    session.anchorImage.previewUrl
+  ]) {
     if (source?.startsWith('blob:')) transientObjectUrls.add(source)
   }
   let createdSource: string | undefined
   let createdPreviewUrl: string | undefined
+  let quickPreviewUrl: string | undefined
   isBusy.value = true
   errorText.value = ''
   statusText.value = 'Movendo pixels selecionados…'
   try {
-    const result = await moveImageSelection(
-      beforeImage,
-      beforeTransform,
-      beforeSelection,
-      deltaX,
-      deltaY
-    )
-    createdSource = URL.createObjectURL(result.blob)
-    trackedObjectUrls.add(createdSource)
-    createdPreviewUrl = result.previewBlob ? URL.createObjectURL(result.previewBlob) : undefined
-    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
-
-    const oldMatrix = layerSourceToDocumentMatrix(beforeTransform, beforeImage.width, beforeImage.height)
-    const center = transformSelectionPoint(oldMatrix, {
-      x: result.originX + result.width / 2,
-      y: result.originY + result.height / 2
-    })
-    const newWidth = result.width * (beforeTransform.width / beforeImage.width)
-    const newHeight = result.height * (beforeTransform.height / beforeImage.height)
-    const newTransform = {
-      ...beforeTransform,
-      x: center.x - newWidth / 2,
-      y: center.y - newHeight / 2,
-      width: newWidth,
-      height: newHeight
+    const transformForRaster = (result: Pick<MoveSelectionPreview, 'originX' | 'originY' | 'width' | 'height'>) => {
+      const oldMatrix = layerSourceToDocumentMatrix(
+        session.anchorTransform,
+        session.anchorImage.width,
+        session.anchorImage.height
+      )
+      const center = transformSelectionPoint(oldMatrix, {
+        x: result.originX + result.width / 2,
+        y: result.originY + result.height / 2
+      })
+      const newWidth = result.width * (session.anchorTransform.width / session.anchorImage.width)
+      const newHeight = result.height * (session.anchorTransform.height / session.anchorImage.height)
+      return {
+        ...session.anchorTransform,
+        x: center.x - newWidth / 2,
+        y: center.y - newHeight / 2,
+        width: newWidth,
+        height: newHeight
+      }
     }
-    const newAsset = {
-      width: result.width,
-      height: result.height,
-      mimeType: 'image/png',
-      sourceUrl: createdSource,
-      byteSize: result.blob.size,
-      previewUrl: createdPreviewUrl,
-      previewWidth: result.previewWidth,
-      previewHeight: result.previewHeight
+    let newAsset: ImageAsset
+    let newTransform: LayerTransform
+    if (!totalDeltaX && !totalDeltaY) {
+      newAsset = { ...session.anchorImage }
+      newTransform = { ...session.anchorTransform }
+    } else {
+      const result = await moveImageSelection(
+        session.anchorImage,
+        session.anchorTransform,
+        session.anchorSelection,
+        totalDeltaX,
+        totalDeltaY,
+        previewScaleX,
+        previewScaleY,
+        (preview) => {
+          if (quickPreviewUrl) return
+          quickPreviewUrl = URL.createObjectURL(preview.previewBlob)
+          trackedObjectUrls.add(quickPreviewUrl)
+          transientObjectUrls.add(quickPreviewUrl)
+          layer.image = {
+            ...session.anchorImage,
+            width: preview.width,
+            height: preview.height,
+            previewUrl: quickPreviewUrl,
+            previewWidth: preview.previewWidth,
+            previewHeight: preview.previewHeight
+          }
+          layer.transform = transformForRaster(preview)
+          floatingSelectionSession.value = {
+            ...session,
+            currentSelection: afterSelection,
+            deltaX: totalDeltaX,
+            deltaY: totalDeltaY
+          }
+          selection.value = afterSelection
+        }
+      )
+      createdSource = URL.createObjectURL(result.blob)
+      trackedObjectUrls.add(createdSource)
+      createdPreviewUrl = result.previewBlob
+        ? URL.createObjectURL(result.previewBlob)
+        : quickPreviewUrl
+      if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+
+      newTransform = transformForRaster(result)
+      newAsset = {
+        width: result.width,
+        height: result.height,
+        mimeType: 'image/png',
+        sourceUrl: createdSource,
+        byteSize: result.blob.size,
+        previewUrl: createdPreviewUrl,
+        previewWidth: result.previewWidth,
+        previewHeight: result.previewHeight
+      }
     }
     await preloadImage(newAsset.previewUrl ?? newAsset.sourceUrl)
 
     layer.image = newAsset
     layer.transform = newTransform
     selection.value = afterSelection
+    floatingSelectionSession.value = {
+      ...session,
+      currentSelection: afterSelection,
+      deltaX: totalDeltaX,
+      deltaY: totalDeltaY
+    }
     selectionGeneration++
     recordHistory('Mover seleção', {
       type: 'layer:patch',
@@ -869,7 +996,8 @@ async function commitSelectionMove(
   } catch (error) {
     layer.image = beforeImage
     layer.transform = beforeTransform
-    selection.value = beforeSelection
+    floatingSelectionSession.value = previousSession
+    selection.value = originalSelection
     selectionGeneration++
     if (createdSource) {
       URL.revokeObjectURL(createdSource)
@@ -878,6 +1006,10 @@ async function commitSelectionMove(
     if (createdPreviewUrl) {
       URL.revokeObjectURL(createdPreviewUrl)
       trackedObjectUrls.delete(createdPreviewUrl)
+    }
+    if (quickPreviewUrl && quickPreviewUrl !== createdPreviewUrl) {
+      URL.revokeObjectURL(quickPreviewUrl)
+      trackedObjectUrls.delete(quickPreviewUrl)
     }
     transientObjectUrls.clear()
     showError(error, 'Não foi possível mover os pixels selecionados.')
@@ -893,6 +1025,7 @@ async function commitBrushStroke(
   strokeSelection: SelectionRegion | null
 ) {
   if (isBusy.value) return
+  clearFloatingSelectionSession()
   const layer = activeLayer.value
   if (layer.kind !== 'image' || !layer.image || !layer.transform || points.length === 0) return
 
@@ -1156,6 +1289,7 @@ onBeforeUnmount(() => {
         :magic-wand-contiguous="magicWandContiguous"
         :magic-wand-tolerance="magicWandTolerance"
         :selection="selection"
+        :selection-move-anchor="selectionMoveAnchor"
         :selection-mode="selectionMode"
         :zoom="zoom"
         @delete-selection="deleteSelectedPixels"

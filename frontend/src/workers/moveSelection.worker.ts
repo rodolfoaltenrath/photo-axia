@@ -6,7 +6,17 @@ import {
 } from '../editor/selection'
 import type { LayerTransform } from '../types/editor'
 
+interface PrepareRequest {
+  type: 'prepare'
+  cacheKey: string
+  blob: Blob
+  assetWidth: number
+  assetHeight: number
+}
+
 interface MoveRequest {
+  type: 'move'
+  cacheKey: string
   id: number
   blob: Blob
   assetWidth: number
@@ -15,12 +25,36 @@ interface MoveRequest {
   selection: SelectionRegion
   deltaX: number
   deltaY: number
+  previewScaleX?: number
+  previewScaleY?: number
 }
 
-self.onmessage = async (event: MessageEvent<MoveRequest>) => {
+let cachedBitmap: { key: string; bitmap: Promise<ImageBitmap> } | undefined
+
+function sourceBitmap(request: PrepareRequest | MoveRequest) {
+  if (cachedBitmap?.key === request.cacheKey) return cachedBitmap.bitmap
+  const previous = cachedBitmap
+  const bitmap = createImageBitmap(request.blob)
+  cachedBitmap = { key: request.cacheKey, bitmap }
+  if (previous) void previous.bitmap.then((image) => image.close()).catch(() => undefined)
+  void bitmap.catch(() => {
+    if (cachedBitmap?.bitmap === bitmap) cachedBitmap = undefined
+  })
+  return bitmap
+}
+
+self.onmessage = async (event: MessageEvent<PrepareRequest | MoveRequest>) => {
   const request = event.data
+  if (request.type === 'prepare') {
+    try {
+      await sourceBitmap(request)
+    } catch {
+      // The actual move reports errors; warming is intentionally best-effort.
+    }
+    return
+  }
   try {
-    const bitmap = await createImageBitmap(request.blob)
+    const bitmap = await sourceBitmap(request)
     const geometry = selectionMoveGeometry(
       request.assetWidth,
       request.assetHeight,
@@ -64,8 +98,6 @@ self.onmessage = async (event: MessageEvent<MoveRequest>) => {
         contentContext.restore()
       }
     }
-    bitmap.close()
-
     if (geometry.hardRectangularMask) {
       baseContext.clearRect(
         geometry.selectionOriginX,
@@ -102,20 +134,58 @@ self.onmessage = async (event: MessageEvent<MoveRequest>) => {
     const scaleY = Math.abs(request.transform.height / request.assetHeight)
     const previewWidth = Math.max(1, Math.min(geometry.width, Math.round(geometry.width * scaleX)))
     const previewHeight = Math.max(1, Math.min(geometry.height, Math.round(geometry.height * scaleY)))
-    let previewPromise: Promise<Blob | undefined> = Promise.resolve(undefined)
+    let previewCanvas: OffscreenCanvas | undefined
     if (previewWidth !== geometry.width || previewHeight !== geometry.height) {
-      const previewCanvas = new OffscreenCanvas(previewWidth, previewHeight)
+      previewCanvas = new OffscreenCanvas(previewWidth, previewHeight)
       const previewContext = previewCanvas.getContext('2d', { alpha: true })
       if (!previewContext) throw new Error('O sistema não disponibilizou o renderizador de prévias.')
       previewContext.imageSmoothingEnabled = true
       previewContext.imageSmoothingQuality = 'high'
       previewContext.drawImage(output, 0, 0, previewWidth, previewHeight)
-      previewPromise = previewCanvas.convertToBlob({ type: 'image/webp', quality: 0.9 })
     }
-    const [blob, previewBlob] = await Promise.all([
-      output.convertToBlob({ type: 'image/png' }),
-      previewPromise
-    ])
+    const quickPreviewWidth = Math.max(
+      1,
+      Math.min(geometry.width, Math.round(geometry.width * scaleX * Math.max(0.01, request.previewScaleX ?? 1)))
+    )
+    const quickPreviewHeight = Math.max(
+      1,
+      Math.min(geometry.height, Math.round(geometry.height * scaleY * Math.max(0.01, request.previewScaleY ?? 1)))
+    )
+    let quickCanvas: OffscreenCanvas | undefined
+    if (quickPreviewWidth === previewWidth && quickPreviewHeight === previewHeight) {
+      quickCanvas = previewCanvas
+    } else if (quickPreviewWidth !== geometry.width || quickPreviewHeight !== geometry.height) {
+      quickCanvas = new OffscreenCanvas(quickPreviewWidth, quickPreviewHeight)
+      const quickContext = quickCanvas.getContext('2d', { alpha: true })
+      if (!quickContext) throw new Error('O sistema não disponibilizou a prévia rápida da seleção.')
+      quickContext.imageSmoothingEnabled = true
+      quickContext.imageSmoothingQuality = 'high'
+      quickContext.drawImage(output, 0, 0, quickPreviewWidth, quickPreviewHeight)
+    }
+    const quickPreviewBlob = quickCanvas
+      ? await quickCanvas.convertToBlob({ type: 'image/webp', quality: 0.9 })
+      : undefined
+    if (quickPreviewBlob) {
+      self.postMessage({
+        id: request.id,
+        preview: {
+          previewBlob: quickPreviewBlob,
+          width: geometry.width,
+          height: geometry.height,
+          originX: geometry.originX,
+          originY: geometry.originY,
+          previewWidth: quickPreviewWidth,
+          previewHeight: quickPreviewHeight
+        }
+      })
+    }
+    const previewPromise = previewCanvas
+      ? previewCanvas === quickCanvas && quickPreviewBlob
+        ? Promise.resolve(quickPreviewBlob)
+        : previewCanvas.convertToBlob({ type: 'image/webp', quality: 0.9 })
+      : Promise.resolve(undefined)
+    const blobPromise = output.convertToBlob({ type: 'image/png' })
+    const [blob, previewBlob] = await Promise.all([blobPromise, previewPromise])
     self.postMessage({
       id: request.id,
       result: {

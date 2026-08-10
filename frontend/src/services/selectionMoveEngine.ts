@@ -17,22 +17,43 @@ export interface MoveSelectionResult {
   previewHeight: number
 }
 
+export interface MoveSelectionPreview {
+  previewBlob: Blob
+  width: number
+  height: number
+  originX: number
+  originY: number
+  previewWidth: number
+  previewHeight: number
+}
+
 interface PendingMove {
   resolve: (result: MoveSelectionResult) => void
   reject: (error: Error) => void
+  onPreview?: (preview: MoveSelectionPreview) => void
 }
 
 let moveWorker: Worker | undefined
 let nextMoveRequestId = 1
 const pendingMoves = new Map<number, PendingMove>()
+let cachedSource: { sourceUrl: string; blob: Promise<Blob> } | undefined
 
 function workerInstance() {
   if (typeof Worker === 'undefined') return undefined
   if (moveWorker) return moveWorker
   moveWorker = new Worker(new URL('../workers/moveSelection.worker.ts', import.meta.url), { type: 'module' })
-  moveWorker.onmessage = (event: MessageEvent<{ id: number; result?: MoveSelectionResult; error?: string }>) => {
+  moveWorker.onmessage = (event: MessageEvent<{
+    id: number
+    result?: MoveSelectionResult
+    preview?: MoveSelectionPreview
+    error?: string
+  }>) => {
     const pending = pendingMoves.get(event.data.id)
     if (!pending) return
+    if (event.data.preview) {
+      pending.onPreview?.(event.data.preview)
+      return
+    }
     pendingMoves.delete(event.data.id)
     if (event.data.error) pending.reject(new Error(event.data.error))
     else if (event.data.result) pending.resolve(event.data.result)
@@ -45,6 +66,32 @@ function workerInstance() {
     moveWorker = undefined
   }
   return moveWorker
+}
+
+function sourceBlob(asset: ImageAsset) {
+  if (cachedSource?.sourceUrl === asset.sourceUrl) return cachedSource.blob
+  const blob = fetch(asset.sourceUrl).then((response) => {
+    if (!response.ok) throw new Error('Não foi possível carregar a camada para mover a seleção.')
+    return response.blob()
+  })
+  cachedSource = { sourceUrl: asset.sourceUrl, blob }
+  void blob.catch(() => {
+    if (cachedSource?.blob === blob) cachedSource = undefined
+  })
+  return blob
+}
+
+export async function warmSelectionMove(asset: ImageAsset) {
+  const worker = workerInstance()
+  if (!worker) return
+  const blob = await sourceBlob(asset)
+  worker.postMessage({
+    type: 'prepare',
+    cacheKey: asset.sourceUrl,
+    blob,
+    assetWidth: asset.width,
+    assetHeight: asset.height
+  })
 }
 
 function makeCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas {
@@ -174,18 +221,21 @@ export async function moveImageSelection(
   transform: LayerTransform,
   selection: SelectionRegion,
   deltaX: number,
-  deltaY: number
+  deltaY: number,
+  previewScaleX?: number,
+  previewScaleY?: number,
+  onPreview?: (preview: MoveSelectionPreview) => void
 ) {
-  const response = await fetch(asset.sourceUrl)
-  if (!response.ok) throw new Error('Não foi possível carregar a camada para mover a seleção.')
-  const blob = await response.blob()
+  const blob = await sourceBlob(asset)
   const worker = workerInstance()
   if (!worker) return fallbackMove(blob, asset, transform, selection, deltaX, deltaY)
 
   const id = nextMoveRequestId++
   return new Promise<MoveSelectionResult>((resolve, reject) => {
-    pendingMoves.set(id, { resolve, reject })
+    pendingMoves.set(id, { resolve, reject, onPreview })
     worker.postMessage({
+      type: 'move',
+      cacheKey: asset.sourceUrl,
       id,
       blob,
       assetWidth: asset.width,
@@ -193,7 +243,9 @@ export async function moveImageSelection(
       transform,
       selection,
       deltaX,
-      deltaY
+      deltaY,
+      previewScaleX,
+      previewScaleY
     })
   })
 }
@@ -203,4 +255,5 @@ export function disposeSelectionMoveEngine() {
   moveWorker = undefined
   for (const pending of pendingMoves.values()) pending.reject(new Error('Movimento da seleção cancelado.'))
   pendingMoves.clear()
+  cachedSource = undefined
 }

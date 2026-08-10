@@ -433,18 +433,24 @@ export function selectionMoveGeometry(
     (Math.abs(b) < 1e-8 && Math.abs(c) < 1e-8) ||
     (Math.abs(a) < 1e-8 && Math.abs(d) < 1e-8)
   const hardRectangularMask = selection.kind === 'rectangle' && axisAlignedSelection
-  const selectionOriginX = Math.floor(clippedBounds.x)
-  const selectionOriginY = Math.floor(clippedBounds.y)
-  const selectionWidth = Math.max(0, Math.ceil(clippedBounds.x + clippedBounds.width) - selectionOriginX)
-  const selectionHeight = Math.max(0, Math.ceil(clippedBounds.y + clippedBounds.height) - selectionOriginY)
+  // Canvas/WebView interpolation can turn a single opaque neighbour beside a
+  // transparent cut into a visible hairline. Rectangular masks are hard-edged,
+  // so carry one source pixel of bleed with the selection instead of deleting it.
+  const bleed = hardRectangularMask && clippedBounds.width > 0 && clippedBounds.height > 0 ? 1 : 0
+  const selectionOriginX = Math.max(0, Math.floor(clippedBounds.x) - bleed)
+  const selectionOriginY = Math.max(0, Math.floor(clippedBounds.y) - bleed)
+  const selectionRight = Math.min(sourceWidth, Math.ceil(clippedBounds.x + clippedBounds.width) + bleed)
+  const selectionBottom = Math.min(sourceHeight, Math.ceil(clippedBounds.y + clippedBounds.height) + bleed)
+  const selectionWidth = Math.max(0, selectionRight - selectionOriginX)
+  const selectionHeight = Math.max(0, selectionBottom - selectionOriginY)
   const hasSelectionArea = selectionWidth > 0 && selectionHeight > 0
-  const originX = hasSelectionArea ? Math.min(0, Math.floor(clippedBounds.x + sourceDeltaX)) : 0
-  const originY = hasSelectionArea ? Math.min(0, Math.floor(clippedBounds.y + sourceDeltaY)) : 0
+  const originX = hasSelectionArea ? Math.min(0, Math.floor(selectionOriginX + sourceDeltaX)) : 0
+  const originY = hasSelectionArea ? Math.min(0, Math.floor(selectionOriginY + sourceDeltaY)) : 0
   const maxX = hasSelectionArea
-    ? Math.max(sourceWidth, Math.ceil(clippedBounds.x + clippedBounds.width + sourceDeltaX))
+    ? Math.max(sourceWidth, Math.ceil(selectionOriginX + selectionWidth + sourceDeltaX))
     : sourceWidth
   const maxY = hasSelectionArea
-    ? Math.max(sourceHeight, Math.ceil(clippedBounds.y + clippedBounds.height + sourceDeltaY))
+    ? Math.max(sourceHeight, Math.ceil(selectionOriginY + selectionHeight + sourceDeltaY))
     : sourceHeight
   return {
     documentToSource,

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasLayer from './CanvasLayer.vue'
 import SelectionOverlay from './SelectionOverlay.vue'
-import type { DocumentSpec, EditorTool, ImportedImage, LayerItem, LayerTransform } from '../types/editor'
+import type { DocumentSpec, EditorTool, ImageAsset, ImportedImage, LayerItem, LayerTransform } from '../types/editor'
 import { readBrowserImages } from '../services/imageImport'
 import {
   clampZoom,
@@ -26,6 +26,11 @@ import {
   brushPreviewSize,
   drawBrushPoints
 } from '../editor/brush'
+import {
+  imageSourceForRasterSize,
+  snapCanvasTranslation,
+  viewportPreviewGeometry
+} from '../editor/preview'
 import {
   clampSelectionToBounds,
   clipContextToSelection,
@@ -57,6 +62,14 @@ const props = defineProps<{
   magicWandContiguous: boolean
   magicWandTolerance: number
   selection: SelectionRegion | null
+  selectionMoveAnchor: {
+    layerId: string
+    image: ImageAsset
+    transform: LayerTransform
+    selection: SelectionRegion
+    deltaX: number
+    deltaY: number
+  } | null
   selectionMode: SelectionMode
   zoom: number
 }>()
@@ -72,7 +85,9 @@ const emit = defineEmits<{
     originalSelection: SelectionRegion,
     movedSelection: SelectionRegion,
     deltaX: number,
-    deltaY: number
+    deltaY: number,
+    previewScaleX: number,
+    previewScaleY: number
   ): void
   (
     event: 'paintStroke',
@@ -160,8 +175,16 @@ const selectionMoveInteraction = shallowRef<{
   deltaY: number
   originalSelection: SelectionRegion
   baseImageSource: string
+  previewImageSource: string
+  previewSelection: SelectionRegion
+  previewBaseDeltaX: number
+  previewBaseDeltaY: number
   previewWidth: number
   previewHeight: number
+  previewX: number
+  previewY: number
+  previewDocumentWidth: number
+  previewDocumentHeight: number
   transform: LayerTransform
   opacity: number
   baseCanvas?: HTMLCanvasElement
@@ -178,6 +201,7 @@ let pendingBrushBaseImageSource: string | undefined
 let pendingBrushCommittedImageSource: string | undefined
 let pendingSelectionMoveBaseSource: string | undefined
 let pendingSelectionMoveCommittedSource: string | undefined
+let cachedSelectionMoveImage: { source: string; image: HTMLImageElement } | undefined
 let wheelZoomFrame = 0
 let wheelZoomFrameTime = 0
 let navigationScheduled = false
@@ -266,16 +290,6 @@ const brushPreviewDimensions = computed(() => {
     typeof window === 'undefined' ? 1 : window.devicePixelRatio
   )
 })
-const selectionMovePreviewDimensions = computed(() =>
-  brushPreviewSize(
-    props.document.width * 2,
-    props.document.height * 2,
-    props.document.width,
-    props.document.height,
-    scale.value,
-    typeof window === 'undefined' ? 1 : window.devicePixelRatio
-  )
-)
 const brushPreviewStyle = computed(() => {
   const transform = activeDisplayTransform.value
   if (!transform || !paintableLayer.value || (!brushInteraction.value && !brushPreviewPending.value)) return undefined
@@ -285,10 +299,10 @@ const selectionMovePreviewStyle = computed(() => {
   const interaction = selectionMoveInteraction.value
   if (!interaction) return undefined
   return {
-    left: '0',
-    top: '0',
-    width: `${props.document.width}px`,
-    height: `${props.document.height}px`,
+    left: `${interaction.previewX}px`,
+    top: `${interaction.previewY}px`,
+    width: `${interaction.previewDocumentWidth}px`,
+    height: `${interaction.previewDocumentHeight}px`,
     opacity: interaction.opacity / 100
   }
 })
@@ -698,12 +712,39 @@ function redrawSelectionMovePreview() {
   if (!interaction || !canvas || !baseCanvas || !contentCanvas) return
   const context = canvas.getContext('2d')
   if (!context) return
-  const deltaX = interaction.deltaX * (canvas.width / props.document.width)
-  const deltaY = interaction.deltaY * (canvas.height / props.document.height)
+  const deltaX = snapCanvasTranslation(
+    (interaction.previewBaseDeltaX + interaction.deltaX) * (canvas.width / interaction.previewDocumentWidth)
+  )
+  const deltaY = snapCanvasTranslation(
+    (interaction.previewBaseDeltaY + interaction.deltaY) * (canvas.height / interaction.previewDocumentHeight)
+  )
   context.setTransform(1, 0, 0, 1, 0, 0)
+  context.imageSmoothingEnabled = false
   context.clearRect(0, 0, canvas.width, canvas.height)
   context.drawImage(baseCanvas, 0, 0)
   context.drawImage(contentCanvas, deltaX, deltaY)
+}
+
+async function loadSelectionMovePreviewImage(source: string) {
+  if (cachedSelectionMoveImage?.source === source && cachedSelectionMoveImage.image.complete) {
+    return cachedSelectionMoveImage.image
+  }
+  const image = new Image()
+  image.decoding = 'async'
+  image.src = source
+  try {
+    await image.decode()
+  } catch {
+    await new Promise<void>((resolve, reject) => {
+      if (image.complete && image.naturalWidth > 0) resolve()
+      else {
+        image.onload = () => resolve()
+        image.onerror = () => reject(new Error('Não foi possível preparar a prévia da seleção flutuante.'))
+      }
+    })
+  }
+  cachedSelectionMoveImage = { source, image }
+  return image
 }
 
 async function prepareSelectionMovePreview() {
@@ -715,8 +756,13 @@ async function prepareSelectionMovePreview() {
   const layerElement = layerElements
     ? Array.from(layerElements).find((element) => element.dataset.layerId === interaction.layerId)
     : undefined
-  const image = layerElement?.querySelector<HTMLImageElement>('img.layer-image-buffer--active')
-  if (!image?.complete || image.naturalWidth === 0) return
+  const activeImage = layerElement?.querySelector<HTMLImageElement>('img.layer-image-buffer--active')
+  const activeSource = activeImage?.currentSrc || activeImage?.src
+  const image =
+    activeImage?.complete && activeImage.naturalWidth > 0 && activeSource === interaction.previewImageSource
+      ? activeImage
+      : await loadSelectionMovePreviewImage(interaction.previewImageSource)
+  if (selectionMoveInteraction.value !== interaction || image.naturalWidth === 0) return
 
   const baseCanvas = document.createElement('canvas')
   baseCanvas.width = canvas.width
@@ -727,13 +773,17 @@ async function prepareSelectionMovePreview() {
   contentCanvas.height = canvas.height
   const contentContext = contentCanvas.getContext('2d', { alpha: true })
   if (!baseContext || !contentContext) return
+  baseContext.imageSmoothingEnabled = true
+  baseContext.imageSmoothingQuality = 'high'
+  contentContext.imageSmoothingEnabled = true
+  contentContext.imageSmoothingQuality = 'high'
   const documentToPreview: [number, number, number, number, number, number] = [
-    canvas.width / props.document.width,
+    canvas.width / interaction.previewDocumentWidth,
     0,
     0,
-    canvas.height / props.document.height,
-    0,
-    0
+    canvas.height / interaction.previewDocumentHeight,
+    -interaction.previewX * (canvas.width / interaction.previewDocumentWidth),
+    -interaction.previewY * (canvas.height / interaction.previewDocumentHeight)
   ]
   const imageToPreview = multiplyMatrices(
     documentToPreview,
@@ -744,13 +794,13 @@ async function prepareSelectionMovePreview() {
   baseContext.setTransform(1, 0, 0, 1, 0, 0)
 
   contentContext.save()
-  clipContextToSelection(contentContext, interaction.originalSelection, documentToPreview)
+  clipContextToSelection(contentContext, interaction.previewSelection, documentToPreview)
   contentContext.setTransform(...imageToPreview)
   contentContext.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight)
   contentContext.restore()
   baseContext.save()
   baseContext.globalCompositeOperation = 'destination-out'
-  clipContextToSelection(baseContext, interaction.originalSelection, documentToPreview)
+  clipContextToSelection(baseContext, interaction.previewSelection, documentToPreview)
   baseContext.setTransform(1, 0, 0, 1, 0, 0)
   baseContext.fillRect(0, 0, canvas.width, canvas.height)
   baseContext.restore()
@@ -764,9 +814,11 @@ async function prepareSelectionMovePreview() {
 
 function startSelectionMove(event: PointerEvent, point: SelectionPoint, selection: SelectionRegion) {
   const scroll = scrollArea.value
+  const surfaceElement = surface.value
   const layer = paintableLayer.value
   if (
     !scroll ||
+    !surfaceElement ||
     !layer?.image ||
     !selectionContainsPoint(selection, point) ||
     props.isBusy
@@ -774,6 +826,24 @@ function startSelectionMove(event: PointerEvent, point: SelectionPoint, selectio
   event.preventDefault()
   event.stopPropagation()
   bindSelectionMoveWindowEvents()
+  const anchor = props.selectionMoveAnchor?.layerId === layer.id ? props.selectionMoveAnchor : null
+  const surfaceRect = surfaceElement.getBoundingClientRect()
+  const viewportRect = scroll.getBoundingClientRect()
+  const previewGeometry = viewportPreviewGeometry(
+    props.document.width,
+    props.document.height,
+    scale.value,
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+    surfaceRect,
+    viewportRect
+  )
+  const previewAsset = anchor?.image ?? layer.image
+  const previewTransform = anchor?.transform ?? layer.transform!
+  const previewImageSource = imageSourceForRasterSize(
+    previewAsset,
+    Math.abs(previewTransform.width) * (previewGeometry.rasterWidth / previewGeometry.width),
+    Math.abs(previewTransform.height) * (previewGeometry.rasterHeight / previewGeometry.height)
+  )
   selectionMoveInteraction.value = {
     pointerId: event.pointerId,
     layerId: layer.id,
@@ -782,9 +852,17 @@ function startSelectionMove(event: PointerEvent, point: SelectionPoint, selectio
     deltaY: 0,
     originalSelection: selection,
     baseImageSource: layer.image.previewUrl ?? layer.image.sourceUrl,
-    previewWidth: selectionMovePreviewDimensions.value.width,
-    previewHeight: selectionMovePreviewDimensions.value.height,
-    transform: { ...layer.transform! },
+    previewImageSource,
+    previewSelection: anchor?.selection ?? selection,
+    previewBaseDeltaX: anchor?.deltaX ?? 0,
+    previewBaseDeltaY: anchor?.deltaY ?? 0,
+    previewWidth: previewGeometry.rasterWidth,
+    previewHeight: previewGeometry.rasterHeight,
+    previewX: previewGeometry.x,
+    previewY: previewGeometry.y,
+    previewDocumentWidth: previewGeometry.width,
+    previewDocumentHeight: previewGeometry.height,
+    transform: { ...previewTransform },
     opacity: layer.opacity
   }
   selectionDraft.value = selection
@@ -1241,7 +1319,9 @@ function stopPointer(event: PointerEvent) {
         interaction.originalSelection,
         movedSelection,
         interaction.deltaX,
-        interaction.deltaY
+        interaction.deltaY,
+        interaction.previewWidth / interaction.previewDocumentWidth,
+        interaction.previewHeight / interaction.previewDocumentHeight
       )
     }
   }
@@ -1258,6 +1338,14 @@ function stopPointer(event: PointerEvent) {
     isPanning.value = false
     panStart.value.pointerId = -1
   }
+}
+
+function handleLostPointerCapture(event: PointerEvent) {
+  if (
+    event.buttons !== 0 &&
+    selectionMoveInteraction.value?.pointerId === event.pointerId
+  ) return
+  stopPointer(event)
 }
 
 function defaultZoomAnchor() {
@@ -1456,6 +1544,13 @@ watch(
 )
 
 watch(
+  () => props.selectionMoveAnchor?.image.previewUrl ?? props.selectionMoveAnchor?.image.sourceUrl,
+  (source) => {
+    if (!source || cachedSelectionMoveImage?.source !== source) cachedSelectionMoveImage = undefined
+  }
+)
+
+watch(
   () => paintableLayer.value?.image?.previewUrl ?? paintableLayer.value?.image?.sourceUrl,
   (source) => {
     if (brushPreviewPending.value && source && source !== pendingBrushBaseImageSource) {
@@ -1529,6 +1624,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   unbindSelectionMoveWindowEvents()
+  cachedSelectionMoveImage = undefined
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('keyup', handleWindowKeyup)
   window.removeEventListener('blur', resetInteractionKeys)
@@ -1632,7 +1728,7 @@ defineExpose({
       :class="viewportCursorClass"
       tabindex="0"
       @auxclick.prevent
-      @lostpointercapture="stopPointer"
+      @lostpointercapture="handleLostPointerCapture"
       @pointercancel="stopPointer"
       @pointerdown.capture="startViewportPointer"
       @pointermove="updatePointer"

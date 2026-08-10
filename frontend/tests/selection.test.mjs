@@ -231,7 +231,7 @@ test('movimento expande o raster quando os pixels ultrapassam os limites da cama
   )
   assert.deepEqual(
     { originX: geometry.originX, originY: geometry.originY, width: geometry.width, height: geometry.height },
-    { originX: 0, originY: -10, width: 115, height: 90 }
+    { originX: 0, originY: -11, width: 116, height: 91 }
   )
   assert.equal(geometry.hardRectangularMask, true)
 })
@@ -254,7 +254,7 @@ test('máscara retangular só é rígida quando permanece alinhada ao raster', (
       width: aligned.selectionWidth,
       height: aligned.selectionHeight
     },
-    { x: 10, y: 20, width: 31, height: 17 }
+    { x: 9, y: 19, width: 33, height: 19 }
   )
 
   const rotated = selectionMoveGeometry(
