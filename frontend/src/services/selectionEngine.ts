@@ -1,10 +1,12 @@
 import {
+  clipContextToSelection,
   drawVectorSelection,
   invertMatrix,
   layerSourceToDocumentMatrix,
   magicWandSpans,
   multiplyMatrices,
   opaquePixelBounds,
+  selectionExtractionGeometry,
   transformSelectionPoint,
   type PixelSelection,
   type SelectionBounds,
@@ -39,6 +41,43 @@ interface PendingErase {
 let eraseWorker: Worker | undefined
 let nextEraseRequestId = 1
 const pendingErases = new Map<number, PendingErase>()
+
+export interface ExtractSelectionResult {
+  blob: Blob
+  width: number
+  height: number
+  sourceBounds: SelectionBounds
+}
+
+interface PendingExtract {
+  resolve: (result: ExtractSelectionResult) => void
+  reject: (error: Error) => void
+}
+
+let extractWorker: Worker | undefined
+let nextExtractRequestId = 1
+const pendingExtracts = new Map<number, PendingExtract>()
+
+function extractWorkerInstance() {
+  if (typeof Worker === 'undefined') return undefined
+  if (extractWorker) return extractWorker
+  extractWorker = new Worker(new URL('../workers/extractSelection.worker.ts', import.meta.url), { type: 'module' })
+  extractWorker.onmessage = (event: MessageEvent<{ id: number; result?: ExtractSelectionResult; error?: string }>) => {
+    const pending = pendingExtracts.get(event.data.id)
+    if (!pending) return
+    pendingExtracts.delete(event.data.id)
+    if (event.data.error) pending.reject(new Error(event.data.error))
+    else if (event.data.result) pending.resolve(event.data.result)
+    else pending.reject(new Error('A cópia da seleção retornou um resultado inválido.'))
+  }
+  extractWorker.onerror = () => {
+    for (const pending of pendingExtracts.values()) pending.reject(new Error('A cópia da seleção foi interrompida.'))
+    pendingExtracts.clear()
+    extractWorker?.terminate()
+    extractWorker = undefined
+  }
+  return extractWorker
+}
 
 function eraseWorkerInstance() {
   if (typeof Worker === 'undefined') return undefined
@@ -158,6 +197,68 @@ function canvas2dContext(canvas: HTMLCanvasElement | OffscreenCanvas) {
   return context
 }
 
+async function fallbackExtract(
+  sourceBlob: Blob,
+  asset: ImageAsset,
+  transform: LayerTransform,
+  selection: SelectionRegion
+): Promise<ExtractSelectionResult> {
+  const geometry = selectionExtractionGeometry(asset.width, asset.height, transform, selection)
+  if (!geometry.width || !geometry.height) throw new Error('A seleção não intersecta a camada ativa.')
+  const bitmap = await createImageBitmap(sourceBlob)
+  const canvas = makeCanvas(geometry.width, geometry.height)
+  const context = canvas2dContext(canvas)
+  const documentToOutput = multiplyMatrices(
+    [1, 0, 0, 1, -geometry.originX, -geometry.originY],
+    geometry.documentToSource
+  )
+  context.save()
+  clipContextToSelection(context, selection, documentToOutput)
+  context.setTransform(1, 0, 0, 1, -geometry.originX, -geometry.originY)
+  context.drawImage(bitmap, 0, 0, asset.width, asset.height)
+  context.restore()
+  bitmap.close()
+
+  const image = context.getImageData(0, 0, geometry.width, geometry.height)
+  const opaqueBounds = opaquePixelBounds(image.data, geometry.width, geometry.height)
+  if (!opaqueBounds) throw new Error('A seleção não contém pixels visíveis nesta camada.')
+  const trimmed =
+    opaqueBounds.x > 0 ||
+    opaqueBounds.y > 0 ||
+    opaqueBounds.width < geometry.width ||
+    opaqueBounds.height < geometry.height
+  const output = trimmed ? makeCanvas(opaqueBounds.width, opaqueBounds.height) : canvas
+  if (trimmed) {
+    canvas2dContext(output).putImageData(
+      image,
+      -opaqueBounds.x,
+      -opaqueBounds.y,
+      opaqueBounds.x,
+      opaqueBounds.y,
+      opaqueBounds.width,
+      opaqueBounds.height
+    )
+  }
+  const blob = await encodeCanvas(output)
+  canvas.width = 1
+  canvas.height = 1
+  if (output !== canvas) {
+    output.width = 1
+    output.height = 1
+  }
+  return {
+    blob,
+    width: opaqueBounds.width,
+    height: opaqueBounds.height,
+    sourceBounds: {
+      x: geometry.originX + opaqueBounds.x,
+      y: geometry.originY + opaqueBounds.y,
+      width: opaqueBounds.width,
+      height: opaqueBounds.height
+    }
+  }
+}
+
 async function fallbackErase(
   sourceBlob: Blob,
   asset: ImageAsset,
@@ -234,6 +335,24 @@ export async function eraseImageSelection(
   })
 }
 
+export async function extractImageSelection(
+  asset: ImageAsset,
+  transform: LayerTransform,
+  selection: SelectionRegion
+): Promise<ExtractSelectionResult> {
+  const response = await fetch(asset.sourceUrl)
+  if (!response.ok) throw new Error('Não foi possível carregar a camada para copiar a seleção.')
+  const blob = await response.blob()
+  const worker = extractWorkerInstance()
+  if (!worker) return fallbackExtract(blob, asset, transform, selection)
+
+  const id = nextExtractRequestId++
+  return new Promise<ExtractSelectionResult>((resolve, reject) => {
+    pendingExtracts.set(id, { resolve, reject })
+    worker.postMessage({ id, blob, assetWidth: asset.width, assetHeight: asset.height, transform, selection })
+  })
+}
+
 export function disposeSelectionEngine() {
   wandWorker?.terminate()
   wandWorker = undefined
@@ -243,4 +362,8 @@ export function disposeSelectionEngine() {
   eraseWorker = undefined
   for (const pending of pendingErases.values()) pending.reject(new Error('Apagar cancelado.'))
   pendingErases.clear()
+  extractWorker?.terminate()
+  extractWorker = undefined
+  for (const pending of pendingExtracts.values()) pending.reject(new Error('Cópia da seleção cancelada.'))
+  pendingExtracts.clear()
 }

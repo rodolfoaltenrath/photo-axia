@@ -12,12 +12,33 @@ import {
   pixelSpansOutlinePath,
   selectionContainsPoint,
   selectionDocumentBounds,
+  selectionExtractionGeometry,
   selectionMoveGeometry,
+  selectionNudgeDelta,
   snapShapeSelectionToBounds,
   sourceScaleFactor,
   transformSelectionPoint,
   translateSelection
 } from '../src/editor/selection.ts'
+
+test('setas deslocam a seleção em um pixel ou dez com Shift', () => {
+  assert.deepEqual(selectionNudgeDelta('ArrowUp'), { x: 0, y: -1 })
+  assert.deepEqual(selectionNudgeDelta('ArrowRight', true), { x: 10, y: 0 })
+  assert.equal(selectionNudgeDelta('Enter'), undefined)
+})
+
+test('extração limita a seleção aos pixels da camada sem adicionar sangria', () => {
+  const geometry = selectionExtractionGeometry(
+    100,
+    80,
+    { x: 10, y: 20, width: 200, height: 160, rotation: 0 },
+    { kind: 'rectangle', bounds: { x: -10, y: 40, width: 81, height: 42 } }
+  )
+  assert.deepEqual(
+    { x: geometry.originX, y: geometry.originY, width: geometry.width, height: geometry.height },
+    { x: 0, y: 10, width: 31, height: 21 }
+  )
+})
 
 function pixels(width, rows) {
   const data = new Uint8ClampedArray(width * rows.length * 4)

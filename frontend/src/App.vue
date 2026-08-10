@@ -46,7 +46,12 @@ import {
   type SelectionPoint,
   type SelectionRegion
 } from './editor/selection'
-import { createMagicWandSelection, disposeSelectionEngine, eraseImageSelection } from './services/selectionEngine'
+import {
+  createMagicWandSelection,
+  disposeSelectionEngine,
+  eraseImageSelection,
+  extractImageSelection
+} from './services/selectionEngine'
 import { disposeBrushEngine, paintBrushStroke } from './services/brushEngine'
 import {
   disposeSelectionMoveEngine,
@@ -448,6 +453,107 @@ function duplicateLayer(layerId = activeLayerId.value) {
     activeAfter: duplicate.id
   })
   statusText.value = 'Camada duplicada'
+}
+
+async function duplicateSelectionOrLayer() {
+  const currentSelection = selection.value
+  if (!currentSelection || selectionIsEmpty(currentSelection)) {
+    duplicateLayer()
+    return
+  }
+  if (isBusy.value) return
+  clearFloatingSelectionSession()
+  const source = activeLayer.value
+  if (source.kind !== 'image' || !source.image || !source.transform) {
+    showError(new Error('A seleção precisa estar sobre uma camada de imagem.'), 'Não foi possível copiar a seleção.')
+    return
+  }
+
+  canvasViewport.value?.commitPendingTransform()
+  const sourceImage = { ...source.image }
+  const sourceTransform = { ...source.transform }
+  for (const assetSource of [sourceImage.sourceUrl, sourceImage.previewUrl]) {
+    if (assetSource?.startsWith('blob:')) transientObjectUrls.add(assetSource)
+  }
+  let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Criando camada pela seleção…'
+  try {
+    const result = await extractImageSelection(sourceImage, sourceTransform, currentSelection)
+    createdSource = URL.createObjectURL(result.blob)
+    trackedObjectUrls.add(createdSource)
+
+    const oldMatrix = layerSourceToDocumentMatrix(sourceTransform, sourceImage.width, sourceImage.height)
+    const bounds = result.sourceBounds
+    const center = transformSelectionPoint(oldMatrix, {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2
+    })
+    const width = bounds.width * (sourceTransform.width / sourceImage.width)
+    const height = bounds.height * (sourceTransform.height / sourceImage.height)
+    const transform: LayerTransform = {
+      ...sourceTransform,
+      x: center.x - width / 2,
+      y: center.y - height / 2,
+      width,
+      height
+    }
+    const asset: ImageAsset = {
+      width: result.width,
+      height: result.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: result.blob.size
+    }
+    const preview = await createImagePreview(asset, transform.width, transform.height)
+    createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+    await Promise.all([preloadImage(createdSource), preview ? preloadImage(preview.url) : Promise.resolve()])
+
+    const duplicate: LayerItem = {
+      id: crypto.randomUUID(),
+      name: `${source.name} seleção`,
+      visible: true,
+      opacity: 100,
+      kind: 'image',
+      image: {
+        ...asset,
+        previewUrl: preview?.url,
+        previewWidth: preview?.width ?? asset.width,
+        previewHeight: preview?.height ?? asset.height
+      },
+      transform
+    }
+    const sourceIndex = layers.value.findIndex((layer) => layer.id === source.id)
+    if (sourceIndex < 0) throw new Error('A camada original não está mais disponível.')
+    const activeBefore = activeLayerId.value
+    layers.value.splice(sourceIndex, 0, duplicate)
+    activeLayerId.value = duplicate.id
+    recordHistory('Camada via cópia', {
+      type: 'layers:add',
+      items: [{ index: sourceIndex, layer: cloneLayerState(duplicate) }],
+      activeBefore,
+      activeAfter: duplicate.id
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = 'Seleção copiada para uma nova camada'
+  } catch (error) {
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    if (createdPreviewUrl) {
+      URL.revokeObjectURL(createdPreviewUrl)
+      trackedObjectUrls.delete(createdPreviewUrl)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível copiar a seleção.')
+  } finally {
+    isBusy.value = false
+  }
 }
 
 function deleteLayer(layerId: string) {
@@ -1195,7 +1301,7 @@ function handleShortcut(event: KeyboardEvent) {
 
   if (command && event.code === 'KeyJ') {
     event.preventDefault()
-    duplicateLayer()
+    void duplicateSelectionOrLayer()
     return
   }
 

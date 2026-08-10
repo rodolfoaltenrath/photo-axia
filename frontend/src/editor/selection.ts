@@ -349,6 +349,17 @@ export function translateSelection(
   }
 }
 
+export function selectionNudgeDelta(key: string, accelerated = false) {
+  const step = accelerated ? 10 : 1
+  const movements: Record<string, SelectionPoint> = {
+    ArrowUp: { x: 0, y: -step },
+    ArrowDown: { x: 0, y: step },
+    ArrowLeft: { x: -step, y: 0 },
+    ArrowRight: { x: step, y: 0 }
+  }
+  return movements[key]
+}
+
 export function cloneSelection(selection: SelectionRegion | null): SelectionRegion | null {
   if (!selection) return null
   if (selection.kind === 'pixels') {
@@ -413,6 +424,28 @@ export function selectionContainsPoint(selection: SelectionRegion, point: Select
     if (intersects) inside = !inside
   }
   return inside
+}
+
+export function selectionExtractionGeometry(
+  sourceWidth: number,
+  sourceHeight: number,
+  transform: LayerTransform,
+  selection: SelectionRegion
+) {
+  const documentToSource = invertMatrix(layerSourceToDocumentMatrix(transform, sourceWidth, sourceHeight))
+  const sourceBounds = transformSelectionBounds(documentToSource, selectionDocumentBounds(selection))
+  const clippedBounds = intersectSelectionBounds(sourceBounds, { x: 0, y: 0, width: sourceWidth, height: sourceHeight })
+  const originX = Math.max(0, Math.floor(clippedBounds.x))
+  const originY = Math.max(0, Math.floor(clippedBounds.y))
+  const right = Math.min(sourceWidth, Math.ceil(clippedBounds.x + clippedBounds.width))
+  const bottom = Math.min(sourceHeight, Math.ceil(clippedBounds.y + clippedBounds.height))
+  return {
+    documentToSource,
+    originX,
+    originY,
+    width: Math.max(0, right - originX),
+    height: Math.max(0, bottom - originY)
+  }
 }
 
 export function selectionMoveGeometry(

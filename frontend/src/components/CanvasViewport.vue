@@ -43,6 +43,7 @@ import {
   pointsBounds,
   selectionContainsPoint,
   selectionIsEmpty,
+  selectionNudgeDelta,
   snapShapeSelectionToBounds,
   translateSelection,
   type SelectionMode,
@@ -202,6 +203,7 @@ let pendingBrushCommittedImageSource: string | undefined
 let pendingSelectionMoveBaseSource: string | undefined
 let pendingSelectionMoveCommittedSource: string | undefined
 let cachedSelectionMoveImage: { source: string; image: HTMLImageElement } | undefined
+let keyboardSelectionCommitTimeout: ReturnType<typeof setTimeout> | undefined
 let wheelZoomFrame = 0
 let wheelZoomFrameTime = 0
 let navigationScheduled = false
@@ -383,9 +385,34 @@ function isEditableTarget(target: EventTarget | null) {
   return target instanceof HTMLElement && Boolean(target.closest('input, select, textarea, [contenteditable="true"]'))
 }
 
+function handleSelectionNudge(event: KeyboardEvent) {
+  const nudge = selectionNudgeDelta(event.key, event.shiftKey)
+  if (!nudge || props.activeTool !== 'move' || !props.selection || isEditableTarget(event.target)) return false
+  event.preventDefault()
+  event.stopPropagation()
+  if (props.isBusy) return true
+  let interaction = selectionMoveInteraction.value
+  if (!interaction || interaction.pointerId !== -2) {
+    if (interaction || !beginSelectionMove(-2, { x: 0, y: 0 }, props.selection)) return true
+    interaction = selectionMoveInteraction.value
+  }
+  if (!interaction) return true
+  interaction.deltaX += nudge.x
+  interaction.deltaY += nudge.y
+  selectionDraft.value = translateSelection(
+    interaction.originalSelection,
+    interaction.deltaX,
+    interaction.deltaY
+  )
+  redrawSelectionMovePreview()
+  if (keyboardSelectionCommitTimeout) clearTimeout(keyboardSelectionCommitTimeout)
+  keyboardSelectionCommitTimeout = setTimeout(commitKeyboardSelectionMove, 2000)
+  return true
+}
+
 function handleCanvasKeydown(event: KeyboardEvent) {
   const scroll = scrollArea.value
-  if (!scroll) return
+  if (!scroll || handleSelectionNudge(event)) return
 
   const step = event.shiftKey ? 96 : 36
   const movement: Record<string, [number, number]> = {
@@ -423,6 +450,7 @@ function updateModifierKeys(event: KeyboardEvent) {
 function handleWindowKeydown(event: KeyboardEvent) {
   updateModifierKeys(event)
   if (isEditableTarget(event.target)) return
+  if (handleSelectionNudge(event)) return
 
   if ((event.key === 'Delete' || event.key === 'Backspace') && props.selection) {
     event.preventDefault()
@@ -516,9 +544,11 @@ function handleWindowKeydown(event: KeyboardEvent) {
 function handleWindowKeyup(event: KeyboardEvent) {
   updateModifierKeys(event)
   if (event.code === 'Space') isSpacePressed.value = false
+  if (selectionNudgeDelta(event.key)) commitKeyboardSelectionMove()
 }
 
 function resetInteractionKeys() {
+  commitKeyboardSelectionMove()
   isSpacePressed.value = false
   modifierKeys.value = { alt: false, command: false, shift: false }
 }
@@ -682,6 +712,8 @@ function startSelectionPointer(event: PointerEvent, point: SelectionPoint) {
 
 function clearSelectionMovePreview() {
   unbindSelectionMoveWindowEvents()
+  if (keyboardSelectionCommitTimeout) clearTimeout(keyboardSelectionCommitTimeout)
+  keyboardSelectionCommitTimeout = undefined
   const canvas = selectionMoveCanvas.value
   canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
   selectionMoveInteraction.value = null
@@ -814,18 +846,25 @@ async function prepareSelectionMovePreview() {
 
 function startSelectionMove(event: PointerEvent, point: SelectionPoint, selection: SelectionRegion) {
   const scroll = scrollArea.value
-  const surfaceElement = surface.value
   const layer = paintableLayer.value
   if (
     !scroll ||
-    !surfaceElement ||
     !layer?.image ||
     !selectionContainsPoint(selection, point) ||
     props.isBusy
   ) return false
   event.preventDefault()
   event.stopPropagation()
-  bindSelectionMoveWindowEvents()
+  const started = beginSelectionMove(event.pointerId, point, selection)
+  if (started) bindSelectionMoveWindowEvents()
+  return started
+}
+
+function beginSelectionMove(pointerId: number, start: SelectionPoint, selection: SelectionRegion) {
+  const scroll = scrollArea.value
+  const surfaceElement = surface.value
+  const layer = paintableLayer.value
+  if (!scroll || !surfaceElement || !layer?.image || props.isBusy) return false
   const anchor = props.selectionMoveAnchor?.layerId === layer.id ? props.selectionMoveAnchor : null
   const surfaceRect = surfaceElement.getBoundingClientRect()
   const viewportRect = scroll.getBoundingClientRect()
@@ -845,9 +884,9 @@ function startSelectionMove(event: PointerEvent, point: SelectionPoint, selectio
     Math.abs(previewTransform.height) * (previewGeometry.rasterHeight / previewGeometry.height)
   )
   selectionMoveInteraction.value = {
-    pointerId: event.pointerId,
+    pointerId,
     layerId: layer.id,
-    start: point,
+    start,
     deltaX: 0,
     deltaY: 0,
     originalSelection: selection,
@@ -868,6 +907,36 @@ function startSelectionMove(event: PointerEvent, point: SelectionPoint, selectio
   selectionDraft.value = selection
   nextTick(() => void prepareSelectionMovePreview())
   return true
+}
+
+function commitKeyboardSelectionMove() {
+  if (keyboardSelectionCommitTimeout) clearTimeout(keyboardSelectionCommitTimeout)
+  keyboardSelectionCommitTimeout = undefined
+  const interaction = selectionMoveInteraction.value
+  if (!interaction || interaction.pointerId !== -2) return
+  if (!interaction.deltaX && !interaction.deltaY) {
+    clearSelectionMovePreview()
+    return
+  }
+  const movedSelection = translateSelection(
+    interaction.originalSelection,
+    interaction.deltaX,
+    interaction.deltaY
+  )
+  interaction.pointerId = -1
+  selectionMovePending.value = true
+  pendingSelectionMoveBaseSource = interaction.baseImageSource
+  pendingSelectionMoveCommittedSource = undefined
+  selectionDraft.value = movedSelection
+  emit(
+    'moveSelection',
+    interaction.originalSelection,
+    movedSelection,
+    interaction.deltaX,
+    interaction.deltaY,
+    interaction.previewWidth / interaction.previewDocumentWidth,
+    interaction.previewHeight / interaction.previewDocumentHeight
+  )
 }
 
 function selectionMoveDelta(start: SelectionPoint, point: SelectionPoint, constrain: boolean) {
@@ -1632,6 +1701,7 @@ onBeforeUnmount(() => {
   stopWheelZoomAnimation()
   resizeObserver?.disconnect()
   if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
+  if (keyboardSelectionCommitTimeout) clearTimeout(keyboardSelectionCommitTimeout)
 })
 
 defineExpose({
