@@ -51,6 +51,8 @@ export interface ImageAsset {
   previewUrl?: string
   previewWidth?: number
   previewHeight?: number
+  /** Token privado que permite ao worker reutilizar o raster da última pincelada. */
+  editToken?: string
 }
 
 export interface LayerTransform {

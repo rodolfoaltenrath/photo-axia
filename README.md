@@ -100,6 +100,6 @@ No macOS, use `Command` no lugar de `Ctrl`.
 ## Pincel
 
 - `B`: ativar a ferramenta de pincel.
-- Arraste sobre uma camada de imagem para pintar; o traço é recortado automaticamente pelos limites da camada.
+- Arraste sobre a camada de imagem ativa para pintar; havendo uma seleção, o traço fica restrito a ela e, sem seleção, pinta livremente dentro da camada.
 - Ajuste o tamanho e a cor no painel de Propriedades.
 - Cada traço completo (do clique até soltar o mouse) gera uma única entrada de desfazer/refazer.

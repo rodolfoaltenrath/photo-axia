@@ -16,6 +16,7 @@ import {
 } from './services/backend'
 import {
   createImagePreview,
+  imagePreviewSize,
   imagePreviewNeedsUpdate,
   readBrowserImages,
   releaseLayerAssets
@@ -775,7 +776,12 @@ async function deleteSelectedPixels() {
   }
 }
 
-async function commitBrushStroke(points: SelectionPoint[], size: number, color: string) {
+async function commitBrushStroke(
+  points: SelectionPoint[],
+  size: number,
+  color: string,
+  strokeSelection: SelectionRegion | null
+) {
   if (isBusy.value) return
   const layer = activeLayer.value
   if (layer.kind !== 'image' || !layer.image || !layer.transform || points.length === 0) return
@@ -792,28 +798,37 @@ async function commitBrushStroke(points: SelectionPoint[], size: number, color: 
   errorText.value = ''
   statusText.value = 'Pintando…'
   try {
-    const result = await paintBrushStroke(beforeImage, beforeTransform, strokePoints, size, color)
+    const previewTarget = imagePreviewSize(beforeImage, beforeTransform.width, beforeTransform.height)
+    const result = await paintBrushStroke(
+      layer.id,
+      beforeImage,
+      beforeTransform,
+      strokePoints,
+      size,
+      color,
+      strokeSelection,
+      previewTarget.width,
+      previewTarget.height
+    )
     createdSource = URL.createObjectURL(result.blob)
     trackedObjectUrls.add(createdSource)
+    createdPreviewUrl = result.previewBlob ? URL.createObjectURL(result.previewBlob) : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
 
     const newAsset = {
       width: result.width,
       height: result.height,
       mimeType: 'image/png',
       sourceUrl: createdSource,
-      byteSize: result.blob.size
+      byteSize: result.blob.size,
+      editToken: result.editToken,
+      previewUrl: createdPreviewUrl,
+      previewWidth: result.previewWidth,
+      previewHeight: result.previewHeight
     }
-    const preview = await createImagePreview(newAsset, beforeTransform.width, beforeTransform.height)
-    createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
-    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
-    await Promise.all([preloadImage(newAsset.sourceUrl), preview ? preloadImage(preview.url) : Promise.resolve()])
+    await preloadImage(newAsset.previewUrl ?? newAsset.sourceUrl)
 
-    layer.image = {
-      ...newAsset,
-      previewUrl: preview?.url,
-      previewWidth: preview?.width ?? newAsset.width,
-      previewHeight: preview?.height ?? newAsset.height
-    }
+    layer.image = newAsset
 
     recordHistory('Pincelada', {
       type: 'layer:patch',

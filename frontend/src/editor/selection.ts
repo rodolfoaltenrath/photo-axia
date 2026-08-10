@@ -269,18 +269,16 @@ export function pixelSpansOutlinePath(spans: PixelSpan[]) {
   return path.join('')
 }
 
-export function drawVectorSelection(
+export function traceSelectionPath(
   context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   selection: SelectionRegion
 ) {
+  context.beginPath()
   if (selection.kind === 'pixels') {
-    context.beginPath()
     for (const span of selection.spans) context.rect(span.x0, span.y, span.x1 - span.x0, 1)
-    context.fill()
     return
   }
 
-  context.beginPath()
   if (selection.kind === 'rectangle') {
     const { x, y, width, height } = selection.bounds
     context.rect(x, y, width, height)
@@ -297,7 +295,28 @@ export function drawVectorSelection(
     }
     context.closePath()
   }
+}
+
+export function drawVectorSelection(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  selection: SelectionRegion
+) {
+  traceSelectionPath(context, selection)
   context.fill()
+}
+
+export function clipContextToSelection(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  selection: SelectionRegion,
+  documentToTarget: Matrix2D
+) {
+  const selectionToTarget = selection.kind === 'pixels'
+    ? multiplyMatrices(documentToTarget, selection.sourceToDocument)
+    : documentToTarget
+  context.setTransform(...selectionToTarget)
+  traceSelectionPath(context, selection)
+  context.clip()
+  context.setTransform(...documentToTarget)
 }
 
 export function matrixToSvg(matrix: Matrix2D) {
