@@ -34,7 +34,6 @@ const selectionTransform = computed(() =>
     preserveAspectRatio="none"
   >
     <g :transform="selectionTransform">
-      <path class="selection-overlay-fill" :d="fillPath" />
       <path class="selection-overlay-outline selection-overlay-outline--light" :d="outlinePath" />
       <path class="selection-overlay-outline selection-overlay-outline--ants" :d="outlinePath" />
     </g>

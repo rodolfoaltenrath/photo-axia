@@ -581,6 +581,14 @@ select:focus-visible {
   user-select: none;
 }
 
+.document-layer img.layer-image-buffer {
+  opacity: 0;
+}
+
+.document-layer img.layer-image-buffer--active {
+  opacity: 1;
+}
+
 .document-text {
   position: absolute;
   inset: 0 auto auto 0;
@@ -605,11 +613,6 @@ select:focus-visible {
   overflow: visible;
   pointer-events: none;
   z-index: 15;
-}
-
-.selection-overlay-fill {
-  fill: rgb(88 196 179 / 13%);
-  stroke: none;
 }
 
 .selection-overlay-outline {

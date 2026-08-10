@@ -139,11 +139,14 @@ const brushInteraction = shallowRef<{
   renderedPointCount: number
   selection: SelectionRegion | null
   selectionPath: Path2D | null
+  baseImageSource: string
 } | null>(null)
 const brushPreviewCanvas = ref<HTMLCanvasElement | null>(null)
 const brushPreviewPending = ref(false)
 let resizeObserver: ResizeObserver | undefined
 let interactionFrame = 0
+let pendingBrushBaseImageSource: string | undefined
+let pendingBrushCommittedImageSource: string | undefined
 let wheelZoomFrame = 0
 let wheelZoomFrameTime = 0
 let navigationScheduled = false
@@ -631,6 +634,31 @@ function clearBrushPreview() {
   const context = canvas?.getContext('2d')
   context?.clearRect(0, 0, canvas!.width, canvas!.height)
   brushPreviewPending.value = false
+  pendingBrushBaseImageSource = undefined
+  pendingBrushCommittedImageSource = undefined
+}
+
+function handleLayerImageLoaded(layerId: string, source: string) {
+  if (brushPreviewPending.value && source !== pendingBrushBaseImageSource) {
+    pendingBrushCommittedImageSource = source
+  }
+  if (
+    brushPreviewPending.value &&
+    layerId === paintableLayer.value?.id &&
+    source === pendingBrushCommittedImageSource
+  ) {
+    clearBrushPreview()
+  }
+}
+
+function handleLayerImageError(layerId: string, source: string) {
+  if (
+    brushPreviewPending.value &&
+    layerId === paintableLayer.value?.id &&
+    source === pendingBrushCommittedImageSource
+  ) {
+    clearBrushPreview()
+  }
 }
 
 function createBrushSelectionPath(selection: SelectionRegion | null) {
@@ -661,7 +689,7 @@ function createBrushSelectionPath(selection: SelectionRegion | null) {
 function startBrushPointer(event: PointerEvent, point: SelectionPoint) {
   const scroll = scrollArea.value
   const layer = paintableLayer.value
-  if (!scroll || event.button !== 0 || props.isBusy || !layer) return false
+  if (!scroll || event.button !== 0 || props.isBusy || !layer?.image) return false
   event.preventDefault()
   event.stopPropagation()
   scroll.setPointerCapture(event.pointerId)
@@ -671,7 +699,8 @@ function startBrushPointer(event: PointerEvent, point: SelectionPoint) {
     points: [point],
     renderedPointCount: 0,
     selection: props.selection,
-    selectionPath: createBrushSelectionPath(props.selection)
+    selectionPath: createBrushSelectionPath(props.selection),
+    baseImageSource: layer.image.previewUrl ?? layer.image.sourceUrl
   }
   nextTick(() => drawPendingBrushPreview())
   return true
@@ -925,11 +954,10 @@ function stopPointer(event: PointerEvent) {
     drawPendingBrushPreview()
     brushInteraction.value = null
     if (event.type !== 'pointercancel' && interaction.points.length > 0) {
+      pendingBrushBaseImageSource = interaction.baseImageSource
+      pendingBrushCommittedImageSource = undefined
       brushPreviewPending.value = true
       emit('paintStroke', interaction.points, props.brushSize, props.brushColor, interaction.selection)
-      nextTick(() => {
-        if (brushPreviewPending.value && !props.isBusy) clearBrushPreview()
-      })
     } else {
       clearBrushPreview()
     }
@@ -1145,16 +1173,24 @@ watch(
 )
 
 watch(
-  () => paintableLayer.value?.image?.sourceUrl,
-  () => {
-    if (brushPreviewPending.value) clearBrushPreview()
+  () => paintableLayer.value?.image?.previewUrl ?? paintableLayer.value?.image?.sourceUrl,
+  (source) => {
+    if (brushPreviewPending.value && source && source !== pendingBrushBaseImageSource) {
+      pendingBrushCommittedImageSource = source
+    }
   }
 )
 
 watch(
   () => props.isBusy,
   (busy) => {
-    if (!busy && brushPreviewPending.value) clearBrushPreview()
+    if (busy || !brushPreviewPending.value) return
+    const currentSource = paintableLayer.value?.image?.previewUrl ?? paintableLayer.value?.image?.sourceUrl
+    if (currentSource && currentSource !== pendingBrushBaseImageSource) {
+      pendingBrushCommittedImageSource = currentSource
+    } else {
+      clearBrushPreview()
+    }
   }
 )
 
@@ -1308,6 +1344,8 @@ defineExpose({
                 :active="layer.id === activeLayerId"
                 :layer="layer"
                 :transform="displayTransform(layer) ?? defaultLayerTransform"
+                @image-error="handleLayerImageError"
+                @image-loaded="handleLayerImageLoaded"
                 @pointerdown="startLayerPointer($event, layer)"
               />
             </div>
