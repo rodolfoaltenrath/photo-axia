@@ -92,24 +92,47 @@ async function fallbackMove(
   )
   const contentContext = context2d(contentCanvas)
   if (geometry.selectionWidth && geometry.selectionHeight) {
-    const documentToContent = multiplyMatrices(
-      [1, 0, 0, 1, -geometry.selectionOriginX, -geometry.selectionOriginY],
-      geometry.documentToSource
-    )
-    contentContext.save()
-    clipContextToSelection(contentContext, selection, documentToContent)
-    contentContext.setTransform(1, 0, 0, 1, 0, 0)
-    contentContext.drawImage(bitmap, -geometry.selectionOriginX, -geometry.selectionOriginY)
-    contentContext.restore()
+    if (geometry.hardRectangularMask) {
+      contentContext.drawImage(
+        bitmap,
+        geometry.selectionOriginX,
+        geometry.selectionOriginY,
+        geometry.selectionWidth,
+        geometry.selectionHeight,
+        0,
+        0,
+        geometry.selectionWidth,
+        geometry.selectionHeight
+      )
+    } else {
+      const documentToContent = multiplyMatrices(
+        [1, 0, 0, 1, -geometry.selectionOriginX, -geometry.selectionOriginY],
+        geometry.documentToSource
+      )
+      contentContext.save()
+      clipContextToSelection(contentContext, selection, documentToContent)
+      contentContext.setTransform(1, 0, 0, 1, 0, 0)
+      contentContext.drawImage(bitmap, -geometry.selectionOriginX, -geometry.selectionOriginY)
+      contentContext.restore()
+    }
   }
   bitmap.close()
 
-  baseContext.save()
-  baseContext.globalCompositeOperation = 'destination-out'
-  clipContextToSelection(baseContext, selection, geometry.documentToSource)
-  baseContext.setTransform(1, 0, 0, 1, 0, 0)
-  baseContext.fillRect(0, 0, asset.width, asset.height)
-  baseContext.restore()
+  if (geometry.hardRectangularMask) {
+    baseContext.clearRect(
+      geometry.selectionOriginX,
+      geometry.selectionOriginY,
+      geometry.selectionWidth,
+      geometry.selectionHeight
+    )
+  } else {
+    baseContext.save()
+    baseContext.globalCompositeOperation = 'destination-out'
+    clipContextToSelection(baseContext, selection, geometry.documentToSource)
+    baseContext.setTransform(1, 0, 0, 1, 0, 0)
+    baseContext.fillRect(0, 0, asset.width, asset.height)
+    baseContext.restore()
+  }
 
   const expanded = geometry.originX !== 0 || geometry.originY !== 0 ||
     geometry.width !== asset.width || geometry.height !== asset.height

@@ -13,6 +13,7 @@ import {
   selectionContainsPoint,
   selectionDocumentBounds,
   selectionMoveGeometry,
+  snapShapeSelectionToBounds,
   sourceScaleFactor,
   transformSelectionPoint,
   translateSelection
@@ -166,6 +167,28 @@ test('contorno RLE elimina arestas horizontais internas', () => {
   assert.equal(outline.includes('M1 2H4'), true)
 })
 
+test('seleção retangular encaixa nas bordas próximas sem alterar bordas distantes', () => {
+  const snapped = snapShapeSelectionToBounds(
+    { kind: 'rectangle', bounds: { x: 12, y: 23, width: 75, height: 54 } },
+    { x: 10, y: 20, width: 80, height: 60 },
+    3
+  )
+  assert.deepEqual(snapped, {
+    kind: 'rectangle',
+    bounds: { x: 10, y: 20, width: 80, height: 60 }
+  })
+
+  const unchanged = snapShapeSelectionToBounds(
+    { kind: 'ellipse', bounds: { x: 20, y: 30, width: 40, height: 20 } },
+    { x: 10, y: 20, width: 80, height: 60 },
+    3
+  )
+  assert.deepEqual(unchanged, {
+    kind: 'ellipse',
+    bounds: { x: 20, y: 30, width: 40, height: 20 }
+  })
+})
+
 test('translada seleção vetorial sem alterar suas dimensões', () => {
   assert.deepEqual(
     translateSelection({ kind: 'rectangle', bounds: { x: 10, y: 20, width: 30, height: 40 } }, 7, -3),
@@ -210,4 +233,37 @@ test('movimento expande o raster quando os pixels ultrapassam os limites da cama
     { originX: geometry.originX, originY: geometry.originY, width: geometry.width, height: geometry.height },
     { originX: 0, originY: -10, width: 115, height: 90 }
   )
+  assert.equal(geometry.hardRectangularMask, true)
+})
+
+test('máscara retangular só é rígida quando permanece alinhada ao raster', () => {
+  const selection = { kind: 'rectangle', bounds: { x: 10.25, y: 20.75, width: 30.5, height: 15.5 } }
+  const aligned = selectionMoveGeometry(
+    100,
+    80,
+    { x: 0, y: 0, width: 100, height: 80, rotation: 0 },
+    selection,
+    10,
+    0
+  )
+  assert.equal(aligned.hardRectangularMask, true)
+  assert.deepEqual(
+    {
+      x: aligned.selectionOriginX,
+      y: aligned.selectionOriginY,
+      width: aligned.selectionWidth,
+      height: aligned.selectionHeight
+    },
+    { x: 10, y: 20, width: 31, height: 17 }
+  )
+
+  const rotated = selectionMoveGeometry(
+    100,
+    80,
+    { x: 0, y: 0, width: 100, height: 80, rotation: 15 },
+    selection,
+    10,
+    0
+  )
+  assert.equal(rotated.hardRectangularMask, false)
 })

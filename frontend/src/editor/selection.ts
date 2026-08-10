@@ -202,6 +202,34 @@ export function clampSelectionToBounds(selection: SelectionRegion, bounds: Selec
   return { ...selection, bounds: intersectSelectionBounds(selection.bounds, bounds) }
 }
 
+export function snapShapeSelectionToBounds(
+  selection: SelectionRegion,
+  bounds: SelectionBounds,
+  tolerance: number
+): SelectionRegion {
+  if (selection.kind === 'pixels' || selection.kind === 'lasso') return selection
+  const threshold = Math.max(0, tolerance)
+  let x0 = selection.bounds.x
+  let y0 = selection.bounds.y
+  let x1 = selection.bounds.x + selection.bounds.width
+  let y1 = selection.bounds.y + selection.bounds.height
+  const boundsX1 = bounds.x + bounds.width
+  const boundsY1 = bounds.y + bounds.height
+  if (Math.abs(x0 - bounds.x) <= threshold) x0 = bounds.x
+  if (Math.abs(y0 - bounds.y) <= threshold) y0 = bounds.y
+  if (Math.abs(x1 - boundsX1) <= threshold) x1 = boundsX1
+  if (Math.abs(y1 - boundsY1) <= threshold) y1 = boundsY1
+  return {
+    ...selection,
+    bounds: {
+      x: Math.min(x0, x1),
+      y: Math.min(y0, y1),
+      width: Math.abs(x1 - x0),
+      height: Math.abs(y1 - y0)
+    }
+  }
+}
+
 export function selectionIsEmpty(selection: SelectionRegion | null | undefined) {
   if (!selection) return true
   if (selection.kind === 'pixels') return selection.pixelCount === 0 || selection.spans.length === 0
@@ -401,6 +429,10 @@ export function selectionMoveGeometry(
   const [a, b, c, d] = documentToSource
   const sourceDeltaX = a * deltaX + c * deltaY
   const sourceDeltaY = b * deltaX + d * deltaY
+  const axisAlignedSelection =
+    (Math.abs(b) < 1e-8 && Math.abs(c) < 1e-8) ||
+    (Math.abs(a) < 1e-8 && Math.abs(d) < 1e-8)
+  const hardRectangularMask = selection.kind === 'rectangle' && axisAlignedSelection
   const selectionOriginX = Math.floor(clippedBounds.x)
   const selectionOriginY = Math.floor(clippedBounds.y)
   const selectionWidth = Math.max(0, Math.ceil(clippedBounds.x + clippedBounds.width) - selectionOriginX)
@@ -422,6 +454,7 @@ export function selectionMoveGeometry(
     selectionOriginY,
     selectionWidth,
     selectionHeight,
+    hardRectangularMask,
     originX,
     originY,
     width: Math.max(1, maxX - originX),

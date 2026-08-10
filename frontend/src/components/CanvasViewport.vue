@@ -38,6 +38,7 @@ import {
   pointsBounds,
   selectionContainsPoint,
   selectionIsEmpty,
+  snapShapeSelectionToBounds,
   translateSelection,
   type SelectionMode,
   type SelectionPoint,
@@ -1195,7 +1196,11 @@ function stopPointer(event: PointerEvent) {
     if (completed?.kind === 'lasso') {
       completed = createLassoSelection(completed.points, Math.max(0.2, 0.75 / scale.value))
     }
-    if (completed) completed = clampSelectionToBounds(completed, selectionBounds())
+    if (completed) {
+      const bounds = selectionBounds()
+      completed = clampSelectionToBounds(completed, bounds)
+      completed = snapShapeSelectionToBounds(completed, bounds, 6 / Math.max(scale.value, 0.01))
+    }
     emit('update:selection', completed && !selectionIsEmpty(completed) ? completed : null)
     selectionInteraction.value = null
     selectionDraft.value = null

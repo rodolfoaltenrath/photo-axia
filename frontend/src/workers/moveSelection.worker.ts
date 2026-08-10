@@ -40,24 +40,47 @@ self.onmessage = async (event: MessageEvent<MoveRequest>) => {
     if (!baseContext || !contentContext) throw new Error('O sistema não disponibilizou o renderizador 2D.')
     baseContext.drawImage(bitmap, 0, 0, request.assetWidth, request.assetHeight)
     if (geometry.selectionWidth && geometry.selectionHeight) {
-      const documentToContent = multiplyMatrices(
-        [1, 0, 0, 1, -geometry.selectionOriginX, -geometry.selectionOriginY],
-        geometry.documentToSource
-      )
-      contentContext.save()
-      clipContextToSelection(contentContext, request.selection, documentToContent)
-      contentContext.setTransform(1, 0, 0, 1, 0, 0)
-      contentContext.drawImage(bitmap, -geometry.selectionOriginX, -geometry.selectionOriginY)
-      contentContext.restore()
+      if (geometry.hardRectangularMask) {
+        contentContext.drawImage(
+          bitmap,
+          geometry.selectionOriginX,
+          geometry.selectionOriginY,
+          geometry.selectionWidth,
+          geometry.selectionHeight,
+          0,
+          0,
+          geometry.selectionWidth,
+          geometry.selectionHeight
+        )
+      } else {
+        const documentToContent = multiplyMatrices(
+          [1, 0, 0, 1, -geometry.selectionOriginX, -geometry.selectionOriginY],
+          geometry.documentToSource
+        )
+        contentContext.save()
+        clipContextToSelection(contentContext, request.selection, documentToContent)
+        contentContext.setTransform(1, 0, 0, 1, 0, 0)
+        contentContext.drawImage(bitmap, -geometry.selectionOriginX, -geometry.selectionOriginY)
+        contentContext.restore()
+      }
     }
     bitmap.close()
 
-    baseContext.save()
-    baseContext.globalCompositeOperation = 'destination-out'
-    clipContextToSelection(baseContext, request.selection, geometry.documentToSource)
-    baseContext.setTransform(1, 0, 0, 1, 0, 0)
-    baseContext.fillRect(0, 0, request.assetWidth, request.assetHeight)
-    baseContext.restore()
+    if (geometry.hardRectangularMask) {
+      baseContext.clearRect(
+        geometry.selectionOriginX,
+        geometry.selectionOriginY,
+        geometry.selectionWidth,
+        geometry.selectionHeight
+      )
+    } else {
+      baseContext.save()
+      baseContext.globalCompositeOperation = 'destination-out'
+      clipContextToSelection(baseContext, request.selection, geometry.documentToSource)
+      baseContext.setTransform(1, 0, 0, 1, 0, 0)
+      baseContext.fillRect(0, 0, request.assetWidth, request.assetHeight)
+      baseContext.restore()
+    }
 
     const expanded = geometry.originX !== 0 || geometry.originY !== 0 ||
       geometry.width !== request.assetWidth || geometry.height !== request.assetHeight
