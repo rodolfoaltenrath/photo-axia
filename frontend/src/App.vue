@@ -1309,6 +1309,8 @@ function blockBrowserWheelZoom(event: WheelEvent) {
 }
 
 function handleShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented) return
+
   const command = event.ctrlKey || event.metaKey
   if (command && event.code === 'KeyZ') {
     event.preventDefault()
@@ -1324,6 +1326,12 @@ function handleShortcut(event: KeyboardEvent) {
 
   const target = event.target as HTMLElement | null
   if (target?.closest('input, select, textarea, [contenteditable="true"]')) return
+
+  if ((event.key === 'Delete' || event.key === 'Backspace') && !selection.value) {
+    event.preventDefault()
+    deleteLayer(activeLayerId.value)
+    return
+  }
 
   if (command && event.code === 'KeyJ') {
     event.preventDefault()

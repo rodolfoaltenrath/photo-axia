@@ -105,6 +105,8 @@ function selectLayer(event: MouseEvent) {
     event.stopPropagation()
     return
   }
+  const row = event.currentTarget as HTMLElement
+  row.focus({ preventScroll: true })
   emit('select', props.layer.id)
 }
 </script>

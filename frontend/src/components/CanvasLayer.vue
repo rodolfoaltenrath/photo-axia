@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { LayerItem, LayerTransform } from '../types/editor'
 
 const props = defineProps<{
@@ -16,14 +16,33 @@ const emit = defineEmits<{
 }>()
 
 const desiredImageSource = computed(() => props.layer.image?.previewUrl ?? props.layer.image?.sourceUrl ?? null)
+
+function copyTransform(transform: LayerTransform): LayerTransform {
+  return {
+    x: transform.x,
+    y: transform.y,
+    width: transform.width,
+    height: transform.height,
+    rotation: transform.rotation
+  }
+}
+
 const imageSources = ref<[string | null, string | null]>([desiredImageSource.value, null])
 const imageReady = ref<[boolean, boolean]>([false, false])
+const imageTransforms = ref<[LayerTransform, LayerTransform]>([
+  copyTransform(props.transform),
+  copyTransform(props.transform)
+])
 const activeImageSlot = ref<0 | 1>(0)
+const activeImageTransform = ref(copyTransform(props.transform))
 
-async function activateImageSlot(slot: 0 | 1, source: string) {
+function activateImageSlot(slot: 0 | 1, source: string) {
+  if (imageSources.value[slot] !== source || desiredImageSource.value !== source) return
+
+  // A fonte e a geometria pertencem ao mesmo buffer. O evento sincrono tambem
+  // remove a pre-visualizacao no mesmo render em que o novo raster entra.
+  activeImageTransform.value = copyTransform(imageTransforms.value[slot])
   activeImageSlot.value = slot
-  await nextTick()
-  if (activeImageSlot.value !== slot || desiredImageSource.value !== source) return
   emit('imageLoaded', props.layer.id, source)
 }
 
@@ -40,7 +59,7 @@ async function handleImageLoad(slot: 0 | 1, event: Event) {
   const readiness = [...imageReady.value] as [boolean, boolean]
   readiness[slot] = true
   imageReady.value = readiness
-  if (source === desiredImageSource.value) void activateImageSlot(slot, source)
+  if (source === desiredImageSource.value) activateImageSlot(slot, source)
 }
 
 function handleImageError(slot: 0 | 1) {
@@ -51,8 +70,11 @@ function handleImageError(slot: 0 | 1) {
 watch(desiredImageSource, (source) => {
   if (!source || imageSources.value[activeImageSlot.value] === source) return
   const targetSlot: 0 | 1 = activeImageSlot.value === 0 ? 1 : 0
+  const transforms = [...imageTransforms.value] as [LayerTransform, LayerTransform]
+  transforms[targetSlot] = copyTransform(props.transform)
+  imageTransforms.value = transforms
   if (imageSources.value[targetSlot] === source && imageReady.value[targetSlot]) {
-    void activateImageSlot(targetSlot, source)
+    activateImageSlot(targetSlot, source)
     return
   }
   const sources = [...imageSources.value] as [string | null, string | null]
@@ -63,14 +85,44 @@ watch(desiredImageSource, (source) => {
   imageReady.value = readiness
 })
 
-const layerStyle = computed(() => ({
-  left: '0',
-  top: '0',
-  width: `${props.transform.width}px`,
-  height: `${props.transform.height}px`,
-  opacity: props.layer.opacity === undefined ? 1 : props.layer.opacity / 100,
-  transform: `translate3d(${props.transform.x}px, ${props.transform.y}px, 0) rotate(${props.transform.rotation ?? 0}deg)`
-}))
+watch(
+  () => [
+    props.transform.x,
+    props.transform.y,
+    props.transform.width,
+    props.transform.height,
+    props.transform.rotation
+  ],
+  () => {
+    const desiredSource = desiredImageSource.value
+    if (!desiredSource) return
+
+    const matchingSlot = imageSources.value.findIndex((source) => source === desiredSource)
+    if (matchingSlot < 0) return
+
+    const slot = matchingSlot as 0 | 1
+    const transform = copyTransform(props.transform)
+    const transforms = [...imageTransforms.value] as [LayerTransform, LayerTransform]
+    transforms[slot] = transform
+    imageTransforms.value = transforms
+
+    // Movimentos e redimensionamentos comuns continuam imediatos. Durante a
+    // troca de raster, somente o buffer ainda invisivel recebe a nova geometria.
+    if (slot === activeImageSlot.value) activeImageTransform.value = transform
+  }
+)
+
+const layerStyle = computed(() => {
+  const transform = props.layer.kind === 'image' ? activeImageTransform.value : props.transform
+  return {
+    left: '0',
+    top: '0',
+    width: `${transform.width}px`,
+    height: `${transform.height}px`,
+    opacity: props.layer.opacity === undefined ? 1 : props.layer.opacity / 100,
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0) rotate(${transform.rotation ?? 0}deg)`
+  }
+})
 
 const textStyle = computed(() => {
   const text = props.layer.text

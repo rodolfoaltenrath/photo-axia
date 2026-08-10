@@ -471,7 +471,7 @@ function updateModifierKeys(event: KeyboardEvent) {
 
 function handleWindowKeydown(event: KeyboardEvent) {
   updateModifierKeys(event)
-  if (isEditableTarget(event.target)) return
+  if (event.defaultPrevented || isEditableTarget(event.target)) return
   if (handleSelectionNudge(event)) return
 
   if ((event.key === 'Delete' || event.key === 'Backspace') && props.selection) {
