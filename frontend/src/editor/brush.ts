@@ -1,4 +1,5 @@
 import type { Matrix2D, SelectionPoint } from './selection'
+import type { LayerTransform } from '../types/editor'
 
 type BrushContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
@@ -53,6 +54,91 @@ export function brushPreviewSize(
     height = Math.max(1, Math.floor(height * reduction))
   }
   return { width, height }
+}
+
+function brushDocumentToSourceMatrix(transform: LayerTransform, sourceWidth: number, sourceHeight: number): Matrix2D {
+  const angle = ((transform.rotation ?? 0) * Math.PI) / 180
+  const cosine = Math.cos(angle)
+  const sine = Math.sin(angle)
+  const scaleX = transform.width / sourceWidth
+  const scaleY = transform.height / sourceHeight
+  const a = cosine * scaleX
+  const b = sine * scaleX
+  const c = -sine * scaleY
+  const d = cosine * scaleY
+  const centerX = transform.x + transform.width / 2
+  const centerY = transform.y + transform.height / 2
+  const e = centerX - a * sourceWidth / 2 - c * sourceHeight / 2
+  const f = centerY - b * sourceWidth / 2 - d * sourceHeight / 2
+  const determinant = a * d - b * c
+  if (Math.abs(determinant) < 1e-12) return [1, 0, 0, 1, 0, 0]
+  return [
+    d / determinant,
+    -b / determinant,
+    -c / determinant,
+    a / determinant,
+    (c * f - d * e) / determinant,
+    (b * e - a * f) / determinant
+  ]
+}
+
+function transformBrushBounds(matrix: Matrix2D, left: number, top: number, right: number, bottom: number) {
+  const points = [
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: right, y: bottom },
+    { x: left, y: bottom }
+  ].map((point) => ({
+    x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
+    y: matrix[1] * point.x + matrix[3] * point.y + matrix[5]
+  }))
+  return {
+    x: Math.min(...points.map((point) => point.x)),
+    y: Math.min(...points.map((point) => point.y)),
+    right: Math.max(...points.map((point) => point.x)),
+    bottom: Math.max(...points.map((point) => point.y))
+  }
+}
+
+export function brushStrokeGeometry(
+  sourceWidth: number,
+  sourceHeight: number,
+  transform: LayerTransform,
+  points: readonly SelectionPoint[],
+  size: number,
+  documentWidth: number,
+  documentHeight: number,
+  expand: boolean
+) {
+  if (!expand || !points.length) {
+    return { originX: 0, originY: 0, width: sourceWidth, height: sourceHeight }
+  }
+  const radius = Math.max(0.5, size / 2) + 1
+  let minimumX = points[0]!.x
+  let minimumY = points[0]!.y
+  let maximumX = minimumX
+  let maximumY = minimumY
+  for (let index = 1; index < points.length; index++) {
+    const point = points[index]!
+    minimumX = Math.min(minimumX, point.x)
+    minimumY = Math.min(minimumY, point.y)
+    maximumX = Math.max(maximumX, point.x)
+    maximumY = Math.max(maximumY, point.y)
+  }
+  const left = Math.max(0, minimumX - radius)
+  const top = Math.max(0, minimumY - radius)
+  const right = Math.min(documentWidth, maximumX + radius)
+  const bottom = Math.min(documentHeight, maximumY + radius)
+  if (right <= left || bottom <= top) {
+    return { originX: 0, originY: 0, width: sourceWidth, height: sourceHeight }
+  }
+  const documentToSource = brushDocumentToSourceMatrix(transform, sourceWidth, sourceHeight)
+  const strokeBounds = transformBrushBounds(documentToSource, left, top, right, bottom)
+  const originX = Math.min(0, Math.floor(strokeBounds.x))
+  const originY = Math.min(0, Math.floor(strokeBounds.y))
+  const maxX = Math.max(sourceWidth, Math.ceil(strokeBounds.right))
+  const maxY = Math.max(sourceHeight, Math.ceil(strokeBounds.bottom))
+  return { originX, originY, width: maxX - originX, height: maxY - originY }
 }
 
 export function setContextTransform(context: BrushContext, matrix: Matrix2D) {

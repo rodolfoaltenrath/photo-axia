@@ -1157,7 +1157,9 @@ async function commitBrushStroke(
       color,
       strokeSelection,
       previewTarget.width,
-      previewTarget.height
+      previewTarget.height,
+      activeDocument.value.width,
+      activeDocument.value.height
     )
     createdSource = URL.createObjectURL(result.blob)
     trackedObjectUrls.add(createdSource)
@@ -1177,19 +1179,43 @@ async function commitBrushStroke(
     }
     await preloadImage(newAsset.previewUrl ?? newAsset.sourceUrl)
 
+    let newTransform = beforeTransform
+    if (
+      result.originX !== 0 ||
+      result.originY !== 0 ||
+      result.width !== beforeImage.width ||
+      result.height !== beforeImage.height
+    ) {
+      const oldMatrix = layerSourceToDocumentMatrix(beforeTransform, beforeImage.width, beforeImage.height)
+      const center = transformSelectionPoint(oldMatrix, {
+        x: result.originX + result.width / 2,
+        y: result.originY + result.height / 2
+      })
+      const width = result.width * (beforeTransform.width / beforeImage.width)
+      const height = result.height * (beforeTransform.height / beforeImage.height)
+      newTransform = {
+        ...beforeTransform,
+        x: center.x - width / 2,
+        y: center.y - height / 2,
+        width,
+        height
+      }
+    }
     layer.image = newAsset
+    layer.transform = newTransform
 
     recordHistory('Pincelada', {
       type: 'layer:patch',
       layerId: layer.id,
-      before: { image: beforeImage },
-      after: { image: { ...layer.image } }
+      before: { image: beforeImage, transform: beforeTransform },
+      after: { image: { ...layer.image }, transform: { ...layer.transform } }
     })
     transientObjectUrls.clear()
     collectUnusedObjectUrls()
     statusText.value = 'Pincelada aplicada'
   } catch (error) {
     layer.image = beforeImage
+    layer.transform = beforeTransform
     if (createdSource) {
       URL.revokeObjectURL(createdSource)
       trackedObjectUrls.delete(createdSource)

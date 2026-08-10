@@ -46,6 +46,7 @@ import {
   selectionNudgeDelta,
   snapShapeSelectionToBounds,
   translateSelection,
+  type Matrix2D,
   type SelectionMode,
   type SelectionPoint,
   type SelectionRegion
@@ -200,6 +201,7 @@ let resizeObserver: ResizeObserver | undefined
 let interactionFrame = 0
 let pendingBrushBaseImageSource: string | undefined
 let pendingBrushCommittedImageSource: string | undefined
+let pendingBrushWasFree = false
 let pendingSelectionMoveBaseSource: string | undefined
 let pendingSelectionMoveCommittedSource: string | undefined
 let cachedSelectionMoveImage: { source: string; image: HTMLImageElement } | undefined
@@ -283,6 +285,17 @@ const paintableLayer = computed(() => {
 const brushPreviewDimensions = computed(() => {
   const layer = paintableLayer.value
   if (!layer?.image || !layer.transform) return { width: 1, height: 1 }
+  const free = brushInteraction.value ? !brushInteraction.value.selection : brushPreviewPending.value && pendingBrushWasFree
+  if (free) {
+    return brushPreviewSize(
+      props.document.width * 2,
+      props.document.height * 2,
+      props.document.width,
+      props.document.height,
+      scale.value,
+      typeof window === 'undefined' ? 1 : window.devicePixelRatio
+    )
+  }
   return brushPreviewSize(
     layer.image.width,
     layer.image.height,
@@ -295,6 +308,15 @@ const brushPreviewDimensions = computed(() => {
 const brushPreviewStyle = computed(() => {
   const transform = activeDisplayTransform.value
   if (!transform || !paintableLayer.value || (!brushInteraction.value && !brushPreviewPending.value)) return undefined
+  const free = brushInteraction.value ? !brushInteraction.value.selection : pendingBrushWasFree
+  if (free) {
+    return {
+      left: '0',
+      top: '0',
+      width: `${props.document.width}px`,
+      height: `${props.document.height}px`
+    }
+  }
   return positionedTransformStyle(transform)
 })
 const selectionMovePreviewStyle = computed(() => {
@@ -958,7 +980,9 @@ function drawPendingBrushPreview() {
   if (!interaction || !layer?.image || !layer.transform || !canvas) return
   const context = canvas.getContext('2d')
   if (!context) return
-  const documentToPreview = invertMatrix(layerSourceToDocumentMatrix(layer.transform, canvas.width, canvas.height))
+  const documentToPreview: Matrix2D = interaction.selection
+    ? invertMatrix(layerSourceToDocumentMatrix(layer.transform, canvas.width, canvas.height))
+    : [canvas.width / props.document.width, 0, 0, canvas.height / props.document.height, 0, 0]
 
   context.save()
   if (interaction.selection && interaction.selectionPath) {
@@ -984,6 +1008,7 @@ function clearBrushPreview() {
   const context = canvas?.getContext('2d')
   context?.clearRect(0, 0, canvas!.width, canvas!.height)
   brushPreviewPending.value = false
+  pendingBrushWasFree = false
   pendingBrushBaseImageSource = undefined
   pendingBrushCommittedImageSource = undefined
 }
@@ -1361,6 +1386,7 @@ function stopPointer(event: PointerEvent) {
     if (event.type !== 'pointercancel' && interaction.points.length > 0) {
       pendingBrushBaseImageSource = interaction.baseImageSource
       pendingBrushCommittedImageSource = undefined
+      pendingBrushWasFree = !interaction.selection
       brushPreviewPending.value = true
       emit('paintStroke', interaction.points, props.brushSize, props.brushColor, interaction.selection)
     } else {

@@ -1,8 +1,9 @@
-import { drawPackedBrushPoints } from '../editor/brush'
+import { brushStrokeGeometry, drawPackedBrushPoints } from '../editor/brush'
 import {
   clipContextToSelection,
   invertMatrix,
   layerSourceToDocumentMatrix,
+  multiplyMatrices,
   type SelectionRegion
 } from '../editor/selection'
 import type { LayerTransform } from '../types/editor'
@@ -21,12 +22,16 @@ interface BrushRequest {
   selection: SelectionRegion | null
   previewWidth: number
   previewHeight: number
+  documentWidth: number
+  documentHeight: number
 }
 
 interface BrushResult {
   blob: Blob
   width: number
   height: number
+  originX: number
+  originY: number
   editToken: string
   previewBlob?: Blob
   previewWidth: number
@@ -77,33 +82,76 @@ async function encodePreview(source: OffscreenCanvas, width: number, height: num
 self.onmessage = async (event: MessageEvent<BrushRequest>) => {
   const request = event.data
   try {
-    const canvas = await sourceCanvas(request)
+    const source = await sourceCanvas(request)
+    let minimumX = Number.POSITIVE_INFINITY
+    let minimumY = Number.POSITIVE_INFINITY
+    let maximumX = Number.NEGATIVE_INFINITY
+    let maximumY = Number.NEGATIVE_INFINITY
+    for (let index = 0; index + 1 < request.points.length; index += 2) {
+      minimumX = Math.min(minimumX, request.points[index]!)
+      maximumX = Math.max(maximumX, request.points[index]!)
+      minimumY = Math.min(minimumY, request.points[index + 1]!)
+      maximumY = Math.max(maximumY, request.points[index + 1]!)
+    }
+    const extentPoints = Number.isFinite(minimumX)
+      ? [{ x: minimumX, y: minimumY }, { x: maximumX, y: maximumY }]
+      : []
+    const geometry = brushStrokeGeometry(
+      request.assetWidth,
+      request.assetHeight,
+      request.transform,
+      extentPoints,
+      request.size,
+      request.documentWidth,
+      request.documentHeight,
+      !request.selection
+    )
+    const expanded =
+      geometry.originX !== 0 ||
+      geometry.originY !== 0 ||
+      geometry.width !== request.assetWidth ||
+      geometry.height !== request.assetHeight
+    const canvas = expanded ? new OffscreenCanvas(geometry.width, geometry.height) : source
     const context = canvas.getContext('2d', { alpha: true })
     if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
-    const documentToSource = invertMatrix(
-      layerSourceToDocumentMatrix(request.transform, request.assetWidth, request.assetHeight)
+    if (expanded) context.drawImage(source, -geometry.originX, -geometry.originY)
+    const documentToSource = multiplyMatrices(
+      [1, 0, 0, 1, -geometry.originX, -geometry.originY],
+      invertMatrix(layerSourceToDocumentMatrix(request.transform, request.assetWidth, request.assetHeight))
     )
 
     context.save()
     if (request.selection) clipContextToSelection(context, request.selection, documentToSource)
-    else context.setTransform(...documentToSource)
+    else {
+      context.setTransform(...documentToSource)
+      context.beginPath()
+      context.rect(0, 0, request.documentWidth, request.documentHeight)
+      context.clip()
+    }
+    context.setTransform(...documentToSource)
     drawPackedBrushPoints(context, request.points, request.size, request.color)
     context.restore()
 
     const editToken = `brush:${request.layerId}:${nextEditToken++}`
     cachedSurface = { layerId: request.layerId, token: editToken, canvas }
+    const previewScaleX = request.previewWidth / request.assetWidth
+    const previewScaleY = request.previewHeight / request.assetHeight
+    const previewWidth = Math.max(1, Math.min(canvas.width, Math.round(canvas.width * previewScaleX)))
+    const previewHeight = Math.max(1, Math.min(canvas.height, Math.round(canvas.height * previewScaleY)))
     const [blob, previewBlob] = await Promise.all([
       canvas.convertToBlob({ type: 'image/png' }),
-      encodePreview(canvas, request.previewWidth, request.previewHeight)
+      encodePreview(canvas, previewWidth, previewHeight)
     ])
     const result: BrushResult = {
       blob,
       width: canvas.width,
       height: canvas.height,
+      originX: geometry.originX,
+      originY: geometry.originY,
       editToken,
       previewBlob,
-      previewWidth: request.previewWidth,
-      previewHeight: request.previewHeight
+      previewWidth,
+      previewHeight
     }
     self.postMessage({ id: request.id, result })
   } catch (error) {

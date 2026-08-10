@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { appendBrushPoint, brushPointSpacing, brushPreviewSize } from '../src/editor/brush.ts'
+import { appendBrushPoint, brushPointSpacing, brushPreviewSize, brushStrokeGeometry } from '../src/editor/brush.ts'
 import { clipContextToSelection } from '../src/editor/selection.ts'
 
 test('filtra amostras redundantes sem perder o ponto final', () => {
@@ -32,6 +32,38 @@ test('a prévia respeita o orçamento de pixels', () => {
 test('o espaçamento se adapta ao pincel e ao zoom', () => {
   assert.ok(brushPointSpacing(100, 1) > brushPointSpacing(10, 1))
   assert.ok(brushPointSpacing(100, 4) < brushPointSpacing(100, 1))
+})
+
+test('pincel livre expande o raster até o traço sem ultrapassar o documento', () => {
+  assert.deepEqual(
+    brushStrokeGeometry(
+      100,
+      80,
+      { x: 100, y: 100, width: 200, height: 160, rotation: 0 },
+      [{ x: 40, y: 50 }, { x: 350, y: 280 }],
+      20,
+      400,
+      300,
+      true
+    ),
+    { originX: -36, originY: -31, width: 167, height: 127 }
+  )
+})
+
+test('pincel com seleção mantém exatamente os limites atuais da camada', () => {
+  assert.deepEqual(
+    brushStrokeGeometry(
+      100,
+      80,
+      { x: 100, y: 100, width: 200, height: 160, rotation: 0 },
+      [{ x: 0, y: 0 }],
+      100,
+      400,
+      300,
+      false
+    ),
+    { originX: 0, originY: 0, width: 100, height: 80 }
+  )
 })
 
 test('a máscara vetorial é aplicada no mesmo espaço do documento', () => {

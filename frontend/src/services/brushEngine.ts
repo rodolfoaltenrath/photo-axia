@@ -1,8 +1,9 @@
-import { drawBrushPoints } from '../editor/brush'
+import { brushStrokeGeometry, drawBrushPoints } from '../editor/brush'
 import {
   clipContextToSelection,
   invertMatrix,
   layerSourceToDocumentMatrix,
+  multiplyMatrices,
   selectionIsEmpty,
   type SelectionPoint,
   type SelectionRegion
@@ -13,6 +14,8 @@ export interface BrushStrokeResult {
   blob: Blob
   width: number
   height: number
+  originX: number
+  originY: number
   editToken?: string
   previewBlob?: Blob
   previewWidth: number
@@ -105,29 +108,54 @@ async function fallbackBrushStroke(
   color: string,
   selection: SelectionRegion | null,
   previewWidth: number,
-  previewHeight: number
+  previewHeight: number,
+  documentWidth: number,
+  documentHeight: number
 ): Promise<BrushStrokeResult> {
   const bitmap = await createImageBitmap(sourceBlob)
-  const canvas = makeCanvas(asset.width, asset.height)
+  const geometry = brushStrokeGeometry(
+    asset.width,
+    asset.height,
+    transform,
+    points,
+    size,
+    documentWidth,
+    documentHeight,
+    !selection
+  )
+  const canvas = makeCanvas(geometry.width, geometry.height)
   const context = canvas2dContext(canvas)
-  context.drawImage(bitmap, 0, 0, asset.width, asset.height)
+  context.drawImage(bitmap, -geometry.originX, -geometry.originY, asset.width, asset.height)
   bitmap.close()
 
-  const documentToSource = invertMatrix(layerSourceToDocumentMatrix(transform, asset.width, asset.height))
+  const documentToSource = multiplyMatrices(
+    [1, 0, 0, 1, -geometry.originX, -geometry.originY],
+    invertMatrix(layerSourceToDocumentMatrix(transform, asset.width, asset.height))
+  )
   context.save()
   if (selection) clipContextToSelection(context, selection, documentToSource)
-  else context.setTransform(...documentToSource)
+  else {
+    context.setTransform(...documentToSource)
+    context.beginPath()
+    context.rect(0, 0, documentWidth, documentHeight)
+    context.clip()
+  }
+  context.setTransform(...documentToSource)
   drawBrushPoints(context, points, 0, size, color)
   context.restore()
 
-  const previewCanvas = previewWidth === asset.width && previewHeight === asset.height
+  const previewScaleX = previewWidth / asset.width
+  const previewScaleY = previewHeight / asset.height
+  const outputPreviewWidth = Math.max(1, Math.min(geometry.width, Math.round(geometry.width * previewScaleX)))
+  const outputPreviewHeight = Math.max(1, Math.min(geometry.height, Math.round(geometry.height * previewScaleY)))
+  const previewCanvas = outputPreviewWidth === geometry.width && outputPreviewHeight === geometry.height
     ? undefined
-    : makeCanvas(previewWidth, previewHeight)
+    : makeCanvas(outputPreviewWidth, outputPreviewHeight)
   if (previewCanvas) {
     const previewContext = canvas2dContext(previewCanvas)
     previewContext.imageSmoothingEnabled = true
     previewContext.imageSmoothingQuality = 'high'
-    previewContext.drawImage(canvas, 0, 0, previewWidth, previewHeight)
+    previewContext.drawImage(canvas, 0, 0, outputPreviewWidth, outputPreviewHeight)
   }
   const [blob, previewBlob] = await Promise.all([
     encodeCanvas(canvas),
@@ -139,7 +167,16 @@ async function fallbackBrushStroke(
     previewCanvas.width = 1
     previewCanvas.height = 1
   }
-  return { blob, width: asset.width, height: asset.height, previewBlob, previewWidth, previewHeight }
+  return {
+    blob,
+    width: geometry.width,
+    height: geometry.height,
+    originX: geometry.originX,
+    originY: geometry.originY,
+    previewBlob,
+    previewWidth: outputPreviewWidth,
+    previewHeight: outputPreviewHeight
+  }
 }
 
 export async function paintBrushStroke(
@@ -151,7 +188,9 @@ export async function paintBrushStroke(
   color: string,
   selection: SelectionRegion | null,
   previewWidth: number,
-  previewHeight: number
+  previewHeight: number,
+  documentWidth: number,
+  documentHeight: number
 ): Promise<BrushStrokeResult> {
   const activeSelection = selection && !selectionIsEmpty(selection) ? selection : null
   const worker = brushWorkerInstance()
@@ -165,7 +204,9 @@ export async function paintBrushStroke(
       color,
       activeSelection,
       previewWidth,
-      previewHeight
+      previewHeight,
+      documentWidth,
+      documentHeight
     )
   }
 
@@ -198,7 +239,9 @@ export async function paintBrushStroke(
         color,
         selection: activeSelection,
         previewWidth,
-        previewHeight
+        previewHeight,
+        documentWidth,
+        documentHeight
       },
       [packedPoints.buffer]
     )
