@@ -118,6 +118,25 @@ test('remove uma transação agrupada quando ela retorna ao estado inicial', () 
   assert.equal(history.sizeBytes.value, 0)
 })
 
+test('agrupa movimentos de guia preservando a posição original', () => {
+  const first = {
+    type: 'guides:change',
+    before: [{ id: 'guide-1', orientation: 'vertical', position: 100 }],
+    after: [{ id: 'guide-1', orientation: 'vertical', position: 120 }]
+  }
+  const second = {
+    type: 'guides:change',
+    before: [{ id: 'guide-1', orientation: 'vertical', position: 120 }],
+    after: [{ id: 'guide-1', orientation: 'horizontal', position: 240 }]
+  }
+  const merged = mergeEditorHistoryDelta(first, second)
+
+  assert.deepEqual(merged.before, first.before)
+  assert.deepEqual(merged.after, second.after)
+  assert.equal(isEditorHistoryDeltaNoop(merged), false)
+  assert.equal(isEditorHistoryDeltaNoop({ ...merged, after: merged.before }), true)
+})
+
 test('um delta de transformação permanece pequeno em documentos com muitas camadas', () => {
   const delta = {
     type: 'layer:patch',

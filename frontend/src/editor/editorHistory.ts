@@ -1,6 +1,7 @@
 import type { LayerItem } from '../types/editor'
 import type { HistoryDirection } from './history'
 import type { SelectionRegion } from './selection'
+import type { EditorGuide } from './guides'
 
 interface SelectionDelta {
   activeBefore?: string
@@ -38,7 +39,18 @@ export interface ReorderLayerDelta extends SelectionDelta {
   afterIndex: number
 }
 
-export type EditorHistoryDelta = AddLayersDelta | RemoveLayersDelta | PatchLayerDelta | ReorderLayerDelta
+export interface ChangeGuidesDelta {
+  type: 'guides:change'
+  before: EditorGuide[]
+  after: EditorGuide[]
+}
+
+export type EditorHistoryDelta =
+  | AddLayersDelta
+  | RemoveLayersDelta
+  | PatchLayerDelta
+  | ReorderLayerDelta
+  | ChangeGuidesDelta
 
 export function cloneLayerState(layer: LayerItem): LayerItem {
   return {
@@ -58,6 +70,9 @@ export function cloneLayerPatch(patch: Partial<LayerItem>): Partial<LayerItem> {
 }
 
 export function mergeEditorHistoryDelta(previous: EditorHistoryDelta, next: EditorHistoryDelta) {
+  if (previous.type === 'guides:change' && next.type === 'guides:change') {
+    return { ...next, before: previous.before.map((guide) => ({ ...guide })) } satisfies ChangeGuidesDelta
+  }
   if (previous.type !== 'layer:patch' || next.type !== 'layer:patch' || previous.layerId !== next.layerId) {
     return next
   }
@@ -78,6 +93,7 @@ export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
 }
 
 export function isEditorHistoryDeltaNoop(delta: EditorHistoryDelta) {
+  if (delta.type === 'guides:change') return JSON.stringify(delta.before) === JSON.stringify(delta.after)
   if (delta.type === 'layer:patch') {
     return JSON.stringify(delta.before) === JSON.stringify(delta.after) &&
       JSON.stringify(delta.selectionBefore) === JSON.stringify(delta.selectionAfter)
@@ -118,6 +134,10 @@ export function applyEditorHistoryDelta(
   const insertedLayers: LayerItem[] = []
   const removedLayerIds: string[] = []
   const refreshLayerIds: string[] = []
+
+  if (delta.type === 'guides:change') {
+    return { activeLayerId, insertedLayers, refreshLayerIds, removedLayerIds }
+  }
 
   const insert = (items: LayerHistoryItem[]) => {
     for (const item of [...items].sort((first, second) => first.index - second.index)) {

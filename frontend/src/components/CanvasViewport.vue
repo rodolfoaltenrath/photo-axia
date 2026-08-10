@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasLayer from './CanvasLayer.vue'
+import CanvasRulers from './CanvasRulers.vue'
+import GuideOverlay from './GuideOverlay.vue'
 import SelectionOverlay from './SelectionOverlay.vue'
 import type { DocumentSpec, EditorTool, ImageAsset, ImportedImage, LayerItem, LayerTransform } from '../types/editor'
 import { readBrowserImages } from '../services/imageImport'
@@ -21,6 +23,18 @@ import {
   type TransformHandle
 } from '../editor/freeTransform'
 import { centeredScrollOffset, preserveViewportCenter } from '../editor/viewportNavigation'
+import {
+  documentPositionFromScreen,
+  RULER_SIZE,
+  snapBoundsTranslation,
+  snapDocumentPoint,
+  snapGuidePositionToTicks,
+  snapLayerTranslation,
+  type EditorGuide,
+  type GuideOrientation,
+  type RulerOrigin,
+  type RulerUnit
+} from '../editor/guides'
 import {
   appendBrushPoint,
   brushPointSpacing,
@@ -62,6 +76,10 @@ const props = defineProps<{
   brushColor: string
   brushSize: number
   document: DocumentSpec
+  guides: EditorGuide[]
+  guidesLocked: boolean
+  guidesVisible: boolean
+  guideSnappingEnabled: boolean
   isBusy: boolean
   layers: LayerItem[]
   magicWandContiguous: boolean
@@ -76,12 +94,17 @@ const props = defineProps<{
     deltaY: number
   } | null
   selectionMode: SelectionMode
+  rulerOrigin: RulerOrigin
+  rulerUnit: RulerUnit
+  rulersVisible: boolean
   zoom: number
 }>()
 
 const emit = defineEmits<{
   (event: 'update:zoom', zoom: number): void
   (event: 'createText', point: DocumentPoint): void
+  (event: 'createGuide', guide: EditorGuide): void
+  (event: 'deleteGuide', guideId: string): void
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
   (event: 'deleteSelection'): void
   (event: 'magicWandSelect', point: SelectionPoint): void
@@ -103,16 +126,38 @@ const emit = defineEmits<{
     selection: SelectionRegion | null
   ): void
   (event: 'selectLayer', layerId: string): void
+  (event: 'updateGuide', guide: EditorGuide): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
   (event: 'update:autoSelectLayer', enabled: boolean): void
   (event: 'update:magicWandContiguous', enabled: boolean): void
   (event: 'update:magicWandTolerance', tolerance: number): void
+  (event: 'update:guidesLocked', enabled: boolean): void
+  (event: 'update:guidesVisible', enabled: boolean): void
+  (event: 'update:guideSnappingEnabled', enabled: boolean): void
+  (event: 'update:rulerOrigin', origin: RulerOrigin): void
+  (event: 'update:rulerUnit', unit: RulerUnit): void
+  (event: 'update:rulersVisible', enabled: boolean): void
   (event: 'update:selection', selection: SelectionRegion | null): void
   (event: 'update:selectionMode', mode: SelectionMode): void
+  (event: 'clearGuides'): void
 }>()
 
 const scrollArea = ref<HTMLDivElement | null>(null)
 const surface = ref<HTMLDivElement | null>(null)
+const viewportScroll = ref({ left: 0, top: 0 })
+const pointerDocument = shallowRef<DocumentPoint | null>(null)
+const selectedGuideId = ref<string | null>(null)
+const snappedGuides = ref<{ x?: number; y?: number }>({})
+const guideInteraction = shallowRef<{
+  pointerId: number
+  guide: EditorGuide
+  initialGuide: EditorGuide | null
+  initialOrientation: GuideOrientation
+} | null>(null)
+const originInteraction = shallowRef<{
+  pointerId: number
+  draft: RulerOrigin
+} | null>(null)
 const isPanning = ref(false)
 const isNativeScrolling = ref(false)
 let nativeScrollTimeout: ReturnType<typeof setTimeout> | undefined
@@ -234,6 +279,12 @@ let pendingNavigation:
   | undefined
 
 const scale = computed(() => visualZoom.value / 100)
+const documentViewportOffset = computed(() => ({
+  x: viewportSize.value.width - viewportScroll.value.left,
+  y: viewportSize.value.height - viewportScroll.value.top
+}))
+const displayedRulerOrigin = computed(() => originInteraction.value?.draft ?? props.rulerOrigin)
+const draftGuide = computed(() => guideInteraction.value?.guide ?? null)
 const scaledDocumentSize = computed(() => ({
   width: Math.max(1, props.document.width * scale.value),
   height: Math.max(1, props.document.height * scale.value)
@@ -359,7 +410,15 @@ const brushPreviewHidesLayer = (layerId: string) =>
   eraserPreviewReady.value &&
   activeBrushOperation.value === 'erase' &&
   (brushInteraction.value?.layerId ?? pendingBrushLayerId) === layerId
+
+function syncViewportScroll() {
+  const scroll = scrollArea.value
+  if (!scroll) return
+  viewportScroll.value = { left: scroll.scrollLeft, top: scroll.scrollTop }
+}
+
 function handleNativeScroll() {
+  syncViewportScroll()
   isNativeScrolling.value = true
   if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
   nativeScrollTimeout = setTimeout(() => {
@@ -435,6 +494,145 @@ function isEditableTarget(target: EventTarget | null) {
   return target instanceof HTMLElement && Boolean(target.closest('input, select, textarea, [contenteditable="true"]'))
 }
 
+function documentPointFromClient(clientX: number, clientY: number) {
+  const canvas = surface.value
+  if (!canvas) return undefined
+  const bounds = canvas.getBoundingClientRect()
+  return {
+    x: documentPositionFromScreen(clientX, bounds.left, scale.value),
+    y: documentPositionFromScreen(clientY, bounds.top, scale.value)
+  }
+}
+
+function guideAtPointer(
+  interaction: NonNullable<typeof guideInteraction.value>,
+  event: Pick<PointerEvent, 'clientX' | 'clientY' | 'altKey' | 'shiftKey'>
+) {
+  const point = documentPointFromClient(event.clientX, event.clientY)
+  if (!point) return interaction.guide
+  const orientation: GuideOrientation = event.altKey
+    ? interaction.initialOrientation === 'horizontal' ? 'vertical' : 'horizontal'
+    : interaction.initialOrientation
+  const origin = orientation === 'vertical' ? displayedRulerOrigin.value.x : displayedRulerOrigin.value.y
+  let position = orientation === 'vertical' ? point.x : point.y
+  if (event.shiftKey) {
+    position = snapGuidePositionToTicks(
+      position,
+      scale.value,
+      props.rulerUnit,
+      props.document.resolutionDpi,
+      origin
+    )
+  } else if (props.rulerUnit === 'px') {
+    position = Math.round(position)
+  }
+  return { ...interaction.guide, orientation, position }
+}
+
+function startGuideCreation(orientation: GuideOrientation, event: PointerEvent) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  snappedGuides.value = {}
+  emit('update:guidesVisible', true)
+  const guide: EditorGuide = { id: crypto.randomUUID(), orientation, position: 0 }
+  const interaction: NonNullable<typeof guideInteraction.value> = {
+    pointerId: event.pointerId,
+    guide,
+    initialGuide: null,
+    initialOrientation: orientation
+  }
+  interaction.guide = guideAtPointer(interaction, event)
+  guideInteraction.value = interaction
+  selectedGuideId.value = guide.id
+}
+
+function startGuideMove(guide: EditorGuide, event: PointerEvent) {
+  if (event.button !== 0 || props.guidesLocked || props.activeTool !== 'move') return
+  event.preventDefault()
+  snappedGuides.value = {}
+  guideInteraction.value = {
+    pointerId: event.pointerId,
+    guide: { ...guide },
+    initialGuide: { ...guide },
+    initialOrientation: guide.orientation
+  }
+  selectedGuideId.value = guide.id
+}
+
+function startRulerOrigin(event: PointerEvent) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  originInteraction.value = { pointerId: event.pointerId, draft: { ...props.rulerOrigin } }
+}
+
+function resetRulerOrigin() {
+  emit('update:rulerOrigin', { x: 0, y: 0 })
+}
+
+function rulerOriginAtPointer(clientX: number, clientY: number) {
+  const point = documentPointFromClient(clientX, clientY)
+  if (!point) return undefined
+  const origin = {
+    x: Math.max(0, Math.min(props.document.width, point.x)),
+    y: Math.max(0, Math.min(props.document.height, point.y))
+  }
+  return props.rulerUnit === 'px'
+    ? { x: Math.round(origin.x), y: Math.round(origin.y) }
+    : origin
+}
+
+function updateRulerInteraction(event: PointerEvent) {
+  const guideDrag = guideInteraction.value
+  if (guideDrag?.pointerId === event.pointerId) {
+    event.preventDefault()
+    const guide = guideAtPointer(guideDrag, event)
+    scheduleInteractionFrame(() => {
+      if (guideInteraction.value?.pointerId !== event.pointerId) return
+      guideInteraction.value = { ...guideInteraction.value, guide }
+    })
+    return
+  }
+  const originDrag = originInteraction.value
+  if (originDrag?.pointerId === event.pointerId) {
+    const draft = rulerOriginAtPointer(event.clientX, event.clientY)
+    if (!draft) return
+    event.preventDefault()
+    scheduleInteractionFrame(() => {
+      if (originInteraction.value?.pointerId !== event.pointerId) return
+      originInteraction.value = { ...originInteraction.value, draft }
+    })
+  }
+}
+
+function stopRulerInteraction(event: PointerEvent) {
+  const guideDrag = guideInteraction.value
+  if (guideDrag?.pointerId === event.pointerId) {
+    const guide = guideAtPointer(guideDrag, event)
+    const maximum = guide.orientation === 'vertical' ? props.document.width : props.document.height
+    if (guide.position >= 0 && guide.position <= maximum) {
+      const committed = { ...guide, position: Math.round(guide.position * 100) / 100 }
+      if (guideDrag.initialGuide) emit('updateGuide', committed)
+      else emit('createGuide', committed)
+      selectedGuideId.value = committed.id
+    } else if (guideDrag.initialGuide) {
+      emit('deleteGuide', guideDrag.initialGuide.id)
+      selectedGuideId.value = null
+    }
+    guideInteraction.value = null
+    snappedGuides.value = {}
+    return
+  }
+  const originDrag = originInteraction.value
+  if (originDrag?.pointerId === event.pointerId) {
+    const finalOrigin = rulerOriginAtPointer(event.clientX, event.clientY) ?? originDrag.draft
+    emit('update:rulerOrigin', {
+      x: Math.round(finalOrigin.x * 100) / 100,
+      y: Math.round(finalOrigin.y * 100) / 100
+    })
+    originInteraction.value = null
+  }
+}
+
 function handleSelectionNudge(event: KeyboardEvent) {
   const nudge = selectionNudgeDelta(event.key, event.shiftKey)
   if (!nudge || props.activeTool !== 'move' || !props.selection || isEditableTarget(event.target)) return false
@@ -501,6 +699,25 @@ function handleWindowKeydown(event: KeyboardEvent) {
   updateModifierKeys(event)
   if (event.defaultPrevented || isEditableTarget(event.target)) return
   if (handleSelectionNudge(event)) return
+
+  if (event.key === 'Escape' && (guideInteraction.value || originInteraction.value)) {
+    event.preventDefault()
+    guideInteraction.value = null
+    originInteraction.value = null
+    return
+  }
+
+  if (
+    (event.key === 'Delete' || event.key === 'Backspace') &&
+    selectedGuideId.value &&
+    props.activeTool === 'move' &&
+    !props.guidesLocked
+  ) {
+    event.preventDefault()
+    emit('deleteGuide', selectedGuideId.value)
+    selectedGuideId.value = null
+    return
+  }
 
   if ((event.key === 'Delete' || event.key === 'Backspace') && props.selection) {
     event.preventDefault()
@@ -601,6 +818,9 @@ function resetInteractionKeys() {
   commitKeyboardSelectionMove()
   isSpacePressed.value = false
   modifierKeys.value = { alt: false, command: false, shift: false }
+  guideInteraction.value = null
+  originInteraction.value = null
+  snappedGuides.value = {}
 }
 
 function scheduleInteractionFrame(action: () => void) {
@@ -672,13 +892,7 @@ function cancelFreeTransform() {
 }
 
 function pointerToDocument(event: PointerEvent): DocumentPoint | undefined {
-  const canvas = surface.value
-  if (!canvas) return undefined
-  const bounds = canvas.getBoundingClientRect()
-  return {
-    x: (event.clientX - bounds.left) / scale.value,
-    y: (event.clientY - bounds.top) / scale.value
-  }
+  return documentPointFromClient(event.clientX, event.clientY)
 }
 
 function captureTransformPointer(event: PointerEvent) {
@@ -1001,6 +1215,30 @@ function selectionMoveDelta(start: SelectionPoint, point: SelectionPoint, constr
   return { deltaX: Math.round(deltaX), deltaY: Math.round(deltaY) }
 }
 
+function snappingActive(event: Pick<PointerEvent, 'ctrlKey' | 'metaKey'>) {
+  return props.guideSnappingEnabled && props.guidesVisible && props.guides.length > 0 && !event.ctrlKey && !event.metaKey
+}
+
+function snapPointForInteraction(point: DocumentPoint, event: PointerEvent) {
+  if (!snappingActive(event)) {
+    snappedGuides.value = {}
+    return point
+  }
+  const result = snapDocumentPoint(point, props.guides, scale.value)
+  snappedGuides.value = { x: result.snappedX, y: result.snappedY }
+  return result.value
+}
+
+function snapTransformForInteraction(transform: LayerTransform, event: PointerEvent) {
+  if (!snappingActive(event)) {
+    snappedGuides.value = {}
+    return transform
+  }
+  const result = snapLayerTranslation(transform, props.guides, scale.value)
+  snappedGuides.value = { x: result.snappedX, y: result.snappedY }
+  return result.value
+}
+
 function drawPendingBrushPreview() {
   const interaction = brushInteraction.value
   const layer = paintableLayer.value
@@ -1172,6 +1410,7 @@ function startViewportPointer(event: PointerEvent) {
   const scroll = scrollArea.value
   if (!scroll) return
 
+  if (event.button === 0) selectedGuideId.value = null
   scroll.focus()
   const target = event.target as HTMLElement | null
   const isMiddleButton = event.button === 1 || (event.buttons & 4) === 4
@@ -1190,7 +1429,8 @@ function startViewportPointer(event: PointerEvent) {
   }
 
   if (props.activeTool === 'crop' && !isSpacePressed.value) {
-    const point = pointerToDocument(event)
+    const rawPoint = pointerToDocument(event)
+    const point = rawPoint ? snapPointForInteraction(rawPoint, event) : undefined
     if (point && startSelectionPointer(event, point)) return
   }
 
@@ -1256,6 +1496,7 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
     isSpacePressed.value
   )
     return
+  selectedGuideId.value = null
   if (props.activeTool === 'text' && layer.kind === 'text') {
     event.stopPropagation()
     event.preventDefault()
@@ -1295,6 +1536,16 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
 }
 
 function updatePointer(event: PointerEvent) {
+  if (props.rulersVisible) {
+    const hoverPoint = pointerToDocument(event)
+    pointerDocument.value = hoverPoint &&
+      hoverPoint.x >= 0 && hoverPoint.y >= 0 &&
+      hoverPoint.x <= props.document.width && hoverPoint.y <= props.document.height
+      ? hoverPoint
+      : null
+  } else if (pointerDocument.value) {
+    pointerDocument.value = null
+  }
   if (isPanning.value && scrollArea.value && panStart.value.pointerId === event.pointerId) {
     event.preventDefault()
     const scrollLeft = panStart.value.scrollLeft - (event.clientX - panStart.value.x)
@@ -1312,7 +1563,7 @@ function updatePointer(event: PointerEvent) {
     const rawPoint = pointerToDocument(event)
     if (!rawPoint) return
     event.preventDefault()
-    const point = rawPoint
+    const point = activeSelection.mode === 'lasso' ? rawPoint : snapPointForInteraction(rawPoint, event)
     if (activeSelection.mode === 'lasso') {
       const previous = activeSelection.points.at(-1)!
       const minimumDistance = Math.max(0.25, 1.5 / scale.value)
@@ -1366,7 +1617,15 @@ function updatePointer(event: PointerEvent) {
     const point = pointerToDocument(event)
     if (!point) return
     event.preventDefault()
-    const delta = selectionMoveDelta(activeSelectionMove.start, point, event.shiftKey)
+    let delta = selectionMoveDelta(activeSelectionMove.start, point, event.shiftKey)
+    if (snappingActive(event)) {
+      const bounds = activeSelectionMove.originalSelection.bounds
+      const snapped = snapBoundsTranslation(bounds, delta.deltaX, delta.deltaY, props.guides, scale.value)
+      delta = { deltaX: Math.round(snapped.deltaX), deltaY: Math.round(snapped.deltaY) }
+      snappedGuides.value = { x: snapped.snappedX, y: snapped.snappedY }
+    } else {
+      snappedGuides.value = {}
+    }
     scheduleInteractionFrame(() => {
       const interaction = selectionMoveInteraction.value
       if (!interaction || interaction.pointerId !== event.pointerId) return
@@ -1390,15 +1649,19 @@ function updatePointer(event: PointerEvent) {
     event.preventDefault()
     let transform: LayerTransform
     if (interaction.type === 'move') {
-      transform = moveLayerTransform(interaction.initial, interaction.start, pointer)
+      transform = snapTransformForInteraction(
+        moveLayerTransform(interaction.initial, interaction.start, pointer),
+        event
+      )
     } else if (interaction.type === 'resize') {
       const isCorner = interaction.handle.x !== 0 && interaction.handle.y !== 0
       const fromCenter = event.altKey || modifierKeys.value.alt
       const freeProportions = event.shiftKey || modifierKeys.value.shift
+      const resizePointer = snapPointForInteraction(pointer, event)
       transform = resizeLayerTransform(
         interaction.initial,
         interaction.handle,
-        pointer,
+        resizePointer,
         fromCenter,
         isCorner && !freeProportions
       )
@@ -1418,11 +1681,11 @@ function updatePointer(event: PointerEvent) {
 
   if (dragState.value?.pointerId === event.pointerId) {
     const drag = dragState.value
-    const transform = {
+    const transform = snapTransformForInteraction({
       ...drag.transform,
       x: Math.round(drag.transform.x + (event.clientX - drag.startX) / scale.value),
       y: Math.round(drag.transform.y + (event.clientY - drag.startY) / scale.value)
-    }
+    }, event)
     scheduleInteractionFrame(() => {
       if (dragState.value?.layerId !== drag.layerId) return
       layerDragPreview.value = { layerId: drag.layerId, transform }
@@ -1512,6 +1775,7 @@ function stopPointer(event: PointerEvent) {
     isPanning.value = false
     panStart.value.pointerId = -1
   }
+  snappedGuides.value = {}
 }
 
 function handleLostPointerCapture(event: PointerEvent) {
@@ -1565,11 +1829,13 @@ function applyPendingNavigation() {
   if (navigation.type === 'center') {
     scroll.scrollLeft = centeredScrollOffset(scroll.scrollWidth, scroll.clientWidth)
     scroll.scrollTop = centeredScrollOffset(scroll.scrollHeight, scroll.clientHeight)
+    syncViewportScroll()
     return
   }
 
   scroll.scrollLeft = viewportSize.value.width + navigation.documentX * scale.value - navigation.viewportX
   scroll.scrollTop = viewportSize.value.height + navigation.documentY * scale.value - navigation.viewportY
+  syncViewportScroll()
 }
 
 function schedulePendingNavigation() {
@@ -1727,6 +1993,13 @@ watch(
 )
 
 watch(
+  () => props.guides.map((guide) => guide.id),
+  (guideIds) => {
+    if (selectedGuideId.value && !guideIds.includes(selectedGuideId.value)) selectedGuideId.value = null
+  }
+)
+
+watch(
   () => props.selectionMoveAnchor?.image.previewUrl ?? props.selectionMoveAnchor?.image.sourceUrl,
   (source) => {
     if (!source || cachedSelectionMoveImage?.source !== source) cachedSelectionMoveImage = undefined
@@ -1795,8 +2068,12 @@ onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown)
   window.addEventListener('keyup', handleWindowKeyup)
   window.addEventListener('blur', resetInteractionKeys)
+  window.addEventListener('pointermove', updateRulerInteraction)
+  window.addEventListener('pointerup', stopRulerInteraction)
+  window.addEventListener('pointercancel', stopRulerInteraction)
   if (scrollArea.value) {
     syncViewportSize()
+    syncViewportScroll()
     resizeObserver = new ResizeObserver(() => {
       syncViewportSize(true)
     })
@@ -1811,6 +2088,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('keyup', handleWindowKeyup)
   window.removeEventListener('blur', resetInteractionKeys)
+  window.removeEventListener('pointermove', updateRulerInteraction)
+  window.removeEventListener('pointerup', stopRulerInteraction)
+  window.removeEventListener('pointercancel', stopRulerInteraction)
   cancelAnimationFrame(interactionFrame)
   stopWheelZoomAnimation()
   resizeObserver?.disconnect()
@@ -1894,6 +2174,53 @@ defineExpose({
       <span>{{ document.width }} × {{ document.height }}</span>
       <span>{{ document.unit === 'cm' ? `${document.physicalWidth} × ${document.physicalHeight} cm` : 'pixels' }}</span>
       <span>{{ isViewportReady ? `${formatZoom(visualZoom)}%` : '—' }}</span>
+      <details class="guide-settings-menu">
+        <summary title="Configurar réguas e guias">Réguas</summary>
+        <div class="guide-settings-popover">
+          <label>
+            <input
+              :checked="rulersVisible"
+              type="checkbox"
+              @change="emit('update:rulersVisible', ($event.target as HTMLInputElement).checked)"
+            />
+            Mostrar réguas <kbd>Ctrl+R</kbd>
+          </label>
+          <label>
+            <input
+              :checked="guidesVisible"
+              type="checkbox"
+              @change="emit('update:guidesVisible', ($event.target as HTMLInputElement).checked)"
+            />
+            Mostrar guias <kbd>Ctrl+;</kbd>
+          </label>
+          <label>
+            <input
+              :checked="guideSnappingEnabled"
+              type="checkbox"
+              @change="emit('update:guideSnappingEnabled', ($event.target as HTMLInputElement).checked)"
+            />
+            Encaixar nas guias
+          </label>
+          <label>
+            <input
+              :checked="guidesLocked"
+              type="checkbox"
+              @change="emit('update:guidesLocked', ($event.target as HTMLInputElement).checked)"
+            />
+            Bloquear guias
+          </label>
+          <label class="ruler-unit-control">
+            Unidade
+            <select :value="rulerUnit" @change="emit('update:rulerUnit', ($event.target as HTMLSelectElement).value as RulerUnit)">
+              <option value="px">Pixels</option>
+              <option value="cm">Centímetros</option>
+              <option value="mm">Milímetros</option>
+              <option value="in">Polegadas</option>
+            </select>
+          </label>
+          <button :disabled="!guides.length" type="button" @click="emit('clearGuides')">Limpar guias</button>
+        </div>
+      </details>
       <div v-if="isTransforming" class="zoom-actions transform-actions">
         <span>{{ activeDisplayTransform?.rotation ?? 0 }}°</span>
         <button type="button" title="Cancelar transformação (Esc)" @click="cancelFreeTransform">Cancelar</button>
@@ -1906,19 +2233,40 @@ defineExpose({
       </div>
     </div>
 
-    <div
-      ref="scrollArea"
-      class="canvas-scroll"
-      :class="viewportCursorClass"
-      tabindex="0"
-      @auxclick.prevent
-      @lostpointercapture="handleLostPointerCapture"
-      @pointercancel="stopPointer"
-      @pointerdown.capture="startViewportPointer"
-      @pointermove="updatePointer"
-      @pointerup="stopPointer"
-      @scroll.passive="handleNativeScroll"
-    >
+    <div class="canvas-workspace" :style="{ '--ruler-size': rulersVisible ? `${RULER_SIZE}px` : '0px' }">
+      <CanvasRulers
+        v-if="rulersVisible"
+        :document-height="document.height"
+        :document-offset-x="documentViewportOffset.x"
+        :document-offset-y="documentViewportOffset.y"
+        :document-width="document.width"
+        :origin="displayedRulerOrigin"
+        :pointer-document="pointerDocument"
+        :resolution-dpi="document.resolutionDpi"
+        :scale="scale"
+        :size="RULER_SIZE"
+        :unit="rulerUnit"
+        :viewport-height="viewportSize.height"
+        :viewport-width="viewportSize.width"
+        @reset-origin="resetRulerOrigin"
+        @start-guide="startGuideCreation"
+        @start-origin="startRulerOrigin"
+      />
+      <div class="canvas-viewport-main">
+        <div
+          ref="scrollArea"
+          class="canvas-scroll"
+          :class="viewportCursorClass"
+          tabindex="0"
+          @auxclick.prevent
+          @lostpointercapture="handleLostPointerCapture"
+          @pointercancel="stopPointer"
+          @pointerdown.capture="startViewportPointer"
+          @pointerleave="pointerDocument = null"
+          @pointermove="updatePointer"
+          @pointerup="stopPointer"
+          @scroll.passive="handleNativeScroll"
+        >
       <div class="canvas-pasteboard" :style="pasteboardStyle">
         <div class="canvas-frame" :style="frameStyle">
           <div ref="surface" class="canvas-surface" :style="surfaceStyle">
@@ -2012,6 +2360,24 @@ defineExpose({
             </div>
           </div>
         </div>
+      </div>
+        </div>
+        <GuideOverlay
+          :document-offset-x="documentViewportOffset.x"
+          :document-offset-y="documentViewportOffset.y"
+          :draft-guide="draftGuide"
+          :guides="guides"
+          :interactive="activeTool === 'move' && !guidesLocked"
+          :origin="displayedRulerOrigin"
+          :resolution-dpi="document.resolutionDpi"
+          :scale="scale"
+          :selected-guide-id="selectedGuideId"
+          :snapped-x="snappedGuides.x"
+          :snapped-y="snappedGuides.y"
+          :unit="rulerUnit"
+          :visible="guidesVisible"
+          @start-move="startGuideMove"
+        />
       </div>
     </div>
   </section>

@@ -533,7 +533,8 @@ select:focus-visible {
   position: absolute;
   inset: 0 auto auto 0;
   overflow: visible;
-  border: 1px solid #343d48;
+  border: 0;
+  outline: 1px solid #343d48;
   box-shadow: 0 16px 36px rgb(0 0 0 / 42%);
   contain: layout style;
   backface-visibility: hidden;
@@ -571,6 +572,163 @@ select:focus-visible {
 .selection-move-preview {
   inset: 0 auto auto 0;
   pointer-events: none;
+}
+
+.canvas-workspace {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--ruler-size) minmax(0, 1fr);
+  grid-template-rows: var(--ruler-size) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.canvas-viewport-main {
+  position: relative;
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.canvas-rulers {
+  position: absolute;
+  z-index: 45;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ruler-corner,
+.document-ruler {
+  position: absolute;
+  background: #15161a;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.ruler-corner {
+  top: 0;
+  left: 0;
+  width: var(--ruler-size);
+  height: var(--ruler-size);
+  border: 0;
+  border-right: 1px solid #34363d;
+  border-bottom: 1px solid #34363d;
+  border-radius: 0;
+  background: #15161a;
+  color: #9699a1;
+  padding: 0;
+  font-size: 7px;
+  text-transform: lowercase;
+  cursor: crosshair;
+}
+
+.document-ruler--horizontal {
+  top: 0;
+  left: var(--ruler-size);
+  cursor: ns-resize;
+}
+
+.document-ruler--vertical {
+  top: var(--ruler-size);
+  left: 0;
+  cursor: ew-resize;
+}
+
+.guide-overlay {
+  position: absolute;
+  z-index: 35;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.document-guide {
+  position: absolute;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.document-guide--vertical {
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+}
+
+.document-guide--horizontal {
+  right: 0;
+  left: 0;
+  top: -4px;
+  height: 9px;
+}
+
+.document-guide--interactive {
+  pointer-events: auto;
+}
+
+.document-guide--vertical.document-guide--interactive {
+  cursor: ew-resize;
+}
+
+.document-guide--horizontal.document-guide--interactive {
+  cursor: ns-resize;
+}
+
+.document-guide-line {
+  position: absolute;
+  background: #64c7ff;
+  box-shadow: 0 0 0 1px rgb(10 28 42 / 28%);
+}
+
+.document-guide--vertical .document-guide-line {
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+}
+
+.document-guide--horizontal .document-guide-line {
+  right: 0;
+  bottom: 4px;
+  left: 0;
+  height: 1px;
+}
+
+.document-guide--selected .document-guide-line,
+.document-guide--snapped .document-guide-line {
+  background: #b4e8ff;
+  box-shadow: 0 0 3px #35b9ff;
+}
+
+.document-guide--draft .document-guide-line {
+  background: #8edaff;
+}
+
+.guide-position-label {
+  position: absolute;
+  border: 1px solid #4d9fc9;
+  border-radius: 4px;
+  background: #15171c;
+  color: #dff5ff;
+  padding: 2px 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.document-guide--vertical .guide-position-label {
+  top: 8px;
+  left: 8px;
+}
+
+.document-guide--horizontal .guide-position-label {
+  top: 8px;
+  left: 8px;
 }
 
 .brush-preview {
@@ -1658,6 +1816,64 @@ input[type='checkbox'] {
   color: var(--ui-text-muted);
 }
 
+.guide-settings-menu {
+  position: relative;
+  text-transform: none;
+}
+
+.guide-settings-menu summary {
+  min-width: 54px;
+  height: 26px;
+  border: 1px solid #343740;
+  border-radius: 5px;
+  background: #22242a;
+  color: #d8d9dd;
+  padding: 4px 8px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.guide-settings-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.guide-settings-popover {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: 230px;
+  gap: 9px;
+  border: 1px solid #3b3e47;
+  border-radius: 7px;
+  background: #1b1d22;
+  box-shadow: 0 12px 28px rgb(0 0 0 / 45%);
+  padding: 11px;
+}
+
+.guide-settings-popover label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #dcdee3;
+}
+
+.guide-settings-popover input {
+  accent-color: #8c8f98;
+}
+
+.guide-settings-popover kbd {
+  margin-left: auto;
+  color: #91949d;
+  font: 10px Consolas, monospace;
+}
+
+.ruler-unit-control select {
+  min-width: 100px;
+  margin-left: auto;
+}
+
 .selection-options select,
 .panel input,
 .panel select,
@@ -1685,7 +1901,7 @@ input[type='checkbox'] {
 }
 
 .canvas-surface {
-  border-color: var(--ui-border-strong);
+  outline-color: var(--ui-border-strong);
 }
 
 .layer-count {

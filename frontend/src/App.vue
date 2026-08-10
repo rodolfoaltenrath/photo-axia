@@ -35,6 +35,7 @@ import {
 } from './editor/editorHistory'
 import { useHistory, type HistoryRecordOptions, type HistoryStep } from './editor/history'
 import { clampZoom } from './editor/viewport'
+import type { EditorGuide, RulerOrigin, RulerUnit } from './editor/guides'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
 import {
   cloneSelection,
@@ -76,6 +77,13 @@ const autoSelectLayer = ref(true)
 const zoom = ref(100)
 const brushSize = ref(24)
 const brushColor = ref('#000000')
+const guides = ref<EditorGuide[]>([])
+const rulersVisible = ref(false)
+const guidesVisible = ref(true)
+const guidesLocked = ref(false)
+const guideSnappingEnabled = ref(true)
+const rulerUnit = ref<RulerUnit>('px')
+const rulerOrigin = ref<RulerOrigin>({ x: 0, y: 0 })
 const selectionMode = ref<SelectionMode>('rectangle')
 const magicWandTolerance = ref(32)
 const magicWandContiguous = ref(true)
@@ -226,6 +234,10 @@ function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
   let resourcesMayBeUnused = false
   let restoredSelection: SelectionRegion | null | undefined
   for (const { delta, direction } of steps) {
+    if (delta.type === 'guides:change') {
+      guides.value = (direction === 'redo' ? delta.after : delta.before).map((guide) => ({ ...guide }))
+      continue
+    }
     const result = applyEditorHistoryDelta(layers.value, activeLayerId.value, delta, direction)
     activeLayerId.value = result.activeLayerId
     trackLayerAssets(result.insertedLayers)
@@ -454,6 +466,35 @@ function duplicateLayer(layerId = activeLayerId.value) {
     activeAfter: duplicate.id
   })
   statusText.value = 'Camada duplicada'
+}
+
+function commitGuides(label: string, nextGuides: EditorGuide[]) {
+  const before = guides.value.map((guide) => ({ ...guide }))
+  const after = nextGuides.map((guide) => ({ ...guide }))
+  guides.value = after
+  recordHistory(label, { type: 'guides:change', before, after })
+  statusText.value = label
+}
+
+function createGuide(guide: EditorGuide) {
+  commitGuides('Criar guia', [...guides.value, guide])
+}
+
+function updateGuide(guide: EditorGuide) {
+  commitGuides(
+    'Mover guia',
+    guides.value.map((current) => current.id === guide.id ? { ...guide } : current)
+  )
+}
+
+function deleteGuide(guideId: string) {
+  if (!guides.value.some((guide) => guide.id === guideId)) return
+  commitGuides('Excluir guia', guides.value.filter((guide) => guide.id !== guideId))
+}
+
+function clearGuides() {
+  if (!guides.value.length) return
+  commitGuides('Limpar guias', [])
 }
 
 async function duplicateSelectionOrLayer() {
@@ -705,6 +746,8 @@ async function createDocument(settings: NewDocumentSettings) {
     selection.value = null
     selectionGeneration++
     activeDocument.value = document
+    guides.value = []
+    rulerOrigin.value = { x: 0, y: 0 }
     layers.value = [createBackgroundLayer()]
     activeLayerId.value = 'layer-bg'
     zoom.value = 100
@@ -1316,6 +1359,18 @@ function handleShortcut(event: KeyboardEvent) {
   if (event.defaultPrevented) return
 
   const command = event.ctrlKey || event.metaKey
+  if (command && event.code === 'KeyR' && !event.shiftKey && !event.altKey) {
+    event.preventDefault()
+    rulersVisible.value = !rulersVisible.value
+    statusText.value = rulersVisible.value ? 'Réguas visíveis' : 'Réguas ocultas'
+    return
+  }
+  if (command && event.code === 'Semicolon' && !event.shiftKey && !event.altKey) {
+    event.preventDefault()
+    guidesVisible.value = !guidesVisible.value
+    statusText.value = guidesVisible.value ? 'Guias visíveis' : 'Guias ocultas'
+    return
+  }
   if (command && event.code === 'KeyZ') {
     event.preventDefault()
     if (event.shiftKey) redoHistory()
@@ -1429,6 +1484,10 @@ onBeforeUnmount(() => {
         :brush-color="brushColor"
         :brush-size="brushSize"
         :document="activeDocument"
+        :guides="guides"
+        :guides-locked="guidesLocked"
+        :guides-visible="guidesVisible"
+        :guide-snapping-enabled="guideSnappingEnabled"
         :is-busy="isBusy"
         :layers="layers"
         :magic-wand-contiguous="magicWandContiguous"
@@ -1436,16 +1495,29 @@ onBeforeUnmount(() => {
         :selection="selection"
         :selection-move-anchor="selectionMoveAnchor"
         :selection-mode="selectionMode"
+        :ruler-origin="rulerOrigin"
+        :ruler-unit="rulerUnit"
+        :rulers-visible="rulersVisible"
         :zoom="zoom"
+        @create-guide="createGuide"
+        @delete-guide="deleteGuide"
         @delete-selection="deleteSelectedPixels"
         @images-dropped="addImportedImages"
         @magic-wand-select="selectWithMagicWand"
         @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"
+        @update-guide="updateGuide"
         @create-text="addTextLayer"
         @select-layer="activeLayerId = $event"
         @update:magic-wand-contiguous="magicWandContiguous = $event"
         @update:magic-wand-tolerance="magicWandTolerance = $event"
+        @update:guides-locked="guidesLocked = $event"
+        @update:guides-visible="guidesVisible = $event"
+        @update:guide-snapping-enabled="guideSnappingEnabled = $event"
+        @update:ruler-origin="rulerOrigin = $event"
+        @update:ruler-unit="rulerUnit = $event"
+        @update:rulers-visible="rulersVisible = $event"
+        @clear-guides="clearGuides"
         @update:selection="updateSelection"
         @update:selection-mode="setSelectionMode"
         @update-transform="updateLayerTransform"
