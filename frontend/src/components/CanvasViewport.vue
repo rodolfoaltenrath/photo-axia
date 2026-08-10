@@ -25,7 +25,9 @@ import {
   appendBrushPoint,
   brushPointSpacing,
   brushPreviewSize,
-  drawBrushPoints
+  brushPreviewUsesLayerSpace,
+  drawBrushPoints,
+  type BrushOperation
 } from '../editor/brush'
 import {
   imageSourceForRasterSize,
@@ -97,6 +99,7 @@ const emit = defineEmits<{
     points: SelectionPoint[],
     size: number,
     color: string,
+    operation: BrushOperation,
     selection: SelectionRegion | null
   ): void
   (event: 'selectLayer', layerId: string): void
@@ -164,6 +167,7 @@ const selectionInteraction = ref<{
 const brushInteraction = shallowRef<{
   pointerId: number
   layerId: string
+  operation: BrushOperation
   points: SelectionPoint[]
   renderedPointCount: number
   selection: SelectionRegion | null
@@ -198,11 +202,15 @@ const selectionMoveReady = ref(false)
 const selectionMovePending = ref(false)
 const brushPreviewCanvas = ref<HTMLCanvasElement | null>(null)
 const brushPreviewPending = ref(false)
+const eraserPreviewReady = ref(false)
 let resizeObserver: ResizeObserver | undefined
 let interactionFrame = 0
 let pendingBrushBaseImageSource: string | undefined
 let pendingBrushCommittedImageSource: string | undefined
 let pendingBrushWasFree = false
+let pendingBrushOperation: BrushOperation = 'paint'
+let pendingBrushLayerId: string | undefined
+let eraserPreviewGeneration = 0
 let pendingSelectionMoveBaseSource: string | undefined
 let pendingSelectionMoveCommittedSource: string | undefined
 let cachedSelectionMoveImage: { source: string; image: HTMLImageElement } | undefined
@@ -215,6 +223,9 @@ let wheelZoomAnchor: { clientX: number; clientY: number } | undefined
 
 function captureSelectionMoveCanvas(element: unknown) {
   selectionMoveCanvas.value = element instanceof HTMLCanvasElement ? element : null
+}
+function captureBrushPreviewCanvas(element: unknown) {
+  brushPreviewCanvas.value = element instanceof HTMLCanvasElement ? element : null
 }
 let viewportInitialization = 0
 let pendingNavigation:
@@ -283,10 +294,15 @@ const paintableLayer = computed(() => {
   if (!layer?.visible || layer.kind !== 'image' || !layer.image || !layer.transform) return undefined
   return layer
 })
+const activeBrushOperation = computed<BrushOperation | undefined>(() =>
+  brushInteraction.value?.operation ?? (brushPreviewPending.value ? pendingBrushOperation : undefined)
+)
 const brushPreviewDimensions = computed(() => {
   const layer = paintableLayer.value
   if (!layer?.image || !layer.transform) return { width: 1, height: 1 }
-  const free = brushInteraction.value ? !brushInteraction.value.selection : brushPreviewPending.value && pendingBrushWasFree
+  const free = activeBrushOperation.value === 'paint' && (
+    brushInteraction.value ? !brushInteraction.value.selection : brushPreviewPending.value && pendingBrushWasFree
+  )
   if (free) {
     return brushPreviewSize(
       props.document.width * 2,
@@ -308,8 +324,11 @@ const brushPreviewDimensions = computed(() => {
 })
 const brushPreviewStyle = computed(() => {
   const transform = activeDisplayTransform.value
-  if (!transform || !paintableLayer.value || (!brushInteraction.value && !brushPreviewPending.value)) return undefined
-  const free = brushInteraction.value ? !brushInteraction.value.selection : pendingBrushWasFree
+  const layer = paintableLayer.value
+  if (!transform || !layer || (!brushInteraction.value && !brushPreviewPending.value)) return undefined
+  const free = activeBrushOperation.value === 'paint' && (
+    brushInteraction.value ? !brushInteraction.value.selection : pendingBrushWasFree
+  )
   if (free) {
     return {
       left: '0',
@@ -318,7 +337,10 @@ const brushPreviewStyle = computed(() => {
       height: `${props.document.height}px`
     }
   }
-  return positionedTransformStyle(transform)
+  return {
+    ...positionedTransformStyle(transform),
+    opacity: activeBrushOperation.value === 'erase' ? layer.opacity / 100 : undefined
+  }
 })
 const selectionMovePreviewStyle = computed(() => {
   const interaction = selectionMoveInteraction.value
@@ -333,6 +355,10 @@ const selectionMovePreviewStyle = computed(() => {
 })
 const selectionMoveHidesLayer = (layerId: string) =>
   selectionMoveReady.value && selectionMoveInteraction.value?.layerId === layerId
+const brushPreviewHidesLayer = (layerId: string) =>
+  eraserPreviewReady.value &&
+  activeBrushOperation.value === 'erase' &&
+  (brushInteraction.value?.layerId ?? pendingBrushLayerId) === layerId
 function handleNativeScroll() {
   isNativeScrolling.value = true
   if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
@@ -346,7 +372,8 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--panning': isPanning.value,
   'canvas-scroll--scrolling': isNativeScrolling.value,
   'canvas-scroll--text': props.activeTool === 'text',
-  'canvas-scroll--selection': props.activeTool === 'crop' || props.activeTool === 'brush',
+  'canvas-scroll--selection':
+    props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
   'canvas-scroll--zoom-in':
@@ -979,9 +1006,13 @@ function drawPendingBrushPreview() {
   const layer = paintableLayer.value
   const canvas = brushPreviewCanvas.value
   if (!interaction || !layer?.image || !layer.transform || !canvas) return
+  if (interaction.operation === 'erase' && !eraserPreviewReady.value) return
   const context = canvas.getContext('2d')
   if (!context) return
-  const documentToPreview: Matrix2D = interaction.selection
+  const documentToPreview: Matrix2D = brushPreviewUsesLayerSpace(
+    interaction.operation,
+    Boolean(interaction.selection)
+  )
     ? invertMatrix(layerSourceToDocumentMatrix(layer.transform, canvas.width, canvas.height))
     : [canvas.width / props.document.width, 0, 0, canvas.height / props.document.height, 0, 0]
 
@@ -999,17 +1030,52 @@ function drawPendingBrushPreview() {
     interaction.points,
     interaction.renderedPointCount,
     props.brushSize,
-    props.brushColor
+    props.brushColor,
+    interaction.operation
   )
   context.restore()
 }
 
+function loadBrushPreviewImage(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.decoding = 'async'
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('A prévia da camada não pôde ser carregada.'))
+    image.src = source
+  })
+}
+
+async function prepareEraserPreview(interaction: NonNullable<typeof brushInteraction.value>) {
+  const generation = ++eraserPreviewGeneration
+  await nextTick()
+  try {
+    const image = await loadBrushPreviewImage(interaction.baseImageSource)
+    if (generation !== eraserPreviewGeneration || brushInteraction.value !== interaction) return
+    const canvas = brushPreviewCanvas.value
+    const context = canvas?.getContext('2d')
+    if (!canvas || !context) return
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+    interaction.renderedPointCount = 0
+    eraserPreviewReady.value = true
+    drawPendingBrushPreview()
+  } catch {
+    // O raster definitivo ainda será processado pelo worker. Enquanto a prévia
+    // não estiver disponível, mantemos a camada original visível.
+  }
+}
+
 function clearBrushPreview() {
+  eraserPreviewGeneration += 1
   const canvas = brushPreviewCanvas.value
   const context = canvas?.getContext('2d')
   context?.clearRect(0, 0, canvas!.width, canvas!.height)
   brushPreviewPending.value = false
+  eraserPreviewReady.value = false
   pendingBrushWasFree = false
+  pendingBrushOperation = 'paint'
+  pendingBrushLayerId = undefined
   pendingBrushBaseImageSource = undefined
   pendingBrushCommittedImageSource = undefined
 }
@@ -1079,7 +1145,7 @@ function createBrushSelectionPath(selection: SelectionRegion | null) {
   return path
 }
 
-function startBrushPointer(event: PointerEvent, point: SelectionPoint) {
+function startBrushPointer(event: PointerEvent, point: SelectionPoint, operation: BrushOperation) {
   const scroll = scrollArea.value
   const layer = paintableLayer.value
   if (!scroll || event.button !== 0 || props.isBusy || !layer?.image) return false
@@ -1089,13 +1155,16 @@ function startBrushPointer(event: PointerEvent, point: SelectionPoint) {
   brushInteraction.value = {
     pointerId: event.pointerId,
     layerId: layer.id,
+    operation,
     points: [point],
     renderedPointCount: 0,
     selection: props.selection,
     selectionPath: createBrushSelectionPath(props.selection),
     baseImageSource: layer.image.previewUrl ?? layer.image.sourceUrl
   }
-  nextTick(() => drawPendingBrushPreview())
+  eraserPreviewReady.value = false
+  if (operation === 'erase') void prepareEraserPreview(brushInteraction.value)
+  else nextTick(() => drawPendingBrushPreview())
   return true
 }
 
@@ -1125,9 +1194,9 @@ function startViewportPointer(event: PointerEvent) {
     if (point && startSelectionPointer(event, point)) return
   }
 
-  if (props.activeTool === 'brush' && !isSpacePressed.value) {
+  if ((props.activeTool === 'brush' || props.activeTool === 'eraser') && !isSpacePressed.value) {
     const point = pointerToDocument(event)
-    if (point && startBrushPointer(event, point)) return
+    if (point && startBrushPointer(event, point, props.activeTool === 'eraser' ? 'erase' : 'paint')) return
   }
 
   const textLayerTarget = target?.closest('.document-layer[data-layer-kind="text"]')
@@ -1387,9 +1456,18 @@ function stopPointer(event: PointerEvent) {
     if (event.type !== 'pointercancel' && interaction.points.length > 0) {
       pendingBrushBaseImageSource = interaction.baseImageSource
       pendingBrushCommittedImageSource = undefined
-      pendingBrushWasFree = !interaction.selection
+      pendingBrushWasFree = interaction.operation === 'paint' && !interaction.selection
+      pendingBrushOperation = interaction.operation
+      pendingBrushLayerId = interaction.layerId
       brushPreviewPending.value = true
-      emit('paintStroke', interaction.points, props.brushSize, props.brushColor, interaction.selection)
+      emit(
+        'paintStroke',
+        interaction.points,
+        props.brushSize,
+        props.brushColor,
+        interaction.operation,
+        interaction.selection
+      )
     } else {
       clearBrushPreview()
     }
@@ -1697,7 +1775,7 @@ watch(
       selectionInteraction.value = null
       selectionDraft.value = null
     }
-    if (tool !== 'brush' && brushInteraction.value) {
+    if (tool !== 'brush' && tool !== 'eraser' && brushInteraction.value) {
       discardInteractionFrame()
       clearBrushPreview()
       brushInteraction.value = null
@@ -1850,13 +1928,25 @@ defineExpose({
               <template v-for="layer in renderedLayers" :key="layer.id">
                 <CanvasLayer
                   :active="layer.id === activeLayerId"
-                  :content-hidden="selectionMoveHidesLayer(layer.id)"
+                  :content-hidden="selectionMoveHidesLayer(layer.id) || brushPreviewHidesLayer(layer.id)"
                   :layer="layer"
                   :transform="displayTransform(layer) ?? defaultLayerTransform"
                   @image-error="handleLayerImageError"
                   @image-loaded="handleLayerImageLoaded"
                   @pointerdown="startLayerPointer($event, layer)"
                 />
+                <canvas
+                  v-if="
+                    brushPreviewStyle &&
+                    activeBrushOperation === 'erase' &&
+                    paintableLayer?.id === layer.id
+                  "
+                  :ref="captureBrushPreviewCanvas"
+                  class="brush-preview brush-preview--eraser"
+                  :style="brushPreviewStyle"
+                  :width="brushPreviewDimensions.width"
+                  :height="brushPreviewDimensions.height"
+                ></canvas>
                 <canvas
                   v-if="
                     selectionMovePreviewStyle &&
@@ -1871,8 +1961,8 @@ defineExpose({
               </template>
             </div>
             <canvas
-              v-if="brushPreviewStyle && paintableLayer?.image"
-              ref="brushPreviewCanvas"
+              v-if="brushPreviewStyle && activeBrushOperation === 'paint' && paintableLayer?.image"
+              :ref="captureBrushPreviewCanvas"
               class="brush-preview"
               :style="brushPreviewStyle"
               :width="brushPreviewDimensions.width"

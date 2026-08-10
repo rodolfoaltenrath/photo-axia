@@ -52,7 +52,8 @@ import {
   eraseImageSelection,
   extractImageSelection
 } from './services/selectionEngine'
-import { disposeBrushEngine, paintBrushStroke } from './services/brushEngine'
+import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
+import type { BrushOperation } from './editor/brush'
 import {
   disposeSelectionMoveEngine,
   moveImageSelection,
@@ -1128,6 +1129,7 @@ async function commitBrushStroke(
   points: SelectionPoint[],
   size: number,
   color: string,
+  operation: BrushOperation,
   strokeSelection: SelectionRegion | null
 ) {
   if (isBusy.value) return
@@ -1145,16 +1147,18 @@ async function commitBrushStroke(
   let createdPreviewUrl: string | undefined
   isBusy.value = true
   errorText.value = ''
-  statusText.value = 'Pintando…'
+  const isEraser = operation === 'erase'
+  statusText.value = isEraser ? 'Apagando…' : 'Pintando…'
   try {
     const previewTarget = imagePreviewSize(beforeImage, beforeTransform.width, beforeTransform.height)
-    const result = await paintBrushStroke(
+    const result = await applyBrushStroke(
       layer.id,
       beforeImage,
       beforeTransform,
       strokePoints,
       size,
       color,
+      operation,
       strokeSelection,
       previewTarget.width,
       previewTarget.height,
@@ -1204,7 +1208,7 @@ async function commitBrushStroke(
     layer.image = newAsset
     layer.transform = newTransform
 
-    recordHistory('Pincelada', {
+    recordHistory(isEraser ? 'Borracha' : 'Pincelada', {
       type: 'layer:patch',
       layerId: layer.id,
       before: { image: beforeImage, transform: beforeTransform },
@@ -1212,7 +1216,7 @@ async function commitBrushStroke(
     })
     transientObjectUrls.clear()
     collectUnusedObjectUrls()
-    statusText.value = 'Pincelada aplicada'
+    statusText.value = isEraser ? 'Borracha aplicada' : 'Pincelada aplicada'
   } catch (error) {
     layer.image = beforeImage
     layer.transform = beforeTransform
@@ -1225,7 +1229,7 @@ async function commitBrushStroke(
       trackedObjectUrls.delete(createdPreviewUrl)
     }
     transientObjectUrls.clear()
-    showError(error, 'Não foi possível aplicar a pincelada.')
+    showError(error, isEraser ? 'Não foi possível aplicar a borracha.' : 'Não foi possível aplicar a pincelada.')
   } finally {
     isBusy.value = false
   }
@@ -1344,6 +1348,7 @@ function handleShortcut(event: KeyboardEvent) {
   const toolsByKey: Record<string, EditorTool> = {
     v: 'move',
     b: 'brush',
+    e: 'eraser',
     c: 'crop',
     t: 'text',
     h: 'hand',

@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { appendBrushPoint, brushPointSpacing, brushPreviewSize, brushStrokeGeometry } from '../src/editor/brush.ts'
+import {
+  appendBrushPoint,
+  brushOperationExpandsRaster,
+  brushPointSpacing,
+  brushPreviewSize,
+  brushPreviewUsesLayerSpace,
+  brushStrokeGeometry,
+  drawBrushPoints
+} from '../src/editor/brush.ts'
 import { clipContextToSelection } from '../src/editor/selection.ts'
 
 test('filtra amostras redundantes sem perder o ponto final', () => {
@@ -32,6 +40,31 @@ test('a prévia respeita o orçamento de pixels', () => {
 test('o espaçamento se adapta ao pincel e ao zoom', () => {
   assert.ok(brushPointSpacing(100, 1) > brushPointSpacing(10, 1))
   assert.ok(brushPointSpacing(100, 4) < brushPointSpacing(100, 1))
+})
+
+test('somente o pincel livre pode expandir o raster', () => {
+  assert.equal(brushOperationExpandsRaster('paint', false), true)
+  assert.equal(brushOperationExpandsRaster('paint', true), false)
+  assert.equal(brushOperationExpandsRaster('erase', false), false)
+  assert.equal(brushOperationExpandsRaster('erase', true), false)
+})
+
+test('a borracha usa o espaço da camada mesmo sem seleção', () => {
+  assert.equal(brushPreviewUsesLayerSpace('erase', false), true)
+  assert.equal(brushPreviewUsesLayerSpace('paint', true), true)
+  assert.equal(brushPreviewUsesLayerSpace('paint', false), false)
+})
+
+test('a borracha remove alfa usando o mesmo traçado incremental do pincel', () => {
+  const context = {
+    globalCompositeOperation: 'source-over',
+    beginPath() {},
+    arc() {},
+    fill() {}
+  }
+  const rendered = drawBrushPoints(context, [{ x: 10, y: 20 }], 0, 24, '#000000', 'erase')
+  assert.equal(rendered, 1)
+  assert.equal(context.globalCompositeOperation, 'destination-out')
 })
 
 test('pincel livre expande o raster até o traço sem ultrapassar o documento', () => {

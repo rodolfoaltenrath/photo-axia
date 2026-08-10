@@ -1,4 +1,9 @@
-import { brushStrokeGeometry, drawBrushPoints } from '../editor/brush'
+import {
+  brushOperationExpandsRaster,
+  brushStrokeGeometry,
+  drawBrushPoints,
+  type BrushOperation
+} from '../editor/brush'
 import {
   clipContextToSelection,
   invertMatrix,
@@ -106,6 +111,7 @@ async function fallbackBrushStroke(
   points: SelectionPoint[],
   size: number,
   color: string,
+  operation: BrushOperation,
   selection: SelectionRegion | null,
   previewWidth: number,
   previewHeight: number,
@@ -121,7 +127,7 @@ async function fallbackBrushStroke(
     size,
     documentWidth,
     documentHeight,
-    !selection
+    brushOperationExpandsRaster(operation, Boolean(selection))
   )
   const canvas = makeCanvas(geometry.width, geometry.height)
   const context = canvas2dContext(canvas)
@@ -141,7 +147,7 @@ async function fallbackBrushStroke(
     context.clip()
   }
   context.setTransform(...documentToSource)
-  drawBrushPoints(context, points, 0, size, color)
+  drawBrushPoints(context, points, 0, size, color, operation)
   context.restore()
 
   const previewScaleX = previewWidth / asset.width
@@ -179,13 +185,14 @@ async function fallbackBrushStroke(
   }
 }
 
-export async function paintBrushStroke(
+export async function applyBrushStroke(
   layerId: string,
   asset: ImageAsset,
   transform: LayerTransform,
   points: SelectionPoint[],
   size: number,
   color: string,
+  operation: BrushOperation,
   selection: SelectionRegion | null,
   previewWidth: number,
   previewHeight: number,
@@ -202,6 +209,7 @@ export async function paintBrushStroke(
       points,
       size,
       color,
+      operation,
       activeSelection,
       previewWidth,
       previewHeight,
@@ -237,6 +245,7 @@ export async function paintBrushStroke(
         points: packedPoints,
         size,
         color,
+        operation,
         selection: activeSelection,
         previewWidth,
         previewHeight,

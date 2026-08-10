@@ -1,4 +1,9 @@
-import { brushStrokeGeometry, drawPackedBrushPoints } from '../editor/brush'
+import {
+  brushOperationExpandsRaster,
+  brushStrokeGeometry,
+  drawPackedBrushPoints,
+  type BrushOperation
+} from '../editor/brush'
 import {
   clipContextToSelection,
   invertMatrix,
@@ -19,6 +24,7 @@ interface BrushRequest {
   points: Float32Array
   size: number
   color: string
+  operation: BrushOperation
   selection: SelectionRegion | null
   previewWidth: number
   previewHeight: number
@@ -104,7 +110,7 @@ self.onmessage = async (event: MessageEvent<BrushRequest>) => {
       request.size,
       request.documentWidth,
       request.documentHeight,
-      !request.selection
+      brushOperationExpandsRaster(request.operation, Boolean(request.selection))
     )
     const expanded =
       geometry.originX !== 0 ||
@@ -129,10 +135,10 @@ self.onmessage = async (event: MessageEvent<BrushRequest>) => {
       context.clip()
     }
     context.setTransform(...documentToSource)
-    drawPackedBrushPoints(context, request.points, request.size, request.color)
+    drawPackedBrushPoints(context, request.points, request.size, request.color, request.operation)
     context.restore()
 
-    const editToken = `brush:${request.layerId}:${nextEditToken++}`
+    const editToken = `stroke:${request.layerId}:${nextEditToken++}`
     cachedSurface = { layerId: request.layerId, token: editToken, canvas }
     const previewScaleX = request.previewWidth / request.assetWidth
     const previewScaleY = request.previewHeight / request.assetHeight

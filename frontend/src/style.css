@@ -577,6 +577,10 @@ select:focus-visible {
   z-index: 15;
 }
 
+.brush-preview--eraser {
+  z-index: auto;
+}
+
 .selection-move-hint {
   color: #d7e0e8;
 }

@@ -2,6 +2,7 @@ import type { Matrix2D, SelectionPoint } from './selection'
 import type { LayerTransform } from '../types/editor'
 
 type BrushContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
+export type BrushOperation = 'paint' | 'erase'
 
 export interface BrushPreviewSize {
   width: number
@@ -13,6 +14,14 @@ const MAX_PREVIEW_PIXELS = 4_194_304
 export function brushPointSpacing(size: number, viewportScale: number) {
   const safeScale = Math.max(0.01, viewportScale)
   return Math.max(0.05, Math.min(Math.max(1, size) * 0.025, 0.75 / safeScale))
+}
+
+export function brushOperationExpandsRaster(operation: BrushOperation, hasSelection: boolean) {
+  return operation === 'paint' && !hasSelection
+}
+
+export function brushPreviewUsesLayerSpace(operation: BrushOperation, hasSelection: boolean) {
+  return operation === 'erase' || hasSelection
 }
 
 export function appendBrushPoint(
@@ -154,11 +163,12 @@ export function drawBrushPoints(
   points: readonly SelectionPoint[],
   renderedPointCount: number,
   size: number,
-  color: string
+  color: string,
+  operation: BrushOperation = 'paint'
 ) {
   if (!points.length || renderedPointCount >= points.length) return points.length
 
-  context.globalCompositeOperation = 'source-over'
+  context.globalCompositeOperation = operation === 'erase' ? 'destination-out' : 'source-over'
   context.strokeStyle = color
   context.fillStyle = color
   context.lineWidth = Math.max(0.1, size)
@@ -190,11 +200,12 @@ export function drawPackedBrushPoints(
   context: BrushContext,
   points: Float32Array,
   size: number,
-  color: string
+  color: string,
+  operation: BrushOperation = 'paint'
 ) {
   const pointCount = Math.floor(points.length / 2)
   if (!pointCount) return
-  context.globalCompositeOperation = 'source-over'
+  context.globalCompositeOperation = operation === 'erase' ? 'destination-out' : 'source-over'
   context.strokeStyle = color
   context.fillStyle = color
   context.lineWidth = Math.max(0.1, size)

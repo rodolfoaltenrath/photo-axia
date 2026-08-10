@@ -46,7 +46,7 @@ watch(
       </div>
 
       <label v-if="activeTool === 'brush' || activeTool === 'eraser'" class="compact-range">
-        <span>Pincel</span>
+        <span>Tamanho</span>
         <input
           :value="brushSize"
           max="128"
