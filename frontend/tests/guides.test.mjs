@@ -9,6 +9,7 @@ import {
   screenPositionForDocument,
   snapBoundsTranslation,
   snapDocumentPoint,
+  snapGuidePositionToLayer,
   snapGuidePositionToTicks,
   snapLayerTranslation
 } from '../src/editor/guides.ts'
@@ -54,6 +55,27 @@ test('as marcações preservam a origem configurada', () => {
 test('Shift encaixa a guia na subdivisão visível da régua', () => {
   assert.equal(snapGuidePositionToTicks(123, 1, 'px', 72, 0), 120)
   assert.equal(snapGuidePositionToTicks(123, 2, 'px', 72, 0), 125)
+})
+
+test('guia encaixa nas bordas e no centro da camada selecionada', () => {
+  const transform = { x: 100, y: 50, width: 200, height: 100, rotation: 0 }
+
+  const left = snapGuidePositionToLayer(106, 'vertical', transform, 1)
+  assert.equal(left.value, 100)
+  assert.equal(left.snappedX, 100)
+
+  const center = snapGuidePositionToLayer(204, 'vertical', transform, 2)
+  assert.equal(center.value, 200)
+
+  const bottom = snapGuidePositionToLayer(145, 'horizontal', transform, 1)
+  assert.equal(bottom.value, 150)
+  assert.equal(bottom.snappedY, 150)
+})
+
+test('snapping da guia mantém a tolerância em pixels de tela', () => {
+  const transform = { x: 100, y: 50, width: 200, height: 100, rotation: 0 }
+  assert.equal(snapGuidePositionToLayer(106, 'vertical', transform, 1).value, 100)
+  assert.equal(snapGuidePositionToLayer(106, 'vertical', transform, 2).value, 106)
 })
 
 test('snapping de camada mantém tolerância constante em pixels de tela', () => {

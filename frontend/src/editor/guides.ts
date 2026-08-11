@@ -183,6 +183,35 @@ export function transformedLayerBounds(transform: LayerTransform) {
   }
 }
 
+export function snapGuidePositionToLayer(
+  position: number,
+  orientation: GuideOrientation,
+  transform: LayerTransform,
+  scale: number,
+  thresholdScreenPixels = 8
+): SnapResult<number> {
+  const bounds = transformedLayerBounds(transform)
+  const threshold = thresholdScreenPixels / Math.max(0.0001, scale)
+  const candidates = orientation === 'vertical'
+    ? [bounds.x, bounds.x + bounds.width / 2, bounds.x + bounds.width]
+    : [bounds.y, bounds.y + bounds.height / 2, bounds.y + bounds.height]
+  let target: number | undefined
+  let distance = Number.POSITIVE_INFINITY
+
+  for (const candidate of candidates) {
+    const candidateDistance = Math.abs(candidate - position)
+    if (candidateDistance > threshold || candidateDistance >= distance) continue
+    target = candidate
+    distance = candidateDistance
+  }
+
+  return {
+    value: target ?? position,
+    snappedX: orientation === 'vertical' ? target : undefined,
+    snappedY: orientation === 'horizontal' ? target : undefined
+  }
+}
+
 export function snapLayerTranslation(
   transform: LayerTransform,
   guides: readonly EditorGuide[],

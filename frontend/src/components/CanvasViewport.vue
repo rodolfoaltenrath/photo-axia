@@ -28,6 +28,7 @@ import {
   RULER_SIZE,
   snapBoundsTranslation,
   snapDocumentPoint,
+  snapGuidePositionToLayer,
   snapGuidePositionToTicks,
   snapLayerTranslation,
   type EditorGuide,
@@ -150,6 +151,7 @@ const selectedGuideId = ref<string | null>(null)
 const snappedGuides = ref<{ x?: number; y?: number }>({})
 const guideInteraction = shallowRef<{
   pointerId: number
+  pointerTarget: Element | null
   guide: EditorGuide
   initialGuide: EditorGuide | null
   initialOrientation: GuideOrientation
@@ -509,7 +511,7 @@ function guideAtPointer(
   event: Pick<PointerEvent, 'clientX' | 'clientY' | 'altKey' | 'shiftKey'>
 ) {
   const point = documentPointFromClient(event.clientX, event.clientY)
-  if (!point) return interaction.guide
+  if (!point) return { guide: interaction.guide, snapped: {} }
   const orientation: GuideOrientation = event.altKey
     ? interaction.initialOrientation === 'horizontal' ? 'vertical' : 'horizontal'
     : interaction.initialOrientation
@@ -523,10 +525,38 @@ function guideAtPointer(
       props.document.resolutionDpi,
       origin
     )
-  } else if (props.rulerUnit === 'px') {
+  } else if (props.guideSnappingEnabled && activeLayer.value?.visible && activeDisplayTransform.value) {
+    const result = snapGuidePositionToLayer(
+      position,
+      orientation,
+      activeDisplayTransform.value,
+      scale.value
+    )
+    if (result.snappedX !== undefined || result.snappedY !== undefined) {
+      return {
+        guide: { ...interaction.guide, orientation, position: result.value },
+        snapped: { x: result.snappedX, y: result.snappedY }
+      }
+    }
+  }
+  if (props.rulerUnit === 'px' && !event.shiftKey) {
     position = Math.round(position)
   }
-  return { ...interaction.guide, orientation, position }
+  return { guide: { ...interaction.guide, orientation, position }, snapped: {} }
+}
+
+function pointerCaptureTarget(event: PointerEvent) {
+  const target = event.currentTarget instanceof Element
+    ? event.currentTarget
+    : event.target instanceof Element ? event.target : null
+  target?.setPointerCapture(event.pointerId)
+  return target
+}
+
+function releaseGuidePointer(interaction: NonNullable<typeof guideInteraction.value>) {
+  if (interaction.pointerTarget?.hasPointerCapture(interaction.pointerId)) {
+    interaction.pointerTarget.releasePointerCapture(interaction.pointerId)
+  }
 }
 
 function startGuideCreation(orientation: GuideOrientation, event: PointerEvent) {
@@ -537,11 +567,14 @@ function startGuideCreation(orientation: GuideOrientation, event: PointerEvent) 
   const guide: EditorGuide = { id: crypto.randomUUID(), orientation, position: 0 }
   const interaction: NonNullable<typeof guideInteraction.value> = {
     pointerId: event.pointerId,
+    pointerTarget: pointerCaptureTarget(event),
     guide,
     initialGuide: null,
     initialOrientation: orientation
   }
-  interaction.guide = guideAtPointer(interaction, event)
+  const initial = guideAtPointer(interaction, event)
+  interaction.guide = initial.guide
+  snappedGuides.value = initial.snapped
   guideInteraction.value = interaction
   selectedGuideId.value = guide.id
 }
@@ -552,6 +585,7 @@ function startGuideMove(guide: EditorGuide, event: PointerEvent) {
   snappedGuides.value = {}
   guideInteraction.value = {
     pointerId: event.pointerId,
+    pointerTarget: pointerCaptureTarget(event),
     guide: { ...guide },
     initialGuide: { ...guide },
     initialOrientation: guide.orientation
@@ -585,10 +619,11 @@ function updateRulerInteraction(event: PointerEvent) {
   const guideDrag = guideInteraction.value
   if (guideDrag?.pointerId === event.pointerId) {
     event.preventDefault()
-    const guide = guideAtPointer(guideDrag, event)
+    const result = guideAtPointer(guideDrag, event)
     scheduleInteractionFrame(() => {
       if (guideInteraction.value?.pointerId !== event.pointerId) return
-      guideInteraction.value = { ...guideInteraction.value, guide }
+      guideInteraction.value = { ...guideInteraction.value, guide: result.guide }
+      snappedGuides.value = result.snapped
     })
     return
   }
@@ -607,7 +642,8 @@ function updateRulerInteraction(event: PointerEvent) {
 function stopRulerInteraction(event: PointerEvent) {
   const guideDrag = guideInteraction.value
   if (guideDrag?.pointerId === event.pointerId) {
-    const guide = guideAtPointer(guideDrag, event)
+    flushInteractionFrame()
+    const guide = guideAtPointer(guideDrag, event).guide
     const maximum = guide.orientation === 'vertical' ? props.document.width : props.document.height
     if (guide.position >= 0 && guide.position <= maximum) {
       const committed = { ...guide, position: Math.round(guide.position * 100) / 100 }
@@ -618,6 +654,7 @@ function stopRulerInteraction(event: PointerEvent) {
       emit('deleteGuide', guideDrag.initialGuide.id)
       selectedGuideId.value = null
     }
+    releaseGuidePointer(guideDrag)
     guideInteraction.value = null
     snappedGuides.value = {}
     return
