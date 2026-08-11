@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasViewport from './components/CanvasViewport.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
@@ -16,9 +16,12 @@ import {
 } from './services/backend'
 import {
   createImagePreview,
-  imagePreviewSize,
+  disposeImagePreviewWorker,
+  editorPreviewSize,
   imagePreviewNeedsUpdate,
+  prepareImageSource,
   readBrowserImages,
+  releasePreparedImage,
   releaseLayerAssets
 } from './services/imageImport'
 import { renderDocumentPNG } from './services/renderDocument'
@@ -111,10 +114,16 @@ const activeDocument = ref<DocumentSpec>({
 const layers = ref<LayerItem[]>([createBackgroundLayer()])
 const zoomEventOptions = { capture: true, passive: false }
 const previewGenerations = new Map<string, number>()
+const previewControllers = new Map<string, AbortController>()
 const trackedObjectUrls = new Set<string>()
 const transientObjectUrls = new Set<string>()
 let selectionGeneration = 0
 let pendingSelectionTasks = 0
+let previewRefreshTimer: ReturnType<typeof setTimeout> | undefined
+let previewLayerCountHint = 0
+const ACTIVE_PREVIEW_PIXELS = 4_194_304
+const DOCUMENT_PREVIEW_PIXELS = 24_000_000
+const MIN_LAYER_PREVIEW_PIXELS = 262_144
 
 interface FloatingSelectionSession {
   layerId: string
@@ -162,8 +171,12 @@ const selectionMoveAnchor = computed(() => {
   }
 })
 
-watch(activeLayerId, (layerId) => {
+watch(activeLayerId, (layerId, previousLayerId) => {
   if (floatingSelectionSession.value?.layerId !== layerId) clearFloatingSelectionSession()
+  for (const candidateId of [layerId, previousLayerId]) {
+    const layer = layers.value.find((item) => item.id === candidateId)
+    if (layer?.visible && layer.image && layer.transform) void refreshLayerPreview(layer)
+  }
 })
 
 watch(selection, (currentSelection) => {
@@ -172,6 +185,16 @@ watch(selection, (currentSelection) => {
   if (!currentSelection) return
   const image = session?.anchorImage ?? activeLayer.value.image
   if (image) void warmSelectionMove(image).catch(() => undefined)
+})
+
+watch(zoom, () => {
+  if (previewRefreshTimer) clearTimeout(previewRefreshTimer)
+  previewRefreshTimer = setTimeout(() => {
+    previewRefreshTimer = undefined
+    for (const layer of layers.value) {
+      if (layer.visible && layer.image && layer.transform) void refreshLayerPreview(layer)
+    }
+  }, 220)
 })
 
 function createBackgroundLayer(): LayerItem {
@@ -223,6 +246,8 @@ function collectUnusedObjectUrls() {
 }
 
 function releaseAllEditorAssets() {
+  for (const controller of previewControllers.values()) controller.abort()
+  previewControllers.clear()
   floatingSelectionSession.value = null
   releaseLayerAssets([...layers.value, ...retainedHistoryLayers()])
   for (const source of trackedObjectUrls) URL.revokeObjectURL(source)
@@ -411,6 +436,7 @@ function toggleLayer(layerId: string) {
   const label = layer.visible ? 'Ocultar camada' : 'Mostrar camada'
   const before = layer.visible
   layer.visible = !before
+  if (layer.visible && layer.image) void refreshLayerPreview(layer)
   recordHistory(label, {
     type: 'layer:patch',
     layerId,
@@ -549,7 +575,8 @@ async function duplicateSelectionOrLayer() {
       sourceUrl: createdSource,
       byteSize: result.blob.size
     }
-    const preview = await createImagePreview(asset, transform.width, transform.height)
+    const previewTarget = workingPreviewSize(asset, transform)
+    const preview = await createImagePreview(asset, previewTarget.width, previewTarget.height)
     createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
     if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
     await Promise.all([preloadImage(createdSource), preview ? preloadImage(preview.url) : Promise.resolve()])
@@ -607,6 +634,8 @@ function deleteLayer(layerId: string) {
     statusText.value = 'Não é possível excluir a única camada do documento'
     return
   }
+  previewControllers.get(layerId)?.abort()
+  previewControllers.delete(layerId)
 
   const activeBefore = activeLayerId.value
   const removed = cloneLayerState(layer)
@@ -775,29 +804,72 @@ function imageTransform(image: ImportedImage): LayerTransform {
   }
 }
 
-async function refreshLayerPreview(layer: LayerItem, force = false, allowDetached = false) {
+function workingPreviewSize(
+  asset: Pick<ImageAsset, 'width' | 'height'>,
+  transform: LayerTransform,
+  active = true
+) {
+  const visibleImages = layers.value.reduce(
+    (count, layer) => count + Number(layer.visible && Boolean(layer.image)),
+    0
+  )
+  const layerCount = Math.max(1, visibleImages, previewLayerCountHint)
+  const sharedPixels = Math.max(
+    MIN_LAYER_PREVIEW_PIXELS,
+    Math.min(ACTIVE_PREVIEW_PIXELS, Math.floor(DOCUMENT_PREVIEW_PIXELS / layerCount))
+  )
+  return editorPreviewSize(
+    asset,
+    transform.width,
+    transform.height,
+    zoom.value / 100,
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+    active ? ACTIVE_PREVIEW_PIXELS : sharedPixels
+  )
+}
+
+async function refreshLayerPreview(
+  layer: LayerItem,
+  force = false,
+  allowDetached = false,
+  prioritize = layer.id === activeLayerId.value
+) {
   const asset = layer.image
   const transform = layer.transform
-  if (!asset || !transform || (!force && !imagePreviewNeedsUpdate(asset, transform.width, transform.height))) return
+  if (!asset || !transform) return
+  const target = workingPreviewSize(asset, transform, prioritize)
+  if (!force && !imagePreviewNeedsUpdate(asset, target.width, target.height)) return
 
   const generation = (previewGenerations.get(layer.id) ?? 0) + 1
   previewGenerations.set(layer.id, generation)
+  previewControllers.get(layer.id)?.abort()
+  const controller = new AbortController()
+  previewControllers.set(layer.id, controller)
 
+  let generatedPreview: Awaited<ReturnType<typeof createImagePreview>>
+  let adopted = false
   try {
-    const preview = await createImagePreview(asset, transform.width, transform.height)
+    generatedPreview = await createImagePreview(asset, target.width, target.height, controller.signal)
+    await prepareImageSource(generatedPreview?.url ?? asset.sourceUrl, controller.signal)
     if (previewGenerations.get(layer.id) !== generation || (!allowDetached && !layers.value.includes(layer))) {
-      if (preview?.url.startsWith('blob:')) URL.revokeObjectURL(preview.url)
+      releasePreparedImage(generatedPreview?.url ?? asset.sourceUrl)
+      if (generatedPreview?.url.startsWith('blob:')) URL.revokeObjectURL(generatedPreview.url)
       return
     }
 
     const previousPreview = asset.previewUrl
-    asset.previewUrl = preview?.url
-    asset.previewWidth = preview?.width ?? asset.width
-    asset.previewHeight = preview?.height ?? asset.height
+    asset.previewUrl = generatedPreview?.url
+    asset.previewWidth = generatedPreview?.width ?? asset.width
+    asset.previewHeight = generatedPreview?.height ?? asset.height
+    adopted = true
     if (asset.previewUrl?.startsWith('blob:')) trackedObjectUrls.add(asset.previewUrl)
     if (!allowDetached && previousPreview !== asset.previewUrl) collectUnusedObjectUrls()
   } catch {
+    releasePreparedImage(generatedPreview?.url ?? asset.sourceUrl)
+    if (!adopted && generatedPreview?.url.startsWith('blob:')) URL.revokeObjectURL(generatedPreview.url)
     // The original remains a safe fallback when preview generation is unavailable.
+  } finally {
+    if (previewControllers.get(layer.id) === controller) previewControllers.delete(layer.id)
   }
 }
 
@@ -818,21 +890,29 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
       transform: imageTransform(image)
     }))
     trackLayerAssets(imageLayers)
+    previewLayerCountHint = imageLayers.length + layers.value.filter((layer) => layer.visible && layer.image).length
 
     for (const [index, layer] of imageLayers.entries()) {
       statusText.value =
         imageLayers.length === 1
           ? 'Otimizando imagem para edição…'
           : `Otimizando imagem ${index + 1} de ${imageLayers.length}…`
-      await refreshLayerPreview(layer, true, true)
+      await refreshLayerPreview(layer, true, true, index === 0)
     }
 
     const activeBefore = activeLayerId.value
     layers.value = [...imageLayers, ...layers.value]
+    previewLayerCountHint = 0
     activeLayerId.value = imageLayers[0]!.id
     activeTool.value = 'move'
     selection.value = null
     selectionGeneration++
+    statusText.value = images.length === 1 ? 'Sincronizando preview…' : 'Sincronizando previews…'
+    await nextTick()
+    await canvasViewport.value?.waitForLayerImages(imageLayers.map((layer) => ({
+      layerId: layer.id,
+      source: layer.image?.previewUrl ?? layer.image!.sourceUrl
+    })))
     recordHistory(images.length === 1 ? 'Importar imagem' : 'Importar imagens', {
       type: 'layers:add',
       items: imageLayers.map((layer, index) => ({ index, layer: cloneLayerState(layer) })),
@@ -843,6 +923,17 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
   }
 
   errorText.value = errors.join('\n')
+}
+
+async function addDroppedImages(images: ImportedImage[], errors: string[]) {
+  if (isBusy.value) return
+  isBusy.value = true
+  statusText.value = 'Importando imagens…'
+  try {
+    await addImportedImages(images, errors)
+  } finally {
+    isBusy.value = false
+  }
 }
 
 async function selectWithMagicWand(point: SelectionPoint) {
@@ -946,7 +1037,8 @@ async function deleteSelectedPixels() {
       sourceUrl: createdSource,
       byteSize: result.blob.size
     }
-    const preview = await createImagePreview(newAsset, newTransform.width, newTransform.height)
+    const previewTarget = workingPreviewSize(newAsset, newTransform)
+    const preview = await createImagePreview(newAsset, previewTarget.width, previewTarget.height)
     createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
     if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
     await Promise.all([preloadImage(newAsset.sourceUrl), preview ? preloadImage(preview.url) : Promise.resolve()])
@@ -1193,7 +1285,7 @@ async function commitBrushStroke(
   const isEraser = operation === 'erase'
   statusText.value = isEraser ? 'Apagando…' : 'Pintando…'
   try {
-    const previewTarget = imagePreviewSize(beforeImage, beforeTransform.width, beforeTransform.height)
+    const previewTarget = workingPreviewSize(beforeImage, beforeTransform)
     const result = await applyBrushStroke(
       layer.id,
       beforeImage,
@@ -1429,9 +1521,11 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (previewRefreshTimer) clearTimeout(previewRefreshTimer)
   disposeSelectionEngine()
   disposeBrushEngine()
   disposeSelectionMoveEngine()
+  disposeImagePreviewWorker()
   releaseAllEditorAssets()
   window.removeEventListener('wheel', blockBrowserWheelZoom, true)
   window.removeEventListener('keydown', handleShortcut)
@@ -1502,7 +1596,7 @@ onBeforeUnmount(() => {
         @create-guide="createGuide"
         @delete-guide="deleteGuide"
         @delete-selection="deleteSelectedPixels"
-        @images-dropped="addImportedImages"
+        @images-dropped="addDroppedImages"
         @magic-wand-select="selectWithMagicWand"
         @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"

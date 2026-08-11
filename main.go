@@ -6,6 +6,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 )
 
 //go:embed all:frontend/dist
@@ -23,6 +24,10 @@ func main() {
 		MinWidth:         1024,
 		MinHeight:        720,
 		WindowStartState: options.Maximised,
+		Linux: &linux.Options{
+			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
+			ProgramName:      "axia",
+		},
 		AssetServer: &assetserver.Options{
 			Assets:     assets,
 			Handler:    app.assetHandler(),

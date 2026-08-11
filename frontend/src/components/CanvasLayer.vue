@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { LayerItem, LayerTransform } from '../types/editor'
 
 const props = defineProps<{
@@ -15,6 +15,7 @@ const emit = defineEmits<{
   (event: 'imageError', layerId: string, source: string): void
 }>()
 
+const layerRoot = ref<HTMLElement | null>(null)
 const desiredImageSource = computed(() => props.layer.image?.previewUrl ?? props.layer.image?.sourceUrl ?? null)
 
 function copyTransform(transform: LayerTransform): LayerTransform {
@@ -35,26 +36,78 @@ const imageTransforms = ref<[LayerTransform, LayerTransform]>([
 ])
 const activeImageSlot = ref<0 | 1>(0)
 const activeImageTransform = ref(copyTransform(props.transform))
+let releaseFrame = 0
+let compositorReadyFrame = 0
+let deferredActivation: { slot: 0 | 1; source: string } | undefined
+
+function releaseInactiveSlot(activeSlot: 0 | 1, source: string) {
+  cancelAnimationFrame(releaseFrame)
+  releaseFrame = requestAnimationFrame(() => {
+    releaseFrame = 0
+    if (activeImageSlot.value !== activeSlot || desiredImageSource.value !== source) return
+    const inactiveSlot: 0 | 1 = activeSlot === 0 ? 1 : 0
+    if (!imageSources.value[inactiveSlot]) return
+    const sources = [...imageSources.value] as [string | null, string | null]
+    const readiness = [...imageReady.value] as [boolean, boolean]
+    sources[inactiveSlot] = null
+    readiness[inactiveSlot] = false
+    imageSources.value = sources
+    imageReady.value = readiness
+  })
+}
 
 function activateImageSlot(slot: 0 | 1, source: string) {
   if (imageSources.value[slot] !== source || desiredImageSource.value !== source) return
+  if (
+    layerRoot.value?.classList.contains('document-layer--dragging') ||
+    layerRoot.value?.classList.contains('document-layer--transforming')
+  ) {
+    deferredActivation = { slot, source }
+    return
+  }
 
   // A fonte e a geometria pertencem ao mesmo buffer. O evento sincrono tambem
   // remove a pre-visualizacao no mesmo render em que o novo raster entra.
   activeImageTransform.value = copyTransform(imageTransforms.value[slot])
   activeImageSlot.value = slot
-  emit('imageLoaded', props.layer.id, source)
+  releaseInactiveSlot(slot, source)
+  cancelAnimationFrame(compositorReadyFrame)
+  const confirmReady = () => {
+    compositorReadyFrame = 0
+    if (activeImageSlot.value !== slot || desiredImageSource.value !== source) return
+    emit('imageLoaded', props.layer.id, source)
+  }
+  if (!props.active) {
+    confirmReady()
+    return
+  }
+
+  // A camada ativa permanece promovida pelo CSS. Dois frames dão ao WebKit
+  // tempo para pintar o raster e enviar a textura ao compositor antes de o
+  // fluxo de importacao liberar o primeiro arraste.
+  compositorReadyFrame = requestAnimationFrame(() => {
+    compositorReadyFrame = requestAnimationFrame(confirmReady)
+  })
 }
 
-async function handleImageLoad(slot: 0 | 1, event: Event) {
+function finishInteractiveTransform(event: Event) {
+  const pending = deferredActivation
+  deferredActivation = undefined
+  if (!pending) return
+  const transform = (event as CustomEvent<LayerTransform>).detail
+  if (transform) {
+    const transforms = [...imageTransforms.value] as [LayerTransform, LayerTransform]
+    transforms[pending.slot] = copyTransform(transform)
+    imageTransforms.value = transforms
+  }
+  activateImageSlot(pending.slot, pending.source)
+}
+
+function handleImageLoad(slot: 0 | 1, event: Event) {
   const source = imageSources.value[slot]
   if (!source) return
   const image = event.currentTarget as HTMLImageElement
-  try {
-    await image.decode()
-  } catch {
-    if (!image.complete || image.naturalWidth === 0) return
-  }
+  if (!image.complete || image.naturalWidth === 0) return
   if (imageSources.value[slot] !== source) return
   const readiness = [...imageReady.value] as [boolean, boolean]
   readiness[slot] = true
@@ -112,6 +165,11 @@ watch(
   }
 )
 
+onBeforeUnmount(() => {
+  cancelAnimationFrame(releaseFrame)
+  cancelAnimationFrame(compositorReadyFrame)
+})
+
 const layerStyle = computed(() => {
   const transform = props.layer.kind === 'image' ? activeImageTransform.value : props.transform
   return {
@@ -144,11 +202,13 @@ const textStyle = computed(() => {
 
 <template>
   <div
+    ref="layerRoot"
     class="document-layer"
     :class="{ 'document-layer--active': active, 'document-layer--content-hidden': contentHidden }"
     :data-layer-id="layer.id"
     :data-layer-kind="layer.kind"
     :style="layerStyle"
+    @axia-interaction-end="finishInteractiveTransform"
     @pointerdown="emit('pointerdown', $event)"
   >
     <template v-if="layer.kind === 'image' && layer.image">
@@ -160,6 +220,7 @@ const textStyle = computed(() => {
         class="layer-image-buffer"
         :class="{ 'layer-image-buffer--active': activeImageSlot === slot }"
         decoding="async"
+        :fetchpriority="active ? 'high' : 'auto'"
         draggable="false"
         :src="source ?? undefined"
         @error="handleImageError(slot as 0 | 1)"

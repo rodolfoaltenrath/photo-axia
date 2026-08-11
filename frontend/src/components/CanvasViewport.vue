@@ -5,7 +5,7 @@ import CanvasRulers from './CanvasRulers.vue'
 import GuideOverlay from './GuideOverlay.vue'
 import SelectionOverlay from './SelectionOverlay.vue'
 import type { DocumentSpec, EditorTool, ImageAsset, ImportedImage, LayerItem, LayerTransform } from '../types/editor'
-import { readBrowserImages } from '../services/imageImport'
+import { readBrowserImages, releasePreparedImage } from '../services/imageImport'
 import {
   clampZoom,
   formatZoom,
@@ -31,6 +31,7 @@ import {
   snapGuidePositionToLayer,
   snapGuidePositionToTicks,
   snapLayerTranslation,
+  transformedLayerBounds,
   type EditorGuide,
   type GuideOrientation,
   type RulerOrigin,
@@ -145,10 +146,18 @@ const emit = defineEmits<{
 
 const scrollArea = ref<HTMLDivElement | null>(null)
 const surface = ref<HTMLDivElement | null>(null)
+const canvasRulers = ref<InstanceType<typeof CanvasRulers> | null>(null)
+const freeTransformBox = ref<HTMLElement | null>(null)
+const transformRotationOutput = ref<HTMLElement | null>(null)
 const viewportScroll = ref({ left: 0, top: 0 })
-const pointerDocument = shallowRef<DocumentPoint | null>(null)
 const selectedGuideId = ref<string | null>(null)
 const snappedGuides = ref<{ x?: number; y?: number }>({})
+const readyLayerSources = new Map<string, string>()
+const layerReadyWaiters = new Set<{
+  remaining: Map<string, string>
+  resolve: () => void
+  timeout: ReturnType<typeof setTimeout>
+}>()
 const guideInteraction = shallowRef<{
   pointerId: number
   pointerTarget: Element | null
@@ -170,18 +179,20 @@ const zoomTarget = ref(props.zoom)
 const viewportSize = ref({ width: 1, height: 1 })
 const isViewportReady = ref(false)
 const panStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0, pointerId: -1 })
-const dragState = ref<{
+const dragState = shallowRef<{
   layerId: string
   pointerId: number
   startX: number
   startY: number
   transform: LayerTransform
+  preview: LayerTransform
+  target: HTMLElement
 } | null>(null)
-const layerDragPreview = ref<{ layerId: string; transform: LayerTransform } | null>(null)
-const transformSession = ref<{
+const transformSession = shallowRef<{
   layerId: string
   original: LayerTransform
   draft: LayerTransform
+  target: HTMLElement
 } | null>(null)
 const transformInteraction = ref<
   | {
@@ -309,9 +320,20 @@ const surfaceStyle = computed(() => ({
   '--transform-line-width': `${1 / scale.value}px`,
   '--transform-rotate-offset': `${34 / scale.value}px`
 }))
-const renderedLayers = computed(() =>
-  [...props.layers].reverse().filter((layer) => layer.kind !== 'background' && layer.visible)
-)
+function layerIntersectsDocument(layer: LayerItem) {
+  if (layer.id === props.activeLayerId || !layer.transform) return true
+  const bounds = transformedLayerBounds(layer.transform)
+  return (
+    bounds.x < props.document.width &&
+    bounds.y < props.document.height &&
+    bounds.x + bounds.width > 0 &&
+    bounds.y + bounds.height > 0
+  )
+}
+
+const renderedLayers = computed(() => [...props.layers].reverse().filter((layer) =>
+  layer.kind !== 'background' && layer.visible && layerIntersectsDocument(layer)
+))
 const defaultLayerTransform = computed<LayerTransform>(() => ({
   x: 0,
   y: 0,
@@ -447,7 +469,6 @@ const viewportCursorClass = computed(() => ({
 
 function displayTransform(layer: Pick<LayerItem, 'id' | 'transform'>) {
   if (transformSession.value?.layerId === layer.id) return transformSession.value.draft
-  if (layerDragPreview.value?.layerId === layer.id) return layerDragPreview.value.transform
   return layer.transform
 }
 
@@ -459,6 +480,12 @@ function positionedTransformStyle(transform: LayerTransform) {
     height: `${transform.height}px`,
     transform: `translate3d(${transform.x}px, ${transform.y}px, 0) rotate(${transform.rotation ?? 0}deg)`
   }
+}
+
+function applyElementTransform(target: HTMLElement, transform: LayerTransform) {
+  target.style.width = `${transform.width}px`
+  target.style.height = `${transform.height}px`
+  target.style.transform = `translate3d(${transform.x}px, ${transform.y}px, 0) rotate(${transform.rotation ?? 0}deg)`
 }
 
 async function handleDrop(event: DragEvent) {
@@ -860,6 +887,12 @@ function resetInteractionKeys() {
   snappedGuides.value = {}
 }
 
+function setSnappedGuides(next: { x?: number; y?: number }) {
+  const current = snappedGuides.value
+  if (current.x === next.x && current.y === next.y) return
+  snappedGuides.value = next
+}
+
 function scheduleInteractionFrame(action: () => void) {
   pendingInteractionFrame = action
   if (interactionFrame) return
@@ -897,18 +930,22 @@ function transformsMatch(first: LayerTransform, second: LayerTransform) {
 }
 
 function startFreeTransform() {
-  if (transformSession.value) return
+  if (transformSession.value || props.isBusy) return
   const layer = activeLayer.value
   if (!layer?.transform || !layer.visible || layer.kind === 'background') return
+  const target = Array.from(surface.value?.querySelectorAll<HTMLElement>('.document-layer') ?? [])
+    .find((element) => element.dataset.layerId === layer.id)
+  if (!target) return
 
   dragState.value = null
-  layerDragPreview.value = null
   const original = { ...layer.transform, rotation: layer.transform.rotation ?? 0 }
   transformSession.value = {
     layerId: layer.id,
     original,
-    draft: { ...original }
+    draft: { ...original },
+    target
   }
+  target.classList.add('document-layer--transforming')
   scrollArea.value?.focus()
 }
 
@@ -918,14 +955,26 @@ function commitFreeTransform() {
   if (session && !transformsMatch(session.original, session.draft)) {
     emit('updateTransform', session.layerId, { ...session.draft })
   }
+  session?.target.classList.remove('document-layer--transforming')
+  if (session) session.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: session.draft }))
   transformInteraction.value = null
   transformSession.value = null
 }
 
 function cancelFreeTransform() {
   discardInteractionFrame()
+  const session = transformSession.value
+  if (session) {
+    applyElementTransform(session.target, session.original)
+    session.target.classList.remove('document-layer--transforming')
+    session.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: session.original }))
+  }
   transformInteraction.value = null
   transformSession.value = null
+}
+
+function currentTransformDraft() {
+  return transformSession.value?.draft ?? activeDisplayTransform.value
 }
 
 function pointerToDocument(event: PointerEvent): DocumentPoint | undefined {
@@ -940,7 +989,7 @@ function captureTransformPointer(event: PointerEvent) {
 }
 
 function startTransformMove(event: PointerEvent) {
-  const transform = activeDisplayTransform.value
+  const transform = currentTransformDraft()
   const pointer = pointerToDocument(event)
   if (event.button !== 0 || !transform || !pointer) return
 
@@ -954,7 +1003,7 @@ function startTransformMove(event: PointerEvent) {
 }
 
 function startTransformResize(event: PointerEvent, handle: TransformHandle) {
-  const transform = activeDisplayTransform.value
+  const transform = currentTransformDraft()
   if (event.button !== 0 || !transform) return
 
   captureTransformPointer(event)
@@ -967,7 +1016,7 @@ function startTransformResize(event: PointerEvent, handle: TransformHandle) {
 }
 
 function startTransformRotate(event: PointerEvent) {
-  const transform = activeDisplayTransform.value
+  const transform = currentTransformDraft()
   const pointer = pointerToDocument(event)
   if (event.button !== 0 || !transform || !pointer) return
 
@@ -1258,21 +1307,21 @@ function snappingActive(event: Pick<PointerEvent, 'ctrlKey' | 'metaKey'>) {
 
 function snapPointForInteraction(point: DocumentPoint, event: PointerEvent) {
   if (!snappingActive(event)) {
-    snappedGuides.value = {}
+    setSnappedGuides({})
     return point
   }
   const result = snapDocumentPoint(point, props.guides, scale.value)
-  snappedGuides.value = { x: result.snappedX, y: result.snappedY }
+  setSnappedGuides({ x: result.snappedX, y: result.snappedY })
   return result.value
 }
 
 function snapTransformForInteraction(transform: LayerTransform, event: PointerEvent) {
   if (!snappingActive(event)) {
-    snappedGuides.value = {}
+    setSnappedGuides({})
     return transform
   }
   const result = snapLayerTranslation(transform, props.guides, scale.value)
-  snappedGuides.value = { x: result.snappedX, y: result.snappedY }
+  setSnappedGuides({ x: result.snappedX, y: result.snappedY })
   return result.value
 }
 
@@ -1356,6 +1405,8 @@ function clearBrushPreview() {
 }
 
 function handleLayerImageLoaded(layerId: string, source: string) {
+  releasePreparedImage(source)
+  markLayerImageReady(layerId, source)
   if (brushPreviewPending.value && source !== pendingBrushBaseImageSource) {
     pendingBrushCommittedImageSource = source
   }
@@ -1379,6 +1430,8 @@ function handleLayerImageLoaded(layerId: string, source: string) {
 }
 
 function handleLayerImageError(layerId: string, source: string) {
+  releasePreparedImage(source)
+  markLayerImageReady(layerId, source)
   if (
     brushPreviewPending.value &&
     layerId === paintableLayer.value?.id &&
@@ -1393,6 +1446,39 @@ function handleLayerImageError(layerId: string, source: string) {
   ) {
     clearSelectionMovePreview()
   }
+}
+
+function markLayerImageReady(layerId: string, source: string) {
+  readyLayerSources.set(layerId, source)
+  for (const waiter of layerReadyWaiters) {
+    if (waiter.remaining.get(layerId) !== source) continue
+    waiter.remaining.delete(layerId)
+    if (waiter.remaining.size) continue
+    clearTimeout(waiter.timeout)
+    layerReadyWaiters.delete(waiter)
+    waiter.resolve()
+  }
+}
+
+function waitForLayerImages(expected: Array<{ layerId: string; source: string }>, timeoutMs = 5000) {
+  const remaining = new Map(
+    expected
+      .filter(({ layerId, source }) => readyLayerSources.get(layerId) !== source)
+      .map(({ layerId, source }) => [layerId, source])
+  )
+  if (!remaining.size) return Promise.resolve()
+
+  return new Promise<void>((resolve) => {
+    const waiter = {
+      remaining,
+      resolve,
+      timeout: setTimeout(() => {
+        layerReadyWaiters.delete(waiter)
+        resolve()
+      }, timeoutMs)
+    }
+    layerReadyWaiters.add(waiter)
+  })
 }
 
 function createBrushSelectionPath(selection: SelectionRegion | null) {
@@ -1510,7 +1596,6 @@ function startViewportPointer(event: PointerEvent) {
   event.stopPropagation()
   discardInteractionFrame()
   dragState.value = null
-  layerDragPreview.value = null
   transformInteraction.value = null
   scroll.setPointerCapture(event.pointerId)
   isPanning.value = true
@@ -1525,6 +1610,7 @@ function startViewportPointer(event: PointerEvent) {
 
 function startLayerPointer(event: PointerEvent, layer: LayerItem) {
   if (
+    props.isBusy ||
     event.button !== 0 ||
     (event.buttons & 4) === 4 ||
     isPanning.value ||
@@ -1560,28 +1646,34 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
 
   if (props.activeTool !== 'move' || !targetLayer.transform) return
 
-  const target = event.currentTarget as HTMLElement
-  target.setPointerCapture(event.pointerId)
+  const pointerTarget = event.currentTarget as HTMLElement
+  const target = targetLayer.id === layer.id
+    ? pointerTarget
+    : Array.from(surface.value?.querySelectorAll<HTMLElement>('.document-layer') ?? [])
+        .find((element) => element.dataset.layerId === targetLayer.id)
+  if (!target) return
+  pointerTarget.setPointerCapture(event.pointerId)
+  target.classList.add('document-layer--dragging')
   dragState.value = {
     layerId: targetLayer.id,
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
-    transform: { ...targetLayer.transform }
+    transform: { ...targetLayer.transform },
+    preview: { ...targetLayer.transform },
+    target
   }
-  layerDragPreview.value = { layerId: targetLayer.id, transform: { ...targetLayer.transform } }
 }
 
 function updatePointer(event: PointerEvent) {
   if (props.rulersVisible) {
     const hoverPoint = pointerToDocument(event)
-    pointerDocument.value = hoverPoint &&
+    const pointer = hoverPoint &&
       hoverPoint.x >= 0 && hoverPoint.y >= 0 &&
       hoverPoint.x <= props.document.width && hoverPoint.y <= props.document.height
       ? hoverPoint
       : null
-  } else if (pointerDocument.value) {
-    pointerDocument.value = null
+    canvasRulers.value?.updatePointerDocument(pointer)
   }
   if (isPanning.value && scrollArea.value && panStart.value.pointerId === event.pointerId) {
     event.preventDefault()
@@ -1659,9 +1751,9 @@ function updatePointer(event: PointerEvent) {
       const bounds = activeSelectionMove.originalSelection.bounds
       const snapped = snapBoundsTranslation(bounds, delta.deltaX, delta.deltaY, props.guides, scale.value)
       delta = { deltaX: Math.round(snapped.deltaX), deltaY: Math.round(snapped.deltaY) }
-      snappedGuides.value = { x: snapped.snappedX, y: snapped.snappedY }
+      setSnappedGuides({ x: snapped.snappedX, y: snapped.snappedY })
     } else {
-      snappedGuides.value = {}
+      setSnappedGuides({})
     }
     scheduleInteractionFrame(() => {
       const interaction = selectionMoveInteraction.value
@@ -1712,6 +1804,9 @@ function updatePointer(event: PointerEvent) {
       const session = transformSession.value
       if (!session || session.layerId !== layerId) return
       session.draft = transform
+      applyElementTransform(session.target, transform)
+      if (freeTransformBox.value) applyElementTransform(freeTransformBox.value, transform)
+      if (transformRotationOutput.value) transformRotationOutput.value.textContent = `${transform.rotation ?? 0}°`
     })
     return
   }
@@ -1725,7 +1820,8 @@ function updatePointer(event: PointerEvent) {
     }, event)
     scheduleInteractionFrame(() => {
       if (dragState.value?.layerId !== drag.layerId) return
-      layerDragPreview.value = { layerId: drag.layerId, transform }
+      drag.preview = transform
+      applyElementTransform(drag.target, transform)
     })
     return
   }
@@ -1801,18 +1897,21 @@ function stopPointer(event: PointerEvent) {
   }
   if (transformInteraction.value?.pointerId === event.pointerId) transformInteraction.value = null
   if (dragState.value?.pointerId === event.pointerId) {
-    const preview = layerDragPreview.value
-    if (preview?.layerId === dragState.value.layerId && !transformsMatch(dragState.value.transform, preview.transform)) {
-      emit('updateTransform', preview.layerId, { ...preview.transform })
+    const drag = dragState.value
+    drag.target.classList.remove('document-layer--dragging')
+    drag.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: drag.preview }))
+    if (!transformsMatch(drag.transform, drag.preview)) {
+      emit('updateTransform', drag.layerId, { ...drag.preview })
+    } else {
+      applyElementTransform(drag.target, drag.transform)
     }
     dragState.value = null
-    layerDragPreview.value = null
   }
   if (panStart.value.pointerId === event.pointerId) {
     isPanning.value = false
     panStart.value.pointerId = -1
   }
-  snappedGuides.value = {}
+  setSnappedGuides({})
 }
 
 function handleLostPointerCapture(event: PointerEvent) {
@@ -2133,11 +2232,17 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
   if (keyboardSelectionCommitTimeout) clearTimeout(keyboardSelectionCommitTimeout)
+  for (const waiter of layerReadyWaiters) {
+    clearTimeout(waiter.timeout)
+    waiter.resolve()
+  }
+  layerReadyWaiters.clear()
 })
 
 defineExpose({
   commitPendingTransform: commitFreeTransform,
   fitDocument,
+  waitForLayerImages,
   zoomToActualSize: () => requestZoom(100)
 })
 </script>
@@ -2259,7 +2364,7 @@ defineExpose({
         </div>
       </details>
       <div v-if="isTransforming" class="zoom-actions transform-actions">
-        <span>{{ activeDisplayTransform?.rotation ?? 0 }}°</span>
+        <span ref="transformRotationOutput">{{ activeDisplayTransform?.rotation ?? 0 }}°</span>
         <button type="button" title="Cancelar transformação (Esc)" @click="cancelFreeTransform">Cancelar</button>
         <button type="button" title="Aplicar transformação (Enter)" @click="commitFreeTransform">Aplicar</button>
       </div>
@@ -2273,12 +2378,12 @@ defineExpose({
     <div class="canvas-workspace" :style="{ '--ruler-size': rulersVisible ? `${RULER_SIZE}px` : '0px' }">
       <CanvasRulers
         v-if="rulersVisible"
+        ref="canvasRulers"
         :document-height="document.height"
         :document-offset-x="documentViewportOffset.x"
         :document-offset-y="documentViewportOffset.y"
         :document-width="document.width"
         :origin="displayedRulerOrigin"
-        :pointer-document="pointerDocument"
         :resolution-dpi="document.resolutionDpi"
         :scale="scale"
         :size="RULER_SIZE"
@@ -2299,7 +2404,7 @@ defineExpose({
           @lostpointercapture="handleLostPointerCapture"
           @pointercancel="stopPointer"
           @pointerdown.capture="startViewportPointer"
-          @pointerleave="pointerDocument = null"
+          @pointerleave="canvasRulers?.updatePointerDocument(null)"
           @pointermove="updatePointer"
           @pointerup="stopPointer"
           @scroll.passive="handleNativeScroll"
@@ -2361,6 +2466,7 @@ defineExpose({
             />
             <div
               v-if="freeTransformStyle"
+              ref="freeTransformBox"
               class="free-transform-box"
               :style="freeTransformStyle"
               @dblclick.stop="commitFreeTransform"

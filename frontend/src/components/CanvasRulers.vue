@@ -15,7 +15,6 @@ const props = defineProps<{
   documentOffsetY: number
   documentWidth: number
   origin: RulerOrigin
-  pointerDocument: { x: number; y: number } | null
   resolutionDpi: number
   scale: number
   size: number
@@ -32,7 +31,11 @@ const emit = defineEmits<{
 
 const horizontalCanvas = ref<HTMLCanvasElement | null>(null)
 const verticalCanvas = ref<HTMLCanvasElement | null>(null)
+const horizontalPointer = ref<HTMLSpanElement | null>(null)
+const verticalPointer = ref<HTMLSpanElement | null>(null)
 let drawFrame = 0
+let pointerFrame = 0
+let lastPointer: { x: number; y: number } | null = null
 
 function prepareCanvas(canvas: HTMLCanvasElement, width: number, height: number) {
   const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1))
@@ -90,16 +93,6 @@ function drawHorizontal() {
     context.lineTo(x, size)
     context.stroke()
   }
-  if (props.pointerDocument) {
-    const x = Math.round(screenPositionForDocument(props.pointerDocument.x, props.documentOffsetX, props.scale)) + 0.5
-    if (x >= 0 && x <= width) {
-      context.strokeStyle = '#76d6ff'
-      context.beginPath()
-      context.moveTo(x, 0)
-      context.lineTo(x, size)
-      context.stroke()
-    }
-  }
 }
 
 function drawVertical() {
@@ -149,16 +142,31 @@ function drawVertical() {
     context.lineTo(size, y)
     context.stroke()
   }
-  if (props.pointerDocument) {
-    const y = Math.round(screenPositionForDocument(props.pointerDocument.y, props.documentOffsetY, props.scale)) + 0.5
-    if (y >= 0 && y <= height) {
-      context.strokeStyle = '#76d6ff'
-      context.beginPath()
-      context.moveTo(0, y)
-      context.lineTo(size, y)
-      context.stroke()
-    }
+}
+
+function drawPointer() {
+  pointerFrame = 0
+  const horizontal = horizontalPointer.value
+  const vertical = verticalPointer.value
+  if (!horizontal || !vertical) return
+
+  if (!lastPointer) {
+    horizontal.hidden = true
+    vertical.hidden = true
+    return
   }
+
+  const x = Math.round(screenPositionForDocument(lastPointer.x, props.documentOffsetX, props.scale))
+  const y = Math.round(screenPositionForDocument(lastPointer.y, props.documentOffsetY, props.scale))
+  horizontal.hidden = x < 0 || x > props.viewportWidth
+  vertical.hidden = y < 0 || y > props.viewportHeight
+  if (!horizontal.hidden) horizontal.style.transform = `translate3d(${x}px, 0, 0)`
+  if (!vertical.hidden) vertical.style.transform = `translate3d(0, ${y}px, 0)`
+}
+
+function updatePointerDocument(point: { x: number; y: number } | null) {
+  lastPointer = point
+  if (!pointerFrame) pointerFrame = requestAnimationFrame(drawPointer)
 }
 
 function scheduleDraw() {
@@ -183,15 +191,21 @@ watch(
     props.resolutionDpi,
     props.unit,
     props.origin.x,
-    props.origin.y,
-    props.pointerDocument?.x,
-    props.pointerDocument?.y
+    props.origin.y
   ],
-  () => void nextTick(scheduleDraw),
+  () => void nextTick(() => {
+    scheduleDraw()
+    updatePointerDocument(lastPointer)
+  }),
   { immediate: true }
 )
 
-onBeforeUnmount(() => cancelAnimationFrame(drawFrame))
+onBeforeUnmount(() => {
+  cancelAnimationFrame(drawFrame)
+  cancelAnimationFrame(pointerFrame)
+})
+
+defineExpose({ updatePointerDocument })
 </script>
 
 <template>
@@ -217,5 +231,7 @@ onBeforeUnmount(() => cancelAnimationFrame(drawFrame))
       aria-label="Régua vertical; arraste para criar uma guia"
       @pointerdown="emit('startGuide', 'vertical', $event)"
     ></canvas>
+    <span ref="horizontalPointer" class="ruler-pointer ruler-pointer--horizontal" hidden></span>
+    <span ref="verticalPointer" class="ruler-pointer ruler-pointer--vertical" hidden></span>
   </div>
 </template>

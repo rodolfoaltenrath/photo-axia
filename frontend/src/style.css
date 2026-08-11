@@ -638,6 +638,28 @@ select:focus-visible {
   cursor: ew-resize;
 }
 
+.ruler-pointer {
+  position: absolute;
+  z-index: 2;
+  background: #76d6ff;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.ruler-pointer--horizontal {
+  top: 0;
+  left: var(--ruler-size);
+  width: 1px;
+  height: var(--ruler-size);
+}
+
+.ruler-pointer--vertical {
+  top: var(--ruler-size);
+  left: 0;
+  width: var(--ruler-size);
+  height: 1px;
+}
+
 .guide-overlay {
   position: absolute;
   z-index: 35;
@@ -791,6 +813,12 @@ select:focus-visible {
 
 .document-layer--active {
   cursor: move;
+}
+
+.document-layer--active,
+.document-layer:hover,
+.document-layer--dragging,
+.document-layer--transforming {
   will-change: transform;
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { LayerItem } from '../types/editor'
 import visibleIcon from '../assets/icons/visible.svg'
 
@@ -29,6 +29,7 @@ const desiredThumbnailSource = computed(() => props.layer.image?.previewUrl ?? p
 const thumbnailSources = ref<[string | null, string | null]>([desiredThumbnailSource.value, null])
 const thumbnailReady = ref<[boolean, boolean]>([false, false])
 const activeThumbnailSlot = ref<0 | 1>(0)
+let releaseThumbnailFrame = 0
 let dragPointerId = -1
 let dragStartX = 0
 let dragStartY = 0
@@ -38,17 +39,26 @@ let ignoreClickUntil = 0
 function activateThumbnail(slot: 0 | 1, source: string) {
   if (thumbnailSources.value[slot] !== source || desiredThumbnailSource.value !== source) return
   activeThumbnailSlot.value = slot
+  cancelAnimationFrame(releaseThumbnailFrame)
+  releaseThumbnailFrame = requestAnimationFrame(() => {
+    releaseThumbnailFrame = 0
+    if (activeThumbnailSlot.value !== slot || desiredThumbnailSource.value !== source) return
+    const inactiveSlot: 0 | 1 = slot === 0 ? 1 : 0
+    if (!thumbnailSources.value[inactiveSlot]) return
+    const sources = [...thumbnailSources.value] as [string | null, string | null]
+    const readiness = [...thumbnailReady.value] as [boolean, boolean]
+    sources[inactiveSlot] = null
+    readiness[inactiveSlot] = false
+    thumbnailSources.value = sources
+    thumbnailReady.value = readiness
+  })
 }
 
-async function loadThumbnail(slot: 0 | 1, event: Event) {
+function loadThumbnail(slot: 0 | 1, event: Event) {
   const source = thumbnailSources.value[slot]
   if (!source) return
   const image = event.currentTarget as HTMLImageElement
-  try {
-    await image.decode()
-  } catch {
-    if (!image.complete || image.naturalWidth === 0) return
-  }
+  if (!image.complete || image.naturalWidth === 0) return
   if (thumbnailSources.value[slot] !== source) return
   const readiness = [...thumbnailReady.value] as [boolean, boolean]
   readiness[slot] = true
@@ -89,6 +99,8 @@ watch(
     nameInput.value?.select()
   }
 )
+
+onBeforeUnmount(() => cancelAnimationFrame(releaseThumbnailFrame))
 
 function commitRename() {
   const name = draftName.value.trim()
@@ -200,6 +212,8 @@ function selectLayer(event: MouseEvent) {
             class="layer-thumb-buffer"
             :class="{ 'layer-thumb-buffer--active': activeThumbnailSlot === slot }"
             decoding="async"
+            fetchpriority="low"
+            loading="lazy"
             draggable="false"
             :src="source ?? undefined"
             @load="loadThumbnail(slot as 0 | 1, $event)"

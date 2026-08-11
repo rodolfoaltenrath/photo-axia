@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
@@ -301,4 +302,43 @@ func TestAssetHandlerGeneratesSizedPreview(t *testing.T) {
 	if preview.Bounds().Dx() != 10 || preview.Bounds().Dy() != 5 {
 		t.Fatalf("unexpected preview dimensions: %dx%d", preview.Bounds().Dx(), preview.Bounds().Dy())
 	}
+}
+
+func BenchmarkGenerateImagePreview4K(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "benchmark-4k.jpg")
+	file, err := os.Create(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	source := image.NewRGBA(image.Rect(0, 0, 3840, 2160))
+	for y := 0; y < 2160; y++ {
+		for x := 0; x < 3840; x++ {
+			source.SetRGBA(x, y, color.RGBA{
+				R: uint8((x/8 + y/31) % 256),
+				G: uint8((y/6 + x/47) % 256),
+				B: uint8((x/19 + y/11) % 256),
+				A: 255,
+			})
+		}
+	}
+	if err := jpeg.Encode(file, source, &jpeg.Options{Quality: 82}); err != nil {
+		file.Close()
+		b.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		b.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if _, err := generateImagePreview(path, 1344, 768); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64(info.Size())/1024, "source-KiB")
 }
