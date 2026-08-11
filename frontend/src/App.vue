@@ -75,13 +75,27 @@ import type {
   TextLayerContent
 } from './types/editor'
 
+const RULERS_VISIBLE_PREFERENCE = 'axia:rulers-visible'
+
+function initialRulersVisibility() {
+  if (typeof window === 'undefined') return true
+  try {
+    const stored = window.localStorage.getItem(RULERS_VISIBLE_PREFERENCE)
+    if (stored === 'false') return false
+    if (stored === 'true') return true
+  } catch {
+    // Ambientes com armazenamento indisponivel continuam com o padrao seguro.
+  }
+  return true
+}
+
 const activeTool = ref<EditorTool>('move')
 const autoSelectLayer = ref(true)
 const zoom = ref(100)
 const brushSize = ref(24)
 const brushColor = ref('#000000')
 const guides = ref<EditorGuide[]>([])
-const rulersVisible = ref(false)
+const rulersVisible = ref(initialRulersVisibility())
 const guidesVisible = ref(true)
 const guidesLocked = ref(false)
 const guideSnappingEnabled = ref(true)
@@ -195,6 +209,14 @@ watch(zoom, () => {
       if (layer.visible && layer.image && layer.transform) void refreshLayerPreview(layer)
     }
   }, 220)
+})
+
+watch(rulersVisible, (visible) => {
+  try {
+    window.localStorage.setItem(RULERS_VISIBLE_PREFERENCE, String(visible))
+  } catch {
+    // A preferencia em memoria ainda funciona quando o armazenamento e bloqueado.
+  }
 })
 
 function createBackgroundLayer(): LayerItem {
