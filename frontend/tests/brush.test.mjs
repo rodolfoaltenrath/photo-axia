@@ -7,7 +7,8 @@ import {
   brushPreviewSize,
   brushPreviewUsesLayerSpace,
   brushStrokeGeometry,
-  drawBrushPoints
+  drawBrushPoints,
+  stableEraserPreviewSize
 } from '../src/editor/brush.ts'
 import { clipContextToSelection } from '../src/editor/selection.ts'
 
@@ -35,6 +36,20 @@ test('a prévia respeita o orçamento de pixels', () => {
   const result = brushPreviewSize(12000, 8000, 12000, 8000, 1, 2, 1_000_000)
   assert.ok(result.width * result.height <= 1_000_000)
   assert.ok(result.width > result.height)
+})
+
+test('a borracha reutiliza exatamente o raster que já está visível', () => {
+  const asset = {
+    width: 4096,
+    height: 2160,
+    previewUrl: 'blob:preview',
+    previewWidth: 1536,
+    previewHeight: 810
+  }
+  assert.deepEqual(stableEraserPreviewSize(asset, 900, 600, 0.75, 2), {
+    width: 1536,
+    height: 810
+  })
 })
 
 test('o espaçamento se adapta ao pincel e ao zoom', () => {

@@ -65,6 +65,32 @@ export function brushPreviewSize(
   return { width, height }
 }
 
+export function stableEraserPreviewSize(
+  asset: {
+    width: number
+    height: number
+    previewUrl?: string
+    previewWidth?: number
+    previewHeight?: number
+  },
+  displayWidth: number,
+  displayHeight: number,
+  viewportScale: number,
+  pixelRatio: number
+) {
+  if (asset.previewUrl && asset.previewWidth && asset.previewHeight) {
+    return { width: asset.previewWidth, height: asset.previewHeight }
+  }
+  return brushPreviewSize(
+    asset.width,
+    asset.height,
+    displayWidth,
+    displayHeight,
+    viewportScale,
+    pixelRatio
+  )
+}
+
 function brushDocumentToSourceMatrix(transform: LayerTransform, sourceWidth: number, sourceHeight: number): Matrix2D {
   const angle = ((transform.rotation ?? 0) * Math.PI) / 180
   const cosine = Math.cos(angle)

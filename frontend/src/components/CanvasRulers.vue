@@ -36,6 +36,8 @@ const verticalPointer = ref<HTMLSpanElement | null>(null)
 let drawFrame = 0
 let pointerFrame = 0
 let lastPointer: { x: number; y: number } | null = null
+let liveDocumentOffsetX = props.documentOffsetX
+let liveDocumentOffsetY = props.documentOffsetY
 
 function prepareCanvas(canvas: HTMLCanvasElement, width: number, height: number) {
   const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1))
@@ -67,15 +69,15 @@ function drawHorizontal() {
   context.lineTo(width, size - 0.5)
   context.stroke()
 
-  const visibleStart = -props.documentOffsetX / props.scale
-  const visibleEnd = (width - props.documentOffsetX) / props.scale
+  const visibleStart = -liveDocumentOffsetX / props.scale
+  const visibleEnd = (width - liveDocumentOffsetX) / props.scale
   const layout = rulerTicks(visibleStart, visibleEnd, props.scale, props.unit, props.resolutionDpi, props.origin.x)
   context.font = '9px Segoe UI, sans-serif'
   context.textBaseline = 'top'
   context.fillStyle = '#c0c2c8'
   context.strokeStyle = '#62656e'
   for (const tick of layout.ticks) {
-    const x = Math.round(screenPositionForDocument(tick.position, props.documentOffsetX, props.scale)) + 0.5
+    const x = Math.round(screenPositionForDocument(tick.position, liveDocumentOffsetX, props.scale)) + 0.5
     if (x < 0 || x > width) continue
     context.beginPath()
     context.moveTo(x, tick.major ? 7 : 12)
@@ -85,7 +87,7 @@ function drawHorizontal() {
   }
 
   for (const edge of [0, props.documentWidth]) {
-    const x = Math.round(screenPositionForDocument(edge, props.documentOffsetX, props.scale)) + 0.5
+    const x = Math.round(screenPositionForDocument(edge, liveDocumentOffsetX, props.scale)) + 0.5
     if (x < 0 || x > width) continue
     context.strokeStyle = '#92959d'
     context.beginPath()
@@ -110,15 +112,15 @@ function drawVertical() {
   context.lineTo(size - 0.5, height)
   context.stroke()
 
-  const visibleStart = -props.documentOffsetY / props.scale
-  const visibleEnd = (height - props.documentOffsetY) / props.scale
+  const visibleStart = -liveDocumentOffsetY / props.scale
+  const visibleEnd = (height - liveDocumentOffsetY) / props.scale
   const layout = rulerTicks(visibleStart, visibleEnd, props.scale, props.unit, props.resolutionDpi, props.origin.y)
   context.font = '9px Segoe UI, sans-serif'
   context.textBaseline = 'top'
   context.fillStyle = '#c0c2c8'
   context.strokeStyle = '#62656e'
   for (const tick of layout.ticks) {
-    const y = Math.round(screenPositionForDocument(tick.position, props.documentOffsetY, props.scale)) + 0.5
+    const y = Math.round(screenPositionForDocument(tick.position, liveDocumentOffsetY, props.scale)) + 0.5
     if (y < 0 || y > height) continue
     context.beginPath()
     context.moveTo(tick.major ? 7 : 12, y)
@@ -134,7 +136,7 @@ function drawVertical() {
   }
 
   for (const edge of [0, props.documentHeight]) {
-    const y = Math.round(screenPositionForDocument(edge, props.documentOffsetY, props.scale)) + 0.5
+    const y = Math.round(screenPositionForDocument(edge, liveDocumentOffsetY, props.scale)) + 0.5
     if (y < 0 || y > height) continue
     context.strokeStyle = '#92959d'
     context.beginPath()
@@ -156,8 +158,8 @@ function drawPointer() {
     return
   }
 
-  const x = Math.round(screenPositionForDocument(lastPointer.x, props.documentOffsetX, props.scale))
-  const y = Math.round(screenPositionForDocument(lastPointer.y, props.documentOffsetY, props.scale))
+  const x = Math.round(screenPositionForDocument(lastPointer.x, liveDocumentOffsetX, props.scale))
+  const y = Math.round(screenPositionForDocument(lastPointer.y, liveDocumentOffsetY, props.scale))
   horizontal.hidden = x < 0 || x > props.viewportWidth
   vertical.hidden = y < 0 || y > props.viewportHeight
   if (!horizontal.hidden) horizontal.style.transform = `translate3d(${x}px, 0, 0)`
@@ -178,12 +180,30 @@ function scheduleDraw() {
   })
 }
 
+function updateViewportOffsets(offsetX: number, offsetY: number) {
+  const horizontalChanged = offsetX !== liveDocumentOffsetX
+  const verticalChanged = offsetY !== liveDocumentOffsetY
+  if (!horizontalChanged && !verticalChanged) return
+  liveDocumentOffsetX = offsetX
+  liveDocumentOffsetY = offsetY
+  cancelAnimationFrame(drawFrame)
+  drawFrame = 0
+  cancelAnimationFrame(pointerFrame)
+  pointerFrame = 0
+  if (horizontalChanged) drawHorizontal()
+  if (verticalChanged) drawVertical()
+  drawPointer()
+}
+
+watch(
+  () => [props.documentOffsetX, props.documentOffsetY] as const,
+  ([offsetX, offsetY]) => updateViewportOffsets(offsetX, offsetY)
+)
+
 watch(
   () => [
     props.viewportWidth,
     props.viewportHeight,
-    props.documentOffsetX,
-    props.documentOffsetY,
     props.documentWidth,
     props.documentHeight,
     props.scale,
@@ -205,7 +225,7 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(pointerFrame)
 })
 
-defineExpose({ updatePointerDocument })
+defineExpose({ updatePointerDocument, updateViewportOffsets })
 </script>
 
 <template>

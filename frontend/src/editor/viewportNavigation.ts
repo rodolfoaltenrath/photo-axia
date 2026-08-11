@@ -15,6 +15,17 @@ export function centeredScrollOffset(scrollSize: number, clientSize: number) {
   return Math.max(0, (scrollSize - clientSize) / 2)
 }
 
+export function viewportDocumentOffset(
+  viewport: ViewportDimensions,
+  scrollLeft: number,
+  scrollTop: number
+) {
+  return {
+    x: viewport.width - scrollLeft,
+    y: viewport.height - scrollTop
+  }
+}
+
 export function preserveViewportCenter(
   scrollLeft: number,
   scrollTop: number,

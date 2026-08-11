@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   formatGuideValue,
   screenPositionForDocument,
@@ -27,6 +27,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'startMove', guide: EditorGuide, pointerEvent: PointerEvent): void
 }>()
+
+const root = ref<HTMLElement | null>(null)
 
 const visibleGuides = computed(() => {
   if (!props.visible) return []
@@ -61,10 +63,29 @@ function isSnapped(guide: EditorGuide) {
     ? props.snappedX === guide.position
     : props.snappedY === guide.position
 }
+
+function updateViewportOffsets(offsetX: number, offsetY: number) {
+  const elements = root.value?.querySelectorAll<HTMLElement>('.document-guide')
+  elements?.forEach((element) => {
+    const position = Number(element.dataset.guidePosition)
+    if (!Number.isFinite(position)) return
+    const vertical = element.dataset.guideOrientation === 'vertical'
+    const screenPosition = Math.round(screenPositionForDocument(
+      position,
+      vertical ? offsetX : offsetY,
+      props.scale
+    ))
+    element.style.transform = vertical
+      ? `translate3d(${screenPosition}px, 0, 0)`
+      : `translate3d(0, ${screenPosition}px, 0)`
+  })
+}
+
+defineExpose({ updateViewportOffsets })
 </script>
 
 <template>
-  <div class="guide-overlay" aria-label="Guias do documento">
+  <div ref="root" class="guide-overlay" aria-label="Guias do documento">
     <div
       v-for="guide in visibleGuides"
       :key="guide.id"
@@ -78,6 +99,8 @@ function isSnapped(guide: EditorGuide) {
           'document-guide--draft': draftGuide?.id === guide.id
         }
       ]"
+      :data-guide-orientation="guide.orientation"
+      :data-guide-position="guide.position"
       :style="guideStyle(guide)"
       :title="`${guide.orientation === 'vertical' ? 'X' : 'Y'}: ${guideLabel(guide)}`"
       @pointerdown.stop.prevent="interactive && emit('startMove', guide, $event)"

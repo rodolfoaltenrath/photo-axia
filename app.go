@@ -170,6 +170,21 @@ func (a *App) SetDocumentDirty(dirty bool) {
 	a.documentDirty.Store(dirty)
 }
 
+func preventCloseAfterDialog(result string, err error) bool {
+	if err != nil {
+		return true
+	}
+	// O backend GTK do Wails 2 usa botões nativos Yes/No e ignora os textos
+	// personalizados; Windows e macOS devolvem o rótulo configurado.
+	answer := strings.ToLower(strings.TrimSpace(result))
+	switch answer {
+	case "yes", "sim", "sair sem salvar":
+		return false
+	default:
+		return true
+	}
+}
+
 func (a *App) beforeClose(ctx context.Context) bool {
 	if !a.documentDirty.Load() {
 		return false
@@ -182,7 +197,13 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		DefaultButton: "Cancelar",
 		CancelButton:  "Cancelar",
 	})
-	return err != nil || result != "Sair sem salvar"
+	if preventCloseAfterDialog(result, err) {
+		return true
+	}
+	// Evita uma segunda confirmação caso o backend nativo gere outro evento de
+	// fechamento enquanto a janela está encerrando.
+	a.documentDirty.Store(false)
+	return false
 }
 
 func (a *App) GetEditorStatus() EditorStatus {

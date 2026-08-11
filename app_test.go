@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -14,6 +15,25 @@ import (
 	"testing"
 	"time"
 )
+
+func TestPreventCloseAfterDialogAcceptsNativeAndCustomConfirmations(t *testing.T) {
+	for _, answer := range []string{"Yes", "sim", "Sair sem salvar", "  YES  "} {
+		if preventCloseAfterDialog(answer, nil) {
+			t.Fatalf("expected %q to allow closing", answer)
+		}
+	}
+}
+
+func TestPreventCloseAfterDialogKeepsDocumentOnCancelOrError(t *testing.T) {
+	for _, answer := range []string{"", "No", "Cancel", "Cancelar"} {
+		if !preventCloseAfterDialog(answer, nil) {
+			t.Fatalf("expected %q to prevent closing", answer)
+		}
+	}
+	if !preventCloseAfterDialog("Yes", errors.New("dialog failed")) {
+		t.Fatal("a dialog error must preserve the document")
+	}
+}
 
 // writeSolidPNG writes a width x height PNG filled with the given color to path.
 // The alpha channel is kept below 255 so image.RGBA.Opaque() reports false,

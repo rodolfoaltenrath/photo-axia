@@ -159,13 +159,17 @@ async function fallbackBrushStroke(
     : makeCanvas(outputPreviewWidth, outputPreviewHeight)
   if (previewCanvas) {
     const previewContext = canvas2dContext(previewCanvas)
-    previewContext.imageSmoothingEnabled = true
-    previewContext.imageSmoothingQuality = 'high'
-    previewContext.drawImage(canvas, 0, 0, outputPreviewWidth, outputPreviewHeight)
+    const previewBitmap = await createImageBitmap(canvas, {
+      resizeWidth: outputPreviewWidth,
+      resizeHeight: outputPreviewHeight,
+      resizeQuality: 'high'
+    })
+    previewContext.drawImage(previewBitmap, 0, 0, outputPreviewWidth, outputPreviewHeight)
+    previewBitmap.close()
   }
   const [blob, previewBlob] = await Promise.all([
     encodeCanvas(canvas),
-    previewCanvas ? encodeCanvas(previewCanvas, 'image/webp', 0.9) : Promise.resolve(undefined)
+    previewCanvas ? encodeCanvas(previewCanvas, 'image/webp') : Promise.resolve(undefined)
   ])
   canvas.width = 1
   canvas.height = 1

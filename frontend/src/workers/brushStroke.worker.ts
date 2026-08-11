@@ -76,13 +76,23 @@ async function sourceCanvas(request: BrushRequest) {
 
 async function encodePreview(source: OffscreenCanvas, width: number, height: number) {
   if (width === source.width && height === source.height) return undefined
+  const bitmap = await createImageBitmap(source, {
+    resizeWidth: width,
+    resizeHeight: height,
+    resizeQuality: 'high'
+  })
   const canvas = new OffscreenCanvas(width, height)
   const context = canvas.getContext('2d', { alpha: true })
-  if (!context) throw new Error('O sistema não disponibilizou o renderizador de prévias.')
-  context.imageSmoothingEnabled = true
-  context.imageSmoothingQuality = 'high'
-  context.drawImage(source, 0, 0, width, height)
-  return canvas.convertToBlob({ type: 'image/webp', quality: 0.9 })
+  if (!context) {
+    bitmap.close()
+    throw new Error('O sistema não disponibilizou o renderizador de prévias.')
+  }
+  try {
+    context.drawImage(bitmap, 0, 0, width, height)
+    return await canvas.convertToBlob({ type: 'image/webp' })
+  } finally {
+    bitmap.close()
+  }
 }
 
 self.onmessage = async (event: MessageEvent<BrushRequest>) => {

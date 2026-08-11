@@ -1310,7 +1310,9 @@ async function commitBrushStroke(
   size: number,
   color: string,
   operation: BrushOperation,
-  strokeSelection: SelectionRegion | null
+  strokeSelection: SelectionRegion | null,
+  livePreviewWidth: number,
+  livePreviewHeight: number
 ) {
   if (isBusy.value) return
   clearFloatingSelectionSession()
@@ -1330,7 +1332,12 @@ async function commitBrushStroke(
   const isEraser = operation === 'erase'
   statusText.value = isEraser ? 'Apagando…' : 'Pintando…'
   try {
-    const previewTarget = workingPreviewSize(beforeImage, beforeTransform)
+    const previewTarget = isEraser
+      ? {
+          width: Math.max(1, Math.min(beforeImage.width, Math.round(livePreviewWidth))),
+          height: Math.max(1, Math.min(beforeImage.height, Math.round(livePreviewHeight)))
+        }
+      : workingPreviewSize(beforeImage, beforeTransform)
     const result = await applyBrushStroke(
       layer.id,
       beforeImage,

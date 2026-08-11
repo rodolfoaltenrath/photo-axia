@@ -22,7 +22,11 @@ import {
   type DocumentPoint,
   type TransformHandle
 } from '../editor/freeTransform'
-import { centeredScrollOffset, preserveViewportCenter } from '../editor/viewportNavigation'
+import {
+  centeredScrollOffset,
+  preserveViewportCenter,
+  viewportDocumentOffset
+} from '../editor/viewportNavigation'
 import {
   documentPositionFromScreen,
   RULER_SIZE,
@@ -43,6 +47,7 @@ import {
   brushPreviewSize,
   brushPreviewUsesLayerSpace,
   drawBrushPoints,
+  stableEraserPreviewSize,
   type BrushOperation
 } from '../editor/brush'
 import {
@@ -125,7 +130,9 @@ const emit = defineEmits<{
     size: number,
     color: string,
     operation: BrushOperation,
-    selection: SelectionRegion | null
+    selection: SelectionRegion | null,
+    previewWidth: number,
+    previewHeight: number
   ): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateGuide', guide: EditorGuide): void
@@ -147,6 +154,7 @@ const emit = defineEmits<{
 const scrollArea = ref<HTMLDivElement | null>(null)
 const surface = ref<HTMLDivElement | null>(null)
 const canvasRulers = ref<InstanceType<typeof CanvasRulers> | null>(null)
+const guideOverlay = ref<InstanceType<typeof GuideOverlay> | null>(null)
 const freeTransformBox = ref<HTMLElement | null>(null)
 const transformRotationOutput = ref<HTMLElement | null>(null)
 const viewportScroll = ref({ left: 0, top: 0 })
@@ -231,6 +239,8 @@ const brushInteraction = shallowRef<{
   selection: SelectionRegion | null
   selectionPath: Path2D | null
   baseImageSource: string
+  previewWidth: number
+  previewHeight: number
 } | null>(null)
 const selectionMoveInteraction = shallowRef<{
   pointerId: number
@@ -268,6 +278,7 @@ let pendingBrushCommittedImageSource: string | undefined
 let pendingBrushWasFree = false
 let pendingBrushOperation: BrushOperation = 'paint'
 let pendingBrushLayerId: string | undefined
+let pendingBrushPreviewSize: { width: number; height: number } | undefined
 let eraserPreviewGeneration = 0
 let pendingSelectionMoveBaseSource: string | undefined
 let pendingSelectionMoveCommittedSource: string | undefined
@@ -292,10 +303,11 @@ let pendingNavigation:
   | undefined
 
 const scale = computed(() => visualZoom.value / 100)
-const documentViewportOffset = computed(() => ({
-  x: viewportSize.value.width - viewportScroll.value.left,
-  y: viewportSize.value.height - viewportScroll.value.top
-}))
+const documentViewportOffset = computed(() => viewportDocumentOffset(
+  viewportSize.value,
+  viewportScroll.value.left,
+  viewportScroll.value.top
+))
 const displayedRulerOrigin = computed(() => originInteraction.value?.draft ?? props.rulerOrigin)
 const draftGuide = computed(() => guideInteraction.value?.guide ?? null)
 const scaledDocumentSize = computed(() => ({
@@ -373,6 +385,10 @@ const activeBrushOperation = computed<BrushOperation | undefined>(() =>
   brushInteraction.value?.operation ?? (brushPreviewPending.value ? pendingBrushOperation : undefined)
 )
 const brushPreviewDimensions = computed(() => {
+  const captured = brushInteraction.value
+    ? { width: brushInteraction.value.previewWidth, height: brushInteraction.value.previewHeight }
+    : pendingBrushPreviewSize
+  if (captured) return captured
   const layer = paintableLayer.value
   if (!layer?.image || !layer.transform) return { width: 1, height: 1 }
   const free = activeBrushOperation.value === 'paint' && (
@@ -438,7 +454,12 @@ const brushPreviewHidesLayer = (layerId: string) =>
 function syncViewportScroll() {
   const scroll = scrollArea.value
   if (!scroll) return
-  viewportScroll.value = { left: scroll.scrollLeft, top: scroll.scrollTop }
+  const next = { left: scroll.scrollLeft, top: scroll.scrollTop }
+  if (next.left === viewportScroll.value.left && next.top === viewportScroll.value.top) return
+  viewportScroll.value = next
+  const offset = viewportDocumentOffset(viewportSize.value, next.left, next.top)
+  canvasRulers.value?.updateViewportOffsets(offset.x, offset.y)
+  guideOverlay.value?.updateViewportOffsets(offset.x, offset.y)
 }
 
 function handleNativeScroll() {
@@ -1370,16 +1391,35 @@ function loadBrushPreviewImage(source: string) {
   })
 }
 
+function eraserPreviewDimensions(layer: NonNullable<typeof paintableLayer.value>) {
+  return stableEraserPreviewSize(
+    layer.image!,
+    layer.transform!.width,
+    layer.transform!.height,
+    scale.value,
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio
+  )
+}
+
+function displayedLayerImage(layerId: string, source: string) {
+  const layer = surface.value?.querySelector<HTMLElement>(`.document-layer[data-layer-id="${CSS.escape(layerId)}"]`)
+  const image = layer?.querySelector<HTMLImageElement>('img.layer-image-buffer--active')
+  return image?.complete && image.naturalWidth > 0 && image.getAttribute('src') === source ? image : undefined
+}
+
 async function prepareEraserPreview(interaction: NonNullable<typeof brushInteraction.value>) {
   const generation = ++eraserPreviewGeneration
   await nextTick()
   try {
-    const image = await loadBrushPreviewImage(interaction.baseImageSource)
+    const image = displayedLayerImage(interaction.layerId, interaction.baseImageSource) ??
+      await loadBrushPreviewImage(interaction.baseImageSource)
     if (generation !== eraserPreviewGeneration || brushInteraction.value !== interaction) return
     const canvas = brushPreviewCanvas.value
     const context = canvas?.getContext('2d')
     if (!canvas || !context) return
     context.clearRect(0, 0, canvas.width, canvas.height)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
     context.drawImage(image, 0, 0, canvas.width, canvas.height)
     interaction.renderedPointCount = 0
     eraserPreviewReady.value = true
@@ -1400,6 +1440,7 @@ function clearBrushPreview() {
   pendingBrushWasFree = false
   pendingBrushOperation = 'paint'
   pendingBrushLayerId = undefined
+  pendingBrushPreviewSize = undefined
   pendingBrushBaseImageSource = undefined
   pendingBrushCommittedImageSource = undefined
 }
@@ -1513,6 +1554,25 @@ function startBrushPointer(event: PointerEvent, point: SelectionPoint, operation
   event.preventDefault()
   event.stopPropagation()
   scroll.setPointerCapture(event.pointerId)
+  const previewSize = operation === 'erase'
+    ? eraserPreviewDimensions(layer)
+    : !props.selection
+      ? brushPreviewSize(
+          props.document.width * 2,
+          props.document.height * 2,
+          props.document.width,
+          props.document.height,
+          scale.value,
+          typeof window === 'undefined' ? 1 : window.devicePixelRatio
+        )
+      : brushPreviewSize(
+          layer.image.width,
+          layer.image.height,
+          layer.transform!.width,
+          layer.transform!.height,
+          scale.value,
+          typeof window === 'undefined' ? 1 : window.devicePixelRatio
+        )
   brushInteraction.value = {
     pointerId: event.pointerId,
     layerId: layer.id,
@@ -1521,7 +1581,9 @@ function startBrushPointer(event: PointerEvent, point: SelectionPoint, operation
     renderedPointCount: 0,
     selection: props.selection,
     selectionPath: createBrushSelectionPath(props.selection),
-    baseImageSource: layer.image.previewUrl ?? layer.image.sourceUrl
+    baseImageSource: layer.image.previewUrl ?? layer.image.sourceUrl,
+    previewWidth: previewSize.width,
+    previewHeight: previewSize.height
   }
   eraserPreviewReady.value = false
   if (operation === 'erase') void prepareEraserPreview(brushInteraction.value)
@@ -1665,27 +1727,34 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
   }
 }
 
+function updateRulerPointer(clientX: number, clientY: number) {
+  if (!props.rulersVisible) return
+  const hoverPoint = documentPointFromClient(clientX, clientY)
+  const pointer = hoverPoint &&
+    hoverPoint.x >= 0 && hoverPoint.y >= 0 &&
+    hoverPoint.x <= props.document.width && hoverPoint.y <= props.document.height
+    ? hoverPoint
+    : null
+  canvasRulers.value?.updatePointerDocument(pointer)
+}
+
 function updatePointer(event: PointerEvent) {
-  if (props.rulersVisible) {
-    const hoverPoint = pointerToDocument(event)
-    const pointer = hoverPoint &&
-      hoverPoint.x >= 0 && hoverPoint.y >= 0 &&
-      hoverPoint.x <= props.document.width && hoverPoint.y <= props.document.height
-      ? hoverPoint
-      : null
-    canvasRulers.value?.updatePointerDocument(pointer)
-  }
   if (isPanning.value && scrollArea.value && panStart.value.pointerId === event.pointerId) {
     event.preventDefault()
     const scrollLeft = panStart.value.scrollLeft - (event.clientX - panStart.value.x)
     const scrollTop = panStart.value.scrollTop - (event.clientY - panStart.value.y)
+    const clientX = event.clientX
+    const clientY = event.clientY
     scheduleInteractionFrame(() => {
       if (!isPanning.value || !scrollArea.value) return
       scrollArea.value.scrollLeft = scrollLeft
       scrollArea.value.scrollTop = scrollTop
+      syncViewportScroll()
+      updateRulerPointer(clientX, clientY)
     })
     return
   }
+  updateRulerPointer(event.clientX, event.clientY)
 
   const activeSelection = selectionInteraction.value
   if (activeSelection?.pointerId === event.pointerId) {
@@ -1855,6 +1924,10 @@ function stopPointer(event: PointerEvent) {
       pendingBrushWasFree = interaction.operation === 'paint' && !interaction.selection
       pendingBrushOperation = interaction.operation
       pendingBrushLayerId = interaction.layerId
+      pendingBrushPreviewSize = {
+        width: interaction.previewWidth,
+        height: interaction.previewHeight
+      }
       brushPreviewPending.value = true
       emit(
         'paintStroke',
@@ -1862,7 +1935,9 @@ function stopPointer(event: PointerEvent) {
         props.brushSize,
         props.brushColor,
         interaction.operation,
-        interaction.selection
+        interaction.selection,
+        interaction.previewWidth,
+        interaction.previewHeight
       )
     } else {
       clearBrushPreview()
@@ -2506,6 +2581,7 @@ defineExpose({
       </div>
         </div>
         <GuideOverlay
+          ref="guideOverlay"
           :document-offset-x="documentViewportOffset.x"
           :document-offset-y="documentViewportOffset.y"
           :draft-guide="draftGuide"

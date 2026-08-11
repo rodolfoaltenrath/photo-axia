@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { centeredScrollOffset, preserveViewportCenter } from '../src/editor/viewportNavigation.ts'
+import {
+  centeredScrollOffset,
+  preserveViewportCenter,
+  viewportDocumentOffset
+} from '../src/editor/viewportNavigation.ts'
 
 test('centraliza o conteudo nos dois eixos', () => {
   assert.equal(centeredScrollOffset(2000, 800), 600)
@@ -18,5 +22,12 @@ test('preserva o ponto central quando o viewport muda de tamanho', () => {
       documentX: 400,
       documentY: 200
     }
+  )
+})
+
+test('documento e réguas compartilham o mesmo deslocamento durante o pan', () => {
+  assert.deepEqual(
+    viewportDocumentOffset({ width: 1200, height: 800 }, 1375.5, 920.25),
+    { x: -175.5, y: -120.25 }
   )
 })
