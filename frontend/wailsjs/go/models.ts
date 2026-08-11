@@ -113,11 +113,11 @@ export namespace main {
 	    thumbnailUrl: string;
 	    thumbnailVersion: number;
 	    available: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RecentProject(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -134,3 +134,4 @@ export namespace main {
 	}
 
 }
+

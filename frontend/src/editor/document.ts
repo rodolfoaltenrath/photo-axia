@@ -35,6 +35,28 @@ export function documentPixelSize(settings: Pick<NewDocumentSettings, 'unit' | '
   }
 }
 
+function roundedDimension(value: number, unit: DocumentUnit) {
+  if (unit === 'px') return Math.max(1, Math.round(value))
+  const decimals = unit === 'mm' ? 3 : 4
+  return Number(Math.max(0.0001, value).toFixed(decimals))
+}
+
+export function convertDocumentUnit(
+  settings: Pick<NewDocumentSettings, 'unit' | 'width' | 'height' | 'resolutionDpi'>,
+  nextUnit: DocumentUnit
+) {
+  if (settings.unit === nextUnit) {
+    return { unit: nextUnit, width: settings.width, height: settings.height }
+  }
+  const currentFactor = pixelsPerDocumentUnit(settings.unit, settings.resolutionDpi)
+  const nextFactor = pixelsPerDocumentUnit(nextUnit, settings.resolutionDpi)
+  return {
+    unit: nextUnit,
+    width: roundedDimension((settings.width * currentFactor) / nextFactor, nextUnit),
+    height: roundedDimension((settings.height * currentFactor) / nextFactor, nextUnit)
+  }
+}
+
 export function validateDocumentSettings(settings: NewDocumentSettings) {
   if (!Number.isFinite(settings.width) || !Number.isFinite(settings.height) || settings.width <= 0 || settings.height <= 0) {
     return 'Informe dimensões válidas.'

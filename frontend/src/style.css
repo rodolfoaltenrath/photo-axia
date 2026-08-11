@@ -534,6 +534,8 @@ select:focus-visible {
 
 .canvas-frame {
   position: absolute;
+  outline: 1px solid #343d48;
+  box-shadow: 0 16px 36px rgb(0 0 0 / 42%);
 }
 
 .canvas-surface {
@@ -541,8 +543,6 @@ select:focus-visible {
   inset: 0 auto auto 0;
   overflow: visible;
   border: 0;
-  outline: 1px solid #343d48;
-  box-shadow: 0 16px 36px rgb(0 0 0 / 42%);
   contain: layout style;
   backface-visibility: hidden;
   transform-origin: top left;
@@ -550,8 +550,8 @@ select:focus-visible {
   user-select: none;
 }
 
-.canvas-scroll--panning .canvas-surface,
-.canvas-scroll--scrolling .canvas-surface {
+.canvas-scroll--panning .canvas-frame,
+.canvas-scroll--scrolling .canvas-frame {
   box-shadow: none;
 }
 
@@ -2450,7 +2450,7 @@ input[type='checkbox'] {
   background-color: #5a5a63;
 }
 
-.canvas-surface {
+.canvas-frame {
   outline-color: var(--ui-border-strong);
 }
 

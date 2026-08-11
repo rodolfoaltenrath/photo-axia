@@ -2,6 +2,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import {
   BUILTIN_DOCUMENT_PRESETS,
+  convertDocumentUnit,
   documentBaseMemoryBytes,
   documentPixelSize,
   parseCustomDocumentPresets,
@@ -88,6 +89,11 @@ function swapOrientation() {
   const width = form.width
   form.width = form.height
   form.height = width
+}
+
+function changeUnit(event: Event) {
+  const nextUnit = (event.target as HTMLSelectElement).value as DocumentUnit
+  Object.assign(form, convertDocumentUnit(form, nextUnit))
 }
 
 function savePreset() {
@@ -226,15 +232,27 @@ watch(() => props.open, async (open) => {
 
           <label>
             Largura
-            <input v-model.number="form.width" :disabled="busy" min="0.01" step="0.01" type="number" />
+            <input
+              v-model.number="form.width"
+              :disabled="busy"
+              :min="form.unit === 'px' ? 1 : 0.01"
+              :step="form.unit === 'px' ? 1 : 0.01"
+              type="number"
+            />
           </label>
           <label>
             Altura
-            <input v-model.number="form.height" :disabled="busy" min="0.01" step="0.01" type="number" />
+            <input
+              v-model.number="form.height"
+              :disabled="busy"
+              :min="form.unit === 'px' ? 1 : 0.01"
+              :step="form.unit === 'px' ? 1 : 0.01"
+              type="number"
+            />
           </label>
           <label>
             Unidade
-            <select v-model="form.unit" :disabled="busy">
+            <select :value="form.unit" :disabled="busy" @change="changeUnit">
               <option value="px">Pixels</option>
               <option value="cm">Centímetros</option>
               <option value="mm">Milímetros</option>

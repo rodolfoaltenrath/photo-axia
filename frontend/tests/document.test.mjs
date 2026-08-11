@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  convertDocumentUnit,
   documentBaseMemoryBytes,
   documentPixelSize,
   parseCustomDocumentPresets,
@@ -27,6 +28,28 @@ test('converte pixels, centímetros, milímetros e polegadas', () => {
     width: 2480,
     height: 3508
   })
+})
+
+test('trocar a unidade preserva o tamanho raster do documento', () => {
+  const a4 = settings({ unit: 'cm', width: 21, height: 29.7, resolutionDpi: 300 })
+  const pixels = convertDocumentUnit(a4, 'px')
+  assert.deepEqual(pixels, { unit: 'px', width: 2480, height: 3508 })
+  assert.deepEqual(documentPixelSize({ ...a4, ...pixels }), documentPixelSize(a4))
+
+  const centimeters = convertDocumentUnit({ ...a4, ...pixels }, 'cm')
+  assert.deepEqual(documentPixelSize({ ...a4, ...centimeters }), documentPixelSize(a4))
+
+  assert.deepEqual(
+    convertDocumentUnit({ ...a4, resolutionDpi: 150 }, 'px'),
+    { unit: 'px', width: 1240, height: 1754 }
+  )
+})
+
+test('trocar entre unidades físicas não reinterpreta os números', () => {
+  assert.deepEqual(
+    convertDocumentUnit(settings({ unit: 'cm', width: 21, height: 29.7, resolutionDpi: 150 }), 'mm'),
+    { unit: 'mm', width: 210, height: 297 }
+  )
 })
 
 test('valida limites de dimensão, resolução e megapixels', () => {
