@@ -3,20 +3,28 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import CanvasViewport from './components/CanvasViewport.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
+import ProjectHome from './components/ProjectHome.vue'
 import PropertiesPanel from './components/PropertiesPanel.vue'
 import ToolBar from './components/ToolBar.vue'
 import TopMenu from './components/TopMenu.vue'
+import UnsavedChangesDialog from './components/UnsavedChangesDialog.vue'
 import {
   applyPreviewFilter,
   createEditorDocument,
   finalizeAxiaProjectOpen,
+  clearRecentProjects,
   getEditorStatus,
   hasDesktopBackend,
   openAxiaProject,
+  openRecentProject,
   prepareAxiaProjectSave,
+  listRecentProjects,
+  recordRecentProject,
   releaseAxiaProjectAssets,
   saveExportedPNG,
+  removeRecentProject,
   setNativeDocumentDirty,
+  uploadRecentThumbnail,
   selectDesktopImages
 } from './services/backend'
 import {
@@ -29,7 +37,7 @@ import {
   releasePreparedImage,
   releaseLayerAssets
 } from './services/imageImport'
-import { renderDocumentPNG } from './services/renderDocument'
+import { renderDocumentPNG, renderDocumentThumbnail } from './services/renderDocument'
 import {
   createAxiaProjectManifest,
   restoreAxiaProject,
@@ -48,6 +56,9 @@ import {
 } from './editor/editorHistory'
 import { useHistory, type HistoryRecordOptions, type HistoryStep } from './editor/history'
 import { clampZoom } from './editor/viewport'
+import { documentPixelSize } from './editor/document'
+import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
+import { LatestPathTaskQueue, LatestRequestGate } from './editor/recentTasks'
 import type { EditorGuide, RulerOrigin, RulerUnit } from './editor/guides'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
 import {
@@ -82,6 +93,7 @@ import type {
   LayerItem,
   LayerTransform,
   NewDocumentSettings,
+  RecentProject,
   TextLayerContent
 } from './types/editor'
 
@@ -120,6 +132,11 @@ const errorText = ref('')
 const isBusy = ref(false)
 const activeLayerId = ref('layer-bg')
 const showNewDocumentDialog = ref(false)
+const appScreen = ref<'home' | 'editor'>('home')
+const hasOpenDocument = ref(false)
+const recentProjects = ref<RecentProject[]>([])
+const recentProjectsLoading = ref(true)
+const showUnsavedChangesDialog = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const canvasViewport = ref<InstanceType<typeof CanvasViewport> | null>(null)
 const projectPath = ref('')
@@ -147,6 +164,9 @@ let selectionGeneration = 0
 let pendingSelectionTasks = 0
 let previewRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let previewLayerCountHint = 0
+let discardChangesResolver: ((confirmed: boolean) => void) | undefined
+const recentRefreshGate = new LatestRequestGate()
+const thumbnailQueue = new LatestPathTaskQueue()
 const ACTIVE_PREVIEW_PIXELS = 4_194_304
 const DOCUMENT_PREVIEW_PIXELS = 24_000_000
 const MIN_LAYER_PREVIEW_PIXELS = 262_144
@@ -182,8 +202,9 @@ const historyRevision = history.currentRevision
 const redoLabel = history.redoLabel
 const undoLabel = history.undoLabel
 const documentDirty = computed(() =>
-  savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value
+  hasOpenDocument.value && (savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value)
 )
+const modalOpen = computed(() => showNewDocumentDialog.value || showUnsavedChangesDialog.value)
 
 watch(documentDirty, (dirty) => {
   void setNativeDocumentDirty(dirty)
@@ -792,20 +813,11 @@ function updateLayerTransform(layerId: string, transform: LayerTransform) {
 }
 
 function toPixelSize(settings: NewDocumentSettings) {
-  if (settings.unit === 'px') {
-    return {
-      width: Math.max(1, Math.round(settings.width)),
-      height: Math.max(1, Math.round(settings.height))
-    }
-  }
-
-  return {
-    width: Math.max(1, Math.round((settings.width / 2.54) * settings.resolutionDpi)),
-    height: Math.max(1, Math.round((settings.height / 2.54) * settings.resolutionDpi))
-  }
+  return documentPixelSize(settings)
 }
 
 async function createDocument(settings: NewDocumentSettings) {
+  if (!canCreateDocument(isBusy.value)) return
   errorText.value = ''
   isBusy.value = true
   try {
@@ -826,6 +838,8 @@ async function createDocument(settings: NewDocumentSettings) {
     projectPath.value = ''
     savedHistoryRevision.value = null
     showNewDocumentDialog.value = false
+    hasOpenDocument.value = true
+    appScreen.value = 'editor'
     statusText.value = `${document.name} — ${document.width} × ${document.height} px`
   } catch (error) {
     showError(error, 'Não foi possível criar o documento.')
@@ -1432,11 +1446,104 @@ function preloadImage(url: string) {
 }
 
 function confirmDiscardChanges() {
-  return !documentDirty.value || window.confirm('Existem alterações não salvas. Deseja descartá-las?')
+  if (!documentDirty.value) return Promise.resolve(true)
+  if (discardChangesResolver) return Promise.resolve(false)
+  showUnsavedChangesDialog.value = true
+  return new Promise<boolean>((resolve) => {
+    discardChangesResolver = resolve
+  })
 }
 
-function requestNewDocument() {
-  if (isBusy.value || !confirmDiscardChanges()) return
+function resolveDiscardChanges(confirmed: boolean) {
+  showUnsavedChangesDialog.value = false
+  const resolve = discardChangesResolver
+  discardChangesResolver = undefined
+  resolve?.(confirmed)
+}
+
+async function saveBeforeDiscarding() {
+  const saved = await saveProject()
+  resolveDiscardChanges(saved)
+}
+
+async function refreshRecentProjects(showLoading = true) {
+  const request = recentRefreshGate.begin()
+  if (showLoading) recentProjectsLoading.value = true
+  try {
+    const projects = await listRecentProjects()
+    if (request.isCurrent()) recentProjects.value = projects
+  } catch (error) {
+    if (request.isCurrent()) {
+      showError(error, 'Não foi possível carregar os projetos recentes.')
+    }
+  } finally {
+    if (request.isCurrent()) recentProjectsLoading.value = false
+  }
+}
+
+function queueProjectThumbnail(path: string, document: DocumentSpec, projectLayers: LayerItem[]) {
+  if (!path || !hasDesktopBackend()) return
+  void thumbnailQueue.enqueue(path, async (isLatest) => {
+    try {
+      const thumbnail = await renderDocumentThumbnail(document, projectLayers)
+      if (!thumbnail || !isLatest()) return
+      await uploadRecentThumbnail(path, thumbnail)
+      if (!isLatest()) return
+      await refreshRecentProjects(false)
+    } catch {
+      // O cache visual nunca pode transformar um salvamento válido em erro.
+    }
+  })
+}
+
+async function registerRecentProject(
+  path: string,
+  document: DocumentSpec,
+  projectLayers: LayerItem[],
+  createThumbnail = true
+) {
+  if (!path || !hasDesktopBackend()) return
+  await recordRecentProject(path, document.name, document.width, document.height)
+  void refreshRecentProjects(false)
+  if (createThumbnail) queueProjectThumbnail(path, document, projectLayers)
+}
+
+function showProjectHome() {
+  if (isBusy.value) return
+  appScreen.value = 'home'
+  void refreshRecentProjects()
+}
+
+function returnToEditor() {
+  if (!hasOpenDocument.value || isBusy.value) return
+  appScreen.value = 'editor'
+}
+
+async function removeProjectFromRecents(path: string) {
+  if (isBusy.value) return
+  try {
+    await removeRecentProject(path)
+    await refreshRecentProjects(false)
+  } catch (error) {
+    showError(error, 'Não foi possível remover o projeto dos recentes.')
+  }
+}
+
+async function clearProjectRecents() {
+  if (isBusy.value || !recentProjects.value.length) return
+  if (!window.confirm('Limpar a lista de projetos recentes? Nenhum arquivo será apagado.')) return
+  try {
+    await clearRecentProjects()
+    recentRefreshGate.invalidate()
+    recentProjects.value = []
+    recentProjectsLoading.value = false
+  } catch (error) {
+    showError(error, 'Não foi possível limpar os projetos recentes.')
+  }
+}
+
+async function requestNewDocument() {
+  if (isBusy.value || !await confirmDiscardChanges()) return
   showNewDocumentDialog.value = true
 }
 
@@ -1446,7 +1553,7 @@ function projectNameFromPath(path: string, fallback: string) {
 }
 
 async function saveProject(saveAs = false) {
-  if (isBusy.value) return
+  if (isBusy.value || !hasOpenDocument.value) return false
   canvasViewport.value?.commitPendingTransform()
   isBusy.value = true
   errorText.value = ''
@@ -1455,12 +1562,14 @@ async function saveProject(saveAs = false) {
     const target = await prepareAxiaProjectSave(activeDocument.value.name, projectPath.value, saveAs)
     if (!target.token || !target.path) {
       statusText.value = 'Salvamento cancelado'
-      return
+      return false
     }
     const projectName = projectNameFromPath(target.path, activeDocument.value.name)
+    const documentSnapshot = { ...activeDocument.value, name: projectName }
+    const layerSnapshot = layers.value.map(cloneLayerState)
     const { manifest, assetSources } = createAxiaProjectManifest({
-      document: { ...activeDocument.value, name: projectName },
-      layers: layers.value,
+      document: documentSnapshot,
+      layers: layerSnapshot,
       guides: guides.value,
       view: {
         activeLayerId: activeLayerId.value,
@@ -1480,22 +1589,29 @@ async function saveProject(saveAs = false) {
     projectPath.value = saved.path || target.path
     savedHistoryRevision.value = historyRevision.value
     statusText.value = `Projeto salvo: ${projectPath.value}`
+    try {
+      await registerRecentProject(projectPath.value, documentSnapshot, layerSnapshot)
+    } catch {
+      statusText.value = `Projeto salvo, mas o histórico recente não pôde ser atualizado: ${projectPath.value}`
+    }
+    return true
   } catch (error) {
     showError(error, 'Não foi possível salvar o projeto Axia.')
+    return false
   } finally {
     isBusy.value = false
   }
 }
 
-async function openProject() {
-  if (isBusy.value || !confirmDiscardChanges()) return
+async function openProject(recentPath = '') {
+  if (isBusy.value || !await confirmDiscardChanges()) return
   isBusy.value = true
   errorText.value = ''
   statusText.value = 'Abrindo projeto Axia…'
   previewLayerCountHint = 0
   let openedSessionID = ''
   try {
-    const opened = await openAxiaProject()
+    const opened = recentPath ? await openRecentProject(recentPath) : await openAxiaProject()
     if (!opened.path) {
       statusText.value = 'Abertura cancelada'
       return
@@ -1535,6 +1651,8 @@ async function openProject() {
     activeTool.value = 'move'
     projectPath.value = opened.path
     savedHistoryRevision.value = historyRevision.value
+    hasOpenDocument.value = true
+    appScreen.value = 'editor'
     previewLayerCountHint = 0
     statusText.value = 'Sincronizando projeto…'
     await nextTick()
@@ -1545,9 +1663,19 @@ async function openProject() {
     await finalizeAxiaProjectOpen(openedSessionID, true)
     openedSessionID = ''
     statusText.value = `${activeDocument.value.name} — projeto aberto`
+    try {
+      await registerRecentProject(
+        opened.path,
+        { ...activeDocument.value },
+        layers.value.map(cloneLayerState)
+      )
+    } catch {
+      statusText.value = `${activeDocument.value.name} — aberto, mas não adicionado aos recentes`
+    }
   } catch (error) {
     if (openedSessionID) await finalizeAxiaProjectOpen(openedSessionID, false).catch(() => undefined)
     showError(error, 'Não foi possível abrir o projeto Axia.')
+    if (recentPath) void refreshRecentProjects(false)
   } finally {
     previewLayerCountHint = 0
     isBusy.value = false
@@ -1632,14 +1760,36 @@ function handleShortcut(event: KeyboardEvent) {
   if (event.defaultPrevented) return
 
   const command = event.ctrlKey || event.metaKey
-  if (command && event.code === 'KeyS' && !event.altKey) {
+  if (editorIsBlockedByModal(showNewDocumentDialog.value, showUnsavedChangesDialog.value)) {
+    if (showUnsavedChangesDialog.value && event.key === 'Escape' && !isBusy.value) {
+      event.preventDefault()
+      resolveDiscardChanges(false)
+    } else if (command) {
+      event.preventDefault()
+    }
+    return
+  }
+
+  if (command && event.code === 'KeyN' && !event.shiftKey && !event.altKey) {
     event.preventDefault()
-    void saveProject(event.shiftKey)
+    requestNewDocument()
     return
   }
   if (command && event.code === 'KeyO' && !event.shiftKey && !event.altKey) {
     event.preventDefault()
     void openProject()
+    return
+  }
+  if (appScreen.value === 'home') {
+    if (event.key === 'Escape' && hasOpenDocument.value) {
+      event.preventDefault()
+      returnToEditor()
+    }
+    return
+  }
+  if (command && event.code === 'KeyS' && !event.altKey) {
+    event.preventDefault()
+    void saveProject(event.shiftKey)
     return
   }
   if (command && event.code === 'KeyR' && !event.shiftKey && !event.altKey) {
@@ -1705,7 +1855,7 @@ onMounted(async () => {
   window.addEventListener('beforeunload', protectUnsavedDocument)
 
   try {
-    const status = await getEditorStatus()
+    const [status] = await Promise.all([getEditorStatus(), refreshRecentProjects()])
     statusText.value = `${status.appName} — ${status.engine}`
   } catch (error) {
     showError(error, 'Editor iniciado com recursos locais.')
@@ -1727,7 +1877,24 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="app-shell" :class="{ 'app-shell--busy': isBusy }">
+    <ProjectHome
+      v-if="appScreen === 'home'"
+      :inert="modalOpen || undefined"
+      :busy="isBusy"
+      :can-return-to-editor="hasOpenDocument"
+      :loading="recentProjectsLoading"
+      :projects="recentProjects"
+      @clear="clearProjectRecents"
+      @new-document="requestNewDocument"
+      @open-project="openProject()"
+      @open-recent="openProject"
+      @remove-recent="removeProjectFromRecents"
+      @return-to-editor="returnToEditor"
+    />
+
     <TopMenu
+      v-else-if="hasOpenDocument"
+      :inert="modalOpen || undefined"
       :can-redo="canRedo"
       :can-undo="canUndo"
       :document-dirty="documentDirty"
@@ -1740,6 +1907,7 @@ onBeforeUnmount(() => {
       :undo-label="undoLabel"
       @export-document="exportDocument"
       @history-jump="jumpHistory"
+      @home="showProjectHome"
       @import-images="importImages"
       @new-document="requestNewDocument"
       @open-project="openProject"
@@ -1763,7 +1931,7 @@ onBeforeUnmount(() => {
       @change="readLocalFiles($event.target as HTMLInputElement)"
     />
 
-    <section class="workspace">
+    <section v-if="hasOpenDocument" v-show="appScreen === 'editor'" class="workspace" :inert="modalOpen || undefined">
       <ToolBar v-model:active-tool="activeTool" @tool-double-click="handleToolDoubleClick" />
 
       <CanvasViewport
@@ -1845,9 +2013,18 @@ onBeforeUnmount(() => {
     </section>
 
     <NewDocumentDialog
+      :busy="isBusy"
       :open="showNewDocumentDialog"
       @close="showNewDocumentDialog = false"
       @create="createDocument"
+    />
+    <UnsavedChangesDialog
+      :busy="isBusy"
+      :document-name="activeDocument.name"
+      :open="showUnsavedChangesDialog"
+      @cancel="resolveDiscardChanges(false)"
+      @discard="resolveDiscardChanges(true)"
+      @save="saveBeforeDiscarding"
     />
   </main>
 </template>

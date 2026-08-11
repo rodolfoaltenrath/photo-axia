@@ -9,6 +9,7 @@ import (
 	_ "image/gif"
 	"image/jpeg"
 	"image/png"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,15 +24,19 @@ import (
 )
 
 type App struct {
-	ctx           context.Context
-	assetsMu      sync.RWMutex
-	imagePaths    map[string]string
-	projectMu     sync.Mutex
-	projectSaves  map[string]string
-	projectFiles  map[string]projectSession
-	documentDirty atomic.Bool
-	previewSlots  chan struct{}
-	previewCache  *previewCache
+	ctx                   context.Context
+	assetsMu              sync.RWMutex
+	imagePaths            map[string]string
+	projectMu             sync.Mutex
+	projectSaves          map[string]string
+	projectFiles          map[string]projectSession
+	recentMu              sync.Mutex
+	recentUploads         map[string]recentUpload
+	recentConfigDirectory string
+	recentCacheDirectory  string
+	documentDirty         atomic.Bool
+	previewSlots          chan struct{}
+	previewCache          *previewCache
 }
 
 // previewCacheCapacityBytes and previewCacheMaxEntries are vars (not consts) so
@@ -147,11 +152,12 @@ type ImportedImage struct {
 
 func NewApp() *App {
 	return &App{
-		imagePaths:   make(map[string]string),
-		projectSaves: make(map[string]string),
-		projectFiles: make(map[string]projectSession),
-		previewSlots: make(chan struct{}, 1),
-		previewCache: newPreviewCache(),
+		imagePaths:    make(map[string]string),
+		projectSaves:  make(map[string]string),
+		projectFiles:  make(map[string]projectSession),
+		recentUploads: make(map[string]recentUpload),
+		previewSlots:  make(chan struct{}, 1),
+		previewCache:  newPreviewCache(),
 	}
 }
 
@@ -164,6 +170,9 @@ func (a *App) shutdown(context.Context) {
 	a.projectMu.Lock()
 	a.projectSaves = make(map[string]string)
 	a.projectMu.Unlock()
+	a.recentMu.Lock()
+	a.recentUploads = make(map[string]recentUpload)
+	a.recentMu.Unlock()
 }
 
 func (a *App) SetDocumentDirty(dirty bool) {
@@ -214,37 +223,33 @@ func (a *App) GetEditorStatus() EditorStatus {
 	}
 }
 
-func (a *App) CreateDocument(name string, width int, height int, unit string, physicalWidth float64, physicalHeight float64, resolutionDPI int, background string) DocumentSpec {
+func (a *App) CreateDocument(name string, width int, height int, unit string, physicalWidth float64, physicalHeight float64, resolutionDPI int, background string) (DocumentSpec, error) {
+	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "Sem titulo"
 	}
-
-	if unit == "" {
-		unit = "px"
+	if len(name) > 512 {
+		return DocumentSpec{}, fmt.Errorf("nome do documento excede o limite permitido")
 	}
-
-	if width <= 0 {
-		width = 1920
+	if width <= 0 || height <= 0 || width > 16_384 || height > 16_384 || int64(width)*int64(height) > 64_000_000 {
+		return DocumentSpec{}, fmt.Errorf("dimensoes do documento invalidas")
 	}
-
-	if height <= 0 {
-		height = 1080
+	switch unit {
+	case "px", "cm", "mm", "in":
+	default:
+		return DocumentSpec{}, fmt.Errorf("unidade do documento invalida")
 	}
-
-	if resolutionDPI <= 0 {
-		resolutionDPI = 72
+	if resolutionDPI < 1 || resolutionDPI > 2400 {
+		return DocumentSpec{}, fmt.Errorf("resolucao do documento invalida")
 	}
-
-	if physicalWidth <= 0 {
-		physicalWidth = float64(width)
+	if physicalWidth <= 0 || physicalHeight <= 0 || math.IsNaN(physicalWidth) || math.IsNaN(physicalHeight) ||
+		math.IsInf(physicalWidth, 0) || math.IsInf(physicalHeight, 0) {
+		return DocumentSpec{}, fmt.Errorf("dimensoes fisicas do documento invalidas")
 	}
-
-	if physicalHeight <= 0 {
-		physicalHeight = float64(height)
-	}
-
-	if background == "" {
-		background = "transparent"
+	switch background {
+	case "transparent", "white", "black":
+	default:
+		return DocumentSpec{}, fmt.Errorf("fundo do documento invalido")
 	}
 
 	return DocumentSpec{
@@ -259,7 +264,7 @@ func (a *App) CreateDocument(name string, width int, height int, unit string, ph
 		ColorSpace:     "sRGB",
 		Background:     background,
 		CreatedAt:      time.Now().Format(time.RFC3339),
-	}
+	}, nil
 }
 
 func (a *App) ApplyPreviewFilter(filterName string) string {
@@ -357,7 +362,11 @@ func (a *App) readImageFile(path string) (ImportedImage, error) {
 	if format == "jpeg" {
 		mimeType = "image/jpeg"
 	}
-	id := fmt.Sprintf("image-%d", time.Now().UnixNano())
+	token, err := projectToken()
+	if err != nil {
+		return ImportedImage{}, fmt.Errorf("gerar identificador da imagem: %w", err)
+	}
+	id := "image-" + token
 
 	a.assetsMu.Lock()
 	a.imagePaths[id] = path
@@ -491,6 +500,7 @@ func writePreviewEntry(response http.ResponseWriter, entry previewCacheEntry) {
 func (a *App) assetMiddleware(next http.Handler) http.Handler {
 	assets := a.assetHandler()
 	projects := a.projectHandler()
+	recents := a.recentProjectsHandler()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/__axia_asset/") {
 			assets.ServeHTTP(response, request)
@@ -498,6 +508,10 @@ func (a *App) assetMiddleware(next http.Handler) http.Handler {
 		}
 		if strings.HasPrefix(request.URL.Path, "/__axia_project/") {
 			projects.ServeHTTP(response, request)
+			return
+		}
+		if strings.HasPrefix(request.URL.Path, "/__axia_recent/") {
+			recents.ServeHTTP(response, request)
 			return
 		}
 		next.ServeHTTP(response, request)

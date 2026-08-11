@@ -2389,7 +2389,7 @@ defineExpose({
       </label>
       <span v-if="activeTool === 'brush' || activeTool === 'eraser'">{{ brushSize }} px</span>
       <span>{{ document.width }} × {{ document.height }}</span>
-      <span>{{ document.unit === 'cm' ? `${document.physicalWidth} × ${document.physicalHeight} cm` : 'pixels' }}</span>
+      <span>{{ document.unit === 'px' ? 'pixels' : `${document.physicalWidth} × ${document.physicalHeight} ${document.unit}` }}</span>
       <span>{{ isViewportReady ? `${formatZoom(visualZoom)}%` : '—' }}</span>
       <details class="guide-settings-menu">
         <summary title="Configurar réguas e guias">Réguas</summary>

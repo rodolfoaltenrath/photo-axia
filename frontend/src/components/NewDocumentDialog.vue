@@ -1,8 +1,18 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
+import {
+  BUILTIN_DOCUMENT_PRESETS,
+  documentBaseMemoryBytes,
+  documentPixelSize,
+  parseCustomDocumentPresets,
+  validateDocumentSettings,
+  type DocumentPreset
+} from '../editor/document'
 import type { DocumentBackground, DocumentUnit, NewDocumentSettings } from '../types/editor'
+import { canCreateDocument } from '../editor/interactionGuards'
 
 const props = defineProps<{
+  busy: boolean
   open: boolean
 }>()
 
@@ -11,149 +21,277 @@ const emit = defineEmits<{
   (event: 'create', settings: NewDocumentSettings): void
 }>()
 
-const presets = [
-  { label: 'Full HD', unit: 'px' as DocumentUnit, width: 1920, height: 1080, dpi: 72 },
-  { label: 'Quadrado', unit: 'px' as DocumentUnit, width: 1080, height: 1080, dpi: 72 },
-  { label: 'A4', unit: 'cm' as DocumentUnit, width: 21, height: 29.7, dpi: 300 },
-  { label: 'Foto 10x15', unit: 'cm' as DocumentUnit, width: 10, height: 15, dpi: 300 }
-]
-
-const form = reactive({
-  name: 'Sem titulo',
-  unit: 'px' as DocumentUnit,
+const PRESETS_STORAGE_KEY = 'axia:document-presets'
+const dialog = ref<HTMLElement | null>(null)
+const nameInput = ref<HTMLInputElement | null>(null)
+const category = ref<DocumentPreset['category']>('screen')
+const customPresets = ref<DocumentPreset[]>(loadCustomPresets())
+const savingPreset = ref(false)
+const presetName = ref('')
+const form = reactive<NewDocumentSettings>({
+  name: 'Sem título',
+  unit: 'px',
   width: 1920,
   height: 1080,
   resolutionDpi: 72,
-  background: 'transparent' as DocumentBackground
+  background: 'transparent'
 })
 
-const pixelSize = computed(() => {
-  if (form.unit === 'px') {
-    return {
-      width: Math.max(1, Math.round(form.width)),
-      height: Math.max(1, Math.round(form.height))
-    }
-  }
+const categories: Array<{ id: DocumentPreset['category']; label: string }> = [
+  { id: 'screen', label: 'Tela' },
+  { id: 'photo', label: 'Foto' },
+  { id: 'print', label: 'Impressão' },
+  { id: 'saved', label: 'Salvos' }
+]
 
-  return {
-    width: Math.max(1, Math.round((form.width / 2.54) * form.resolutionDpi)),
-    height: Math.max(1, Math.round((form.height / 2.54) * form.resolutionDpi))
-  }
+const visiblePresets = computed(() => (
+  category.value === 'saved'
+    ? customPresets.value
+    : BUILTIN_DOCUMENT_PRESETS.filter((preset) => preset.category === category.value)
+))
+const pixelSize = computed(() => documentPixelSize(form))
+const validationError = computed(() => validateDocumentSettings(form))
+const megapixels = computed(() => (pixelSize.value.width * pixelSize.value.height / 1_000_000).toFixed(2))
+const memoryLabel = computed(() => {
+  const bytes = documentBaseMemoryBytes(form)
+  return bytes < 1024 * 1024
+    ? `${Math.ceil(bytes / 1024)} KB`
+    : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 })
 
-const validationError = computed(() => {
-  if (!Number.isFinite(pixelSize.value.width) || !Number.isFinite(pixelSize.value.height)) {
-    return 'Informe dimensões válidas.'
+function loadCustomPresets() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PRESETS_STORAGE_KEY) ?? '[]') as unknown
+    return parseCustomDocumentPresets(stored)
+  } catch {
+    return []
   }
-  if (pixelSize.value.width > 16384 || pixelSize.value.height > 16384) {
-    return 'Cada dimensão pode ter no máximo 16.384 px.'
-  }
-  if (pixelSize.value.width * pixelSize.value.height > 64_000_000) {
-    return 'O documento pode ter no máximo 64 megapixels.'
-  }
-  return ''
-})
+}
 
-watch(
-  () => form.unit,
-  (unit) => {
-    if (unit === 'px' && form.resolutionDpi === 300) {
-      form.resolutionDpi = 72
-    }
-    if (unit === 'cm' && form.resolutionDpi === 72) {
-      form.resolutionDpi = 300
-    }
+function persistCustomPresets() {
+  try {
+    localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(customPresets.value))
+  } catch {
+    // O diálogo continua funcional quando preferências locais estão indisponíveis.
   }
-)
+}
 
-function applyPreset(index: number) {
-  const preset = presets[index]
+function applyPreset(preset: DocumentPreset) {
   form.unit = preset.unit
   form.width = preset.width
   form.height = preset.height
-  form.resolutionDpi = preset.dpi
+  form.resolutionDpi = preset.resolutionDpi
+  form.background = preset.background
+}
+
+function swapOrientation() {
+  const width = form.width
+  form.width = form.height
+  form.height = width
+}
+
+function savePreset() {
+  const label = presetName.value.trim()
+  if (!label || validationError.value) return
+  const preset: DocumentPreset = {
+    ...form,
+    id: crypto.randomUUID(),
+    category: 'saved',
+    label
+  }
+  customPresets.value = [
+    preset,
+    ...customPresets.value
+  ].slice(0, 20)
+  persistCustomPresets()
+  presetName.value = ''
+  savingPreset.value = false
+  category.value = 'saved'
+}
+
+function deletePreset(id: string) {
+  customPresets.value = customPresets.value.filter((preset) => preset.id !== id)
+  persistCustomPresets()
 }
 
 function createDocument() {
-  if (validationError.value) return
-  emit('create', {
-    name: form.name.trim() || 'Sem titulo',
-    unit: form.unit,
-    width: form.width,
-    height: form.height,
-    resolutionDpi: form.resolutionDpi,
-    background: form.background
-  })
+  if (!canCreateDocument(props.busy, validationError.value)) return
+  emit('create', { ...form, name: form.name.trim() || 'Sem título' })
 }
+
+function closeDialog() {
+  if (!props.busy) emit('close')
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeDialog()
+    return
+  }
+  if (event.key !== 'Tab' || !dialog.value) return
+  const focusable = Array.from(dialog.value.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex]:not([tabindex="-1"])'
+  )).filter((element) => element.offsetParent !== null)
+  const first = focusable[0]
+  const last = focusable.at(-1)
+  if (!first || !last) return
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+watch(() => props.open, async (open) => {
+  if (!open) {
+    savingPreset.value = false
+    presetName.value = ''
+    return
+  }
+  await nextTick()
+  nameInput.value?.focus()
+  nameInput.value?.select()
+})
 </script>
 
 <template>
-  <div v-if="props.open" class="dialog-backdrop" role="presentation" @click.self="emit('close')">
-    <section class="new-document-dialog" aria-modal="true" role="dialog" aria-labelledby="new-doc-title">
+  <div v-if="open" class="dialog-backdrop" role="presentation" @click.self="closeDialog">
+    <section
+      ref="dialog"
+      class="new-document-dialog new-document-dialog--expanded"
+      :aria-busy="busy"
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="new-doc-title"
+      @keydown="handleKeydown"
+    >
       <header class="dialog-header">
         <div>
           <h2 id="new-doc-title">Novo documento</h2>
-          <span>{{ pixelSize.width }} x {{ pixelSize.height }} px</span>
+          <span>{{ pixelSize.width }} × {{ pixelSize.height }} px · {{ megapixels }} MP</span>
         </div>
-        <button type="button" title="Fechar" @click="emit('close')">x</button>
+        <button :disabled="busy" type="button" title="Fechar" aria-label="Fechar" @click="closeDialog">×</button>
       </header>
 
-      <div class="preset-row" aria-label="Predefinições">
-        <button
-          v-for="(preset, index) in presets"
-          :key="preset.label"
-          type="button"
-          @click="applyPreset(index)"
-        >
-          {{ preset.label }}
-        </button>
+      <div class="new-document-content">
+        <section class="document-presets" aria-label="Predefinições de documento">
+          <nav class="preset-categories" aria-label="Categorias">
+            <button
+              v-for="item in categories"
+              :key="item.id"
+              :aria-pressed="category === item.id"
+              :disabled="busy"
+              type="button"
+              @click="category = item.id"
+            >
+              {{ item.label }}
+            </button>
+          </nav>
+          <div v-if="visiblePresets.length" class="preset-grid">
+            <article
+              v-for="preset in visiblePresets"
+              :key="preset.id"
+              class="document-preset-card"
+            >
+              <button class="preset-apply" :disabled="busy" type="button" @click="applyPreset(preset)">
+                <span class="preset-ratio" :style="{ aspectRatio: `${preset.width} / ${preset.height}` }"></span>
+                <strong>{{ preset.label }}</strong>
+                <small>{{ preset.width }} × {{ preset.height }} {{ preset.unit }}</small>
+              </button>
+              <button
+                v-if="preset.category === 'saved'"
+                class="preset-delete"
+                :aria-label="`Excluir predefinição ${preset.label}`"
+                :disabled="busy"
+                title="Excluir predefinição"
+                type="button"
+                @click.stop="deletePreset(preset.id)"
+              >×</button>
+            </article>
+          </div>
+          <div v-else class="preset-empty">
+            <p>Nenhuma predefinição salva.</p>
+            <span>Configure o documento ao lado e salve para reutilizar.</span>
+          </div>
+        </section>
+
+        <form class="document-form document-details" :aria-busy="busy" :inert="busy || undefined" @submit.prevent="createDocument">
+          <label class="field-full">
+            Nome
+            <input ref="nameInput" v-model="form.name" :disabled="busy" maxlength="160" type="text" />
+          </label>
+
+          <label>
+            Largura
+            <input v-model.number="form.width" :disabled="busy" min="0.01" step="0.01" type="number" />
+          </label>
+          <label>
+            Altura
+            <input v-model.number="form.height" :disabled="busy" min="0.01" step="0.01" type="number" />
+          </label>
+          <label>
+            Unidade
+            <select v-model="form.unit" :disabled="busy">
+              <option value="px">Pixels</option>
+              <option value="cm">Centímetros</option>
+              <option value="mm">Milímetros</option>
+              <option value="in">Polegadas</option>
+            </select>
+          </label>
+          <label>
+            Resolução
+            <span class="field-with-suffix">
+              <input v-model.number="form.resolutionDpi" :disabled="busy" max="2400" min="1" step="1" type="number" />
+              <span>ppi</span>
+            </span>
+          </label>
+
+          <div class="orientation-control field-full">
+            <span>Orientação</span>
+            <button :disabled="busy" type="button" @click="swapOrientation">↔ Trocar largura e altura</button>
+          </div>
+
+          <label class="field-full">
+            Conteúdo do fundo
+            <select v-model="form.background" :disabled="busy">
+              <option value="transparent">Transparente</option>
+              <option value="white">Branco</option>
+              <option value="black">Preto</option>
+            </select>
+          </label>
+
+          <details class="document-advanced field-full">
+            <summary>Opções avançadas</summary>
+            <dl>
+              <div><dt>Modo de cor</dt><dd>RGB · 8 bits</dd></div>
+              <div><dt>Perfil</dt><dd>sRGB</dd></div>
+              <div><dt>Proporção do pixel</dt><dd>Pixels quadrados</dd></div>
+            </dl>
+          </details>
+
+          <div class="document-estimate field-full">
+            <span>Tamanho base</span>
+            <strong>{{ pixelSize.width }} × {{ pixelSize.height }} px · {{ memoryLabel }}</strong>
+          </div>
+
+          <p v-if="validationError" class="form-error field-full" role="alert">{{ validationError }}</p>
+
+          <div v-if="savingPreset" class="save-preset-row field-full">
+            <input v-model="presetName" :disabled="busy" maxlength="80" placeholder="Nome da predefinição" type="text" />
+            <button :disabled="busy || !presetName.trim() || Boolean(validationError)" type="button" @click="savePreset">Salvar</button>
+            <button :disabled="busy" type="button" @click="savingPreset = false">Cancelar</button>
+          </div>
+
+          <footer class="dialog-actions field-full">
+            <button :disabled="busy" type="button" @click="savingPreset = !savingPreset">Salvar predefinição</button>
+            <button :disabled="busy" type="button" @click="closeDialog">Cancelar</button>
+            <button class="primary-button" :disabled="busy || Boolean(validationError)" type="submit">Criar</button>
+          </footer>
+        </form>
       </div>
-
-      <form class="document-form" @submit.prevent="createDocument">
-        <label class="field-full">
-          Nome
-          <input v-model="form.name" type="text" />
-        </label>
-
-        <label>
-          Unidade
-          <select v-model="form.unit">
-            <option value="px">Pixels</option>
-            <option value="cm">Centímetros</option>
-          </select>
-        </label>
-
-        <label>
-          Resolução
-          <input v-model.number="form.resolutionDpi" min="1" step="1" type="number" />
-        </label>
-
-        <label>
-          Largura
-          <input v-model.number="form.width" min="0.1" step="0.1" type="number" />
-        </label>
-
-        <label>
-          Altura
-          <input v-model.number="form.height" min="0.1" step="0.1" type="number" />
-        </label>
-
-        <label class="field-full">
-          Fundo
-          <select v-model="form.background">
-            <option value="transparent">Transparente</option>
-            <option value="white">Branco</option>
-            <option value="black">Preto</option>
-          </select>
-        </label>
-
-        <p v-if="validationError" class="form-error" role="alert">{{ validationError }}</p>
-
-        <footer class="dialog-actions">
-          <button type="button" @click="emit('close')">Cancelar</button>
-          <button class="primary-button" :disabled="Boolean(validationError)" type="submit">Criar</button>
-        </footer>
-      </form>
     </section>
   </div>
 </template>

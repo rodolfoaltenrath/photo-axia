@@ -4,17 +4,29 @@ import {main} from '../models';
 
 export function ApplyPreviewFilter(arg1:string):Promise<string>;
 
+export function ClearRecentProjects():Promise<void>;
+
 export function CreateDocument(arg1:string,arg2:number,arg3:number,arg4:string,arg5:number,arg6:number,arg7:number,arg8:string):Promise<main.DocumentSpec>;
 
 export function FinalizeAxiaProjectOpen(arg1:string,arg2:boolean):Promise<void>;
 
 export function GetEditorStatus():Promise<main.EditorStatus>;
 
+export function ListRecentProjects():Promise<Array<main.RecentProject>>;
+
 export function OpenAxiaProject():Promise<main.OpenedAxiaProject>;
+
+export function OpenRecentProject(arg1:string):Promise<main.OpenedAxiaProject>;
 
 export function PrepareAxiaProjectSave(arg1:string,arg2:string,arg3:boolean):Promise<main.ProjectSaveTarget>;
 
+export function PrepareRecentThumbnail(arg1:string):Promise<string>;
+
+export function RecordRecentProject(arg1:string,arg2:string,arg3:number,arg4:number):Promise<main.RecentProject>;
+
 export function ReleaseAxiaProjectAssets():Promise<void>;
+
+export function RemoveRecentProject(arg1:string):Promise<void>;
 
 export function SaveExportedPNG(arg1:string,arg2:string):Promise<string>;
 

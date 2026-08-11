@@ -6,6 +6,10 @@ export function ApplyPreviewFilter(arg1) {
   return window['go']['main']['App']['ApplyPreviewFilter'](arg1);
 }
 
+export function ClearRecentProjects() {
+  return window['go']['main']['App']['ClearRecentProjects']();
+}
+
 export function CreateDocument(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
   return window['go']['main']['App']['CreateDocument'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
@@ -18,16 +22,36 @@ export function GetEditorStatus() {
   return window['go']['main']['App']['GetEditorStatus']();
 }
 
+export function ListRecentProjects() {
+  return window['go']['main']['App']['ListRecentProjects']();
+}
+
 export function OpenAxiaProject() {
   return window['go']['main']['App']['OpenAxiaProject']();
+}
+
+export function OpenRecentProject(arg1) {
+  return window['go']['main']['App']['OpenRecentProject'](arg1);
 }
 
 export function PrepareAxiaProjectSave(arg1, arg2, arg3) {
   return window['go']['main']['App']['PrepareAxiaProjectSave'](arg1, arg2, arg3);
 }
 
+export function PrepareRecentThumbnail(arg1) {
+  return window['go']['main']['App']['PrepareRecentThumbnail'](arg1);
+}
+
+export function RecordRecentProject(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RecordRecentProject'](arg1, arg2, arg3, arg4);
+}
+
 export function ReleaseAxiaProjectAssets() {
   return window['go']['main']['App']['ReleaseAxiaProjectAssets']();
+}
+
+export function RemoveRecentProject(arg1) {
+  return window['go']['main']['App']['RemoveRecentProject'](arg1);
 }
 
 export function SaveExportedPNG(arg1, arg2) {

@@ -1,5 +1,6 @@
 import type { DocumentSpec, LayerItem } from '../types/editor'
 import { textFont, textLines } from '../editor/text'
+import { layerIntersectsDocument } from '../editor/renderBounds'
 
 function loadImage(source: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -10,13 +11,20 @@ function loadImage(source: string) {
   })
 }
 
-export async function renderDocumentPNG(document: DocumentSpec, layers: LayerItem[]) {
+async function renderDocumentCanvas(
+  document: DocumentSpec,
+  layers: LayerItem[],
+  width: number,
+  height: number,
+  usePreviewSources: boolean
+) {
   const canvas = window.document.createElement('canvas')
-  canvas.width = document.width
-  canvas.height = document.height
+  canvas.width = width
+  canvas.height = height
 
   const context = canvas.getContext('2d')
   if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
+  context.scale(width / document.width, height / document.height)
 
   const background = layers.find((layer) => layer.kind === 'background')
   if (background?.visible && document.background !== 'transparent') {
@@ -27,17 +35,26 @@ export async function renderDocumentPNG(document: DocumentSpec, layers: LayerIte
     context.restore()
   }
 
-  const orderedLayers = [...layers].reverse()
-  const images = new Map(
-    await Promise.all(
-      orderedLayers
-        .filter((layer) => layer.visible && layer.transform && layer.kind === 'image' && layer.image)
-        .map(async (layer) => [layer.id, await loadImage(layer.image!.sourceUrl)] as const)
-    )
+  const orderedLayers = [...layers].reverse().filter((layer) =>
+    layer.visible && layer.transform && layerIntersectsDocument(layer, document)
   )
+  const sourcePromises = new Map<string, Promise<HTMLImageElement>>()
+  const images = new Map<string, HTMLImageElement>()
+  await Promise.all(orderedLayers.map(async (layer) => {
+    if (layer.kind !== 'image' || !layer.image) return
+    const source = usePreviewSources
+      ? layer.image.previewUrl ?? layer.image.sourceUrl
+      : layer.image.sourceUrl
+    let promise = sourcePromises.get(source)
+    if (!promise) {
+      promise = loadImage(source)
+      sourcePromises.set(source, promise)
+    }
+    images.set(layer.id, await promise)
+  }))
 
   for (const layer of orderedLayers) {
-    if (!layer.visible || !layer.transform) continue
+    if (!layer.transform) continue
 
     const image = images.get(layer.id)
     if (!image && (layer.kind !== 'text' || !layer.text)) continue
@@ -81,5 +98,27 @@ export async function renderDocumentPNG(document: DocumentSpec, layers: LayerIte
     context.restore()
   }
 
+  return canvas
+}
+
+export async function renderDocumentPNG(document: DocumentSpec, layers: LayerItem[]) {
+  const canvas = await renderDocumentCanvas(document, layers, document.width, document.height, false)
   return canvas.toDataURL('image/png')
+}
+
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality))
+}
+
+export async function renderDocumentThumbnail(
+  document: DocumentSpec,
+  layers: LayerItem[],
+  maximumWidth = 384,
+  maximumHeight = 216
+) {
+  const scale = Math.min(maximumWidth / document.width, maximumHeight / document.height, 1)
+  const width = Math.max(1, Math.round(document.width * scale))
+  const height = Math.max(1, Math.round(document.height * scale))
+  const canvas = await renderDocumentCanvas(document, layers, width, height, true)
+  return (await canvasBlob(canvas, 'image/webp', 0.82)) ?? (await canvasBlob(canvas, 'image/png'))
 }

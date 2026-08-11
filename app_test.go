@@ -35,6 +35,37 @@ func TestPreventCloseAfterDialogKeepsDocumentOnCancelOrError(t *testing.T) {
 	}
 }
 
+func TestCreateDocumentValidatesNativeBoundary(t *testing.T) {
+	app := NewApp()
+	document, err := app.CreateDocument(" Documento ", 1920, 1080, "px", 1920, 1080, 72, "transparent")
+	if err != nil || document.Name != "Documento" {
+		t.Fatalf("valid document was rejected: %#v, %v", document, err)
+	}
+	invalid := []struct {
+		name       string
+		width      int
+		height     int
+		unit       string
+		physical   float64
+		resolution int
+		background string
+	}{
+		{name: "dimensions", width: 20_000, height: 100, unit: "px", physical: 100, resolution: 72, background: "transparent"},
+		{name: "pixels", width: 10_000, height: 10_000, unit: "px", physical: 100, resolution: 72, background: "transparent"},
+		{name: "unit", width: 100, height: 100, unit: "meters", physical: 100, resolution: 72, background: "transparent"},
+		{name: "resolution", width: 100, height: 100, unit: "px", physical: 100, resolution: 0, background: "transparent"},
+		{name: "background", width: 100, height: 100, unit: "px", physical: 100, resolution: 72, background: "purple"},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := app.CreateDocument("Documento", test.width, test.height, test.unit, test.physical, test.physical, test.resolution, test.background)
+			if err == nil {
+				t.Fatal("invalid native document was accepted")
+			}
+		})
+	}
+}
+
 // writeSolidPNG writes a width x height PNG filled with the given color to path.
 // The alpha channel is kept below 255 so image.RGBA.Opaque() reports false,
 // which keeps generateImagePreview on the lossless PNG encoding path instead

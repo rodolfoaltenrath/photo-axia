@@ -189,7 +189,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
     throw new Error('Dimensões do documento inválidas.')
   }
   if (
-    (document.unit !== 'px' && document.unit !== 'cm') ||
+    !new Set(['px', 'cm', 'mm', 'in']).has(document.unit) ||
     (document.background !== 'transparent' && document.background !== 'white' && document.background !== 'black') ||
     !Number.isFinite(document.resolutionDpi) || document.resolutionDpi <= 0
   ) throw new Error('Configurações do documento inválidas.')

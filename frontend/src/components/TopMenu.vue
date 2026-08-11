@@ -19,6 +19,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'exportDocument'): void
   (event: 'historyJump', position: number): void
+  (event: 'home'): void
   (event: 'importImages'): void
   (event: 'newDocument'): void
   (event: 'openProject'): void
@@ -72,9 +73,9 @@ onBeforeUnmount(() => {
 
 <template>
   <header class="top-menu">
-    <div class="brand">
+    <button class="brand brand-button" title="Ir para o início" type="button" @click="emit('home')">
       <img class="brand-logo" :src="axiaLogo" alt="Axia Studio" />
-    </div>
+    </button>
 
     <nav class="menu-actions" aria-label="Acoes principais">
       <button type="button" @click="emit('newDocument')">Novo</button>

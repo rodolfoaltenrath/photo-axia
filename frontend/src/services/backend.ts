@@ -1,16 +1,22 @@
 import {
   ApplyPreviewFilter,
+  ClearRecentProjects,
   CreateDocument,
   FinalizeAxiaProjectOpen,
   GetEditorStatus,
+  ListRecentProjects,
   OpenAxiaProject,
+  OpenRecentProject,
   PrepareAxiaProjectSave,
+  PrepareRecentThumbnail,
+  RecordRecentProject,
   ReleaseAxiaProjectAssets,
   SaveExportedPNG,
+  RemoveRecentProject,
   SetDocumentDirty,
   SelectImageFiles
 } from '../../wailsjs/go/main/App'
-import type { DocumentSpec, ImportedImage, NewDocumentSettings } from '../types/editor'
+import type { DocumentSpec, ImportedImage, NewDocumentSettings, RecentProject } from '../types/editor'
 
 interface EditorStatus {
   appName: string
@@ -83,6 +89,42 @@ export async function prepareAxiaProjectSave(suggestedName: string, currentPath:
 export async function openAxiaProject() {
   if (!hasDesktopBackend()) throw new Error('Projetos .axia precisam ser abertos pelo aplicativo nativo.')
   return OpenAxiaProject()
+}
+
+export async function listRecentProjects(): Promise<RecentProject[]> {
+  if (!hasDesktopBackend()) return []
+  return (await ListRecentProjects()) as RecentProject[]
+}
+
+export async function openRecentProject(path: string) {
+  if (!hasDesktopBackend()) throw new Error('Projetos recentes precisam do aplicativo nativo.')
+  return OpenRecentProject(path)
+}
+
+export async function recordRecentProject(path: string, name: string, width: number, height: number) {
+  if (!hasDesktopBackend()) return undefined
+  return (await RecordRecentProject(path, name, width, height)) as RecentProject
+}
+
+export async function removeRecentProject(path: string) {
+  if (!hasDesktopBackend()) return
+  await RemoveRecentProject(path)
+}
+
+export async function clearRecentProjects() {
+  if (!hasDesktopBackend()) return
+  await ClearRecentProjects()
+}
+
+export async function uploadRecentThumbnail(path: string, thumbnail: Blob) {
+  if (!hasDesktopBackend()) return
+  const token = await PrepareRecentThumbnail(path)
+  const response = await fetch(`/__axia_recent/thumbnail/${encodeURIComponent(token)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': thumbnail.type || 'image/png' },
+    body: thumbnail
+  })
+  if (!response.ok) throw new Error((await response.text()).trim() || 'Não foi possível salvar a miniatura.')
 }
 
 export async function finalizeAxiaProjectOpen(sessionId: string, accepted: boolean) {

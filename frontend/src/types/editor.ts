@@ -1,7 +1,7 @@
 export type EditorTool = 'move' | 'brush' | 'eraser' | 'crop' | 'text' | 'hand' | 'zoom'
 
 export type LayerKind = 'pixel' | 'image' | 'text' | 'adjustment' | 'background'
-export type DocumentUnit = 'px' | 'cm'
+export type DocumentUnit = 'px' | 'cm' | 'mm' | 'in'
 export type DocumentBackground = 'transparent' | 'white' | 'black'
 export type TextAlignment = 'left' | 'center' | 'right'
 
@@ -79,4 +79,17 @@ export interface NewDocumentSettings {
   height: number
   resolutionDpi: number
   background: DocumentBackground
+}
+
+export interface RecentProject {
+  id: string
+  path: string
+  name: string
+  width: number
+  height: number
+  modifiedAt: string
+  lastOpenedAt: string
+  thumbnailUrl: string
+  thumbnailVersion: number
+  available: boolean
 }

@@ -102,6 +102,35 @@ export namespace main {
 	        this.path = source["path"];
 	    }
 	}
+	export class RecentProject {
+	    id: string;
+	    path: string;
+	    name: string;
+	    width: number;
+	    height: number;
+	    modifiedAt: string;
+	    lastOpenedAt: string;
+	    thumbnailUrl: string;
+	    thumbnailVersion: number;
+	    available: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new RecentProject(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.path = source["path"];
+	        this.name = source["name"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.modifiedAt = source["modifiedAt"];
+	        this.lastOpenedAt = source["lastOpenedAt"];
+	        this.thumbnailUrl = source["thumbnailUrl"];
+	        this.thumbnailVersion = source["thumbnailVersion"];
+	        this.available = source["available"];
+	    }
+	}
 
 }
-
