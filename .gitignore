@@ -42,6 +42,8 @@ Thumbs.db
 # Material local usado apenas como referencia
 /assets/*
 !/assets/Logo.png
+!/assets/background 1.jpeg
+!/assets/background 2.jpeg
 /Exemplo de assets.html
 /Exemplo de assets_files/
 /Photopea _ Online Photo Editor_files/
