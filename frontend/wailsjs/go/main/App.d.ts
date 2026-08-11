@@ -6,8 +6,18 @@ export function ApplyPreviewFilter(arg1:string):Promise<string>;
 
 export function CreateDocument(arg1:string,arg2:number,arg3:number,arg4:string,arg5:number,arg6:number,arg7:number,arg8:string):Promise<main.DocumentSpec>;
 
+export function FinalizeAxiaProjectOpen(arg1:string,arg2:boolean):Promise<void>;
+
 export function GetEditorStatus():Promise<main.EditorStatus>;
+
+export function OpenAxiaProject():Promise<main.OpenedAxiaProject>;
+
+export function PrepareAxiaProjectSave(arg1:string,arg2:string,arg3:boolean):Promise<main.ProjectSaveTarget>;
+
+export function ReleaseAxiaProjectAssets():Promise<void>;
 
 export function SaveExportedPNG(arg1:string,arg2:string):Promise<string>;
 
 export function SelectImageFiles():Promise<Array<main.ImportedImage>>;
+
+export function SetDocumentDirty(arg1:boolean):Promise<void>;

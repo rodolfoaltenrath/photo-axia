@@ -6,6 +6,7 @@ import axiaLogo from '../../../assets/Logo.png'
 const props = defineProps<{
   canRedo: boolean
   canUndo: boolean
+  documentDirty: boolean
   documentName: string
   historyBytes: number
   historyItems: HistoryTimelineItem[]
@@ -20,8 +21,10 @@ const emit = defineEmits<{
   (event: 'historyJump', position: number): void
   (event: 'importImages'): void
   (event: 'newDocument'): void
+  (event: 'openProject'): void
   (event: 'previewFilter', filterName: string): void
   (event: 'redo'): void
+  (event: 'saveProject'): void
   (event: 'undo'): void
 }>()
 
@@ -75,6 +78,7 @@ onBeforeUnmount(() => {
 
     <nav class="menu-actions" aria-label="Acoes principais">
       <button type="button" @click="emit('newDocument')">Novo</button>
+      <button type="button" title="Abrir projeto Axia (Ctrl+O)" @click="emit('openProject')">Abrir</button>
       <button type="button" @click="emit('importImages')">Importar</button>
       <div class="history-actions" aria-label="Histórico">
         <button
@@ -122,13 +126,13 @@ onBeforeUnmount(() => {
           </div>
         </details>
       </div>
-      <button disabled title="Formato de projeto em breve" type="button">Salvar</button>
+      <button title="Salvar projeto Axia (Ctrl+S)" type="button" @click="emit('saveProject')">Salvar</button>
       <button disabled title="Filtros não destrutivos em breve" type="button">Filtro</button>
       <button type="button" @click="emit('exportDocument')">Exportar PNG</button>
     </nav>
 
     <div class="document-status">
-      <strong>{{ documentName }}</strong>
+      <strong>{{ documentName }}{{ documentDirty ? ' *' : '' }}</strong>
       <span>{{ statusText }}</span>
     </div>
   </header>

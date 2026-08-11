@@ -54,6 +54,16 @@ test('agrupa alterações contínuas preservando o primeiro e o último valor', 
   assert.deepEqual(history.undo()?.steps[0]?.delta, { before: '', after: 'Axia' })
 })
 
+test('renova a revisão ao alterar uma transação agrupada depois de salvar', () => {
+  const history = useHistory(deltaOptions)
+  history.record('Editar texto', { before: '', after: 'A' }, { mergeKey: 'text:1' })
+  const savedRevision = history.currentRevision.value
+  history.record('Editar texto', { before: 'A', after: 'Axia' }, { mergeKey: 'text:1' })
+
+  assert.notEqual(history.currentRevision.value, savedRevision)
+  assert.equal(history.currentPosition.value, 1)
+})
+
 test('descarta ações futuras ao criar uma nova ramificação', () => {
   const history = useHistory(deltaOptions)
   history.record('A', { before: 0, after: 1 })

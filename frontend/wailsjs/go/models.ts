@@ -70,6 +70,38 @@ export namespace main {
 	        this.sourceUrl = source["sourceUrl"];
 	    }
 	}
+	export class OpenedAxiaProject {
+	    path: string;
+	    manifest: string;
+	    assetUrls: Record<string, string>;
+	    sessionId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OpenedAxiaProject(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.manifest = source["manifest"];
+	        this.assetUrls = source["assetUrls"];
+	        this.sessionId = source["sessionId"];
+	    }
+	}
+	export class ProjectSaveTarget {
+	    token: string;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectSaveTarget(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token = source["token"];
+	        this.path = source["path"];
+	    }
+	}
 
 }
 

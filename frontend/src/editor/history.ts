@@ -58,6 +58,7 @@ export function useHistory<T>(options: HistoryOptions<T> = {}, initialLabel = 'D
   const undoLabel = computed(() => past.value.at(-1)?.label)
   const redoLabel = computed(() => future.value.at(-1)?.label)
   const currentPosition = computed(() => past.value.length)
+  const currentRevision = computed(() => past.value.at(-1)?.id ?? 0)
   const sizeBytes = computed(() =>
     [...past.value, ...future.value].reduce((total, entry) => total + entry.bytes, 0)
   )
@@ -116,6 +117,7 @@ export function useHistory<T>(options: HistoryOptions<T> = {}, initialLabel = 'D
       }
       const mergedEntry = {
         ...previous,
+        id: nextId++,
         label,
         delta: mergedDelta,
         committedAt,
@@ -189,6 +191,7 @@ export function useHistory<T>(options: HistoryOptions<T> = {}, initialLabel = 'D
     canUndo,
     clear,
     currentPosition,
+    currentRevision,
     entries,
     jump,
     record,

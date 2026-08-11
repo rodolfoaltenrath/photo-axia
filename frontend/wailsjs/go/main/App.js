@@ -10,8 +10,24 @@ export function CreateDocument(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
   return window['go']['main']['App']['CreateDocument'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
+export function FinalizeAxiaProjectOpen(arg1, arg2) {
+  return window['go']['main']['App']['FinalizeAxiaProjectOpen'](arg1, arg2);
+}
+
 export function GetEditorStatus() {
   return window['go']['main']['App']['GetEditorStatus']();
+}
+
+export function OpenAxiaProject() {
+  return window['go']['main']['App']['OpenAxiaProject']();
+}
+
+export function PrepareAxiaProjectSave(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PrepareAxiaProjectSave'](arg1, arg2, arg3);
+}
+
+export function ReleaseAxiaProjectAssets() {
+  return window['go']['main']['App']['ReleaseAxiaProjectAssets']();
 }
 
 export function SaveExportedPNG(arg1, arg2) {
@@ -20,4 +36,8 @@ export function SaveExportedPNG(arg1, arg2) {
 
 export function SelectImageFiles() {
   return window['go']['main']['App']['SelectImageFiles']();
+}
+
+export function SetDocumentDirty(arg1) {
+  return window['go']['main']['App']['SetDocumentDirty'](arg1);
 }

@@ -9,9 +9,14 @@ import TopMenu from './components/TopMenu.vue'
 import {
   applyPreviewFilter,
   createEditorDocument,
+  finalizeAxiaProjectOpen,
   getEditorStatus,
   hasDesktopBackend,
+  openAxiaProject,
+  prepareAxiaProjectSave,
+  releaseAxiaProjectAssets,
   saveExportedPNG,
+  setNativeDocumentDirty,
   selectDesktopImages
 } from './services/backend'
 import {
@@ -25,6 +30,11 @@ import {
   releaseLayerAssets
 } from './services/imageImport'
 import { renderDocumentPNG } from './services/renderDocument'
+import {
+  createAxiaProjectManifest,
+  restoreAxiaProject,
+  uploadAxiaProject
+} from './services/project'
 import {
   applyEditorHistoryDelta,
   cloneLayerPatch,
@@ -112,6 +122,8 @@ const activeLayerId = ref('layer-bg')
 const showNewDocumentDialog = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const canvasViewport = ref<InstanceType<typeof CanvasViewport> | null>(null)
+const projectPath = ref('')
+const savedHistoryRevision = ref<number | null>(null)
 const activeDocument = ref<DocumentSpec>({
   id: 'draft',
   name: 'Sem título',
@@ -166,8 +178,16 @@ const canUndo = history.canUndo
 const historyBytes = history.sizeBytes
 const historyItems = history.timeline
 const historyPosition = history.currentPosition
+const historyRevision = history.currentRevision
 const redoLabel = history.redoLabel
 const undoLabel = history.undoLabel
+const documentDirty = computed(() =>
+  savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value
+)
+
+watch(documentDirty, (dirty) => {
+  void setNativeDocumentDirty(dirty)
+}, { immediate: true, flush: 'sync' })
 
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
@@ -792,6 +812,7 @@ async function createDocument(settings: NewDocumentSettings) {
     const pixels = toPixelSize(settings)
     const document = await createEditorDocument(settings, pixels.width, pixels.height)
     releaseAllEditorAssets()
+    await releaseAxiaProjectAssets()
     history.clear('Documento criado')
     previewGenerations.clear()
     selection.value = null
@@ -802,6 +823,8 @@ async function createDocument(settings: NewDocumentSettings) {
     layers.value = [createBackgroundLayer()]
     activeLayerId.value = 'layer-bg'
     zoom.value = 100
+    projectPath.value = ''
+    savedHistoryRevision.value = null
     showNewDocumentDialog.value = false
     statusText.value = `${document.name} — ${document.width} × ${document.height} px`
   } catch (error) {
@@ -1401,6 +1424,129 @@ function preloadImage(url: string) {
   })
 }
 
+function confirmDiscardChanges() {
+  return !documentDirty.value || window.confirm('Existem alterações não salvas. Deseja descartá-las?')
+}
+
+function requestNewDocument() {
+  if (isBusy.value || !confirmDiscardChanges()) return
+  showNewDocumentDialog.value = true
+}
+
+function projectNameFromPath(path: string, fallback: string) {
+  const filename = path.split(/[\\/]/).at(-1)?.replace(/\.axia$/i, '').trim()
+  return filename || fallback.replace(/\.axia$/i, '').trim() || 'Sem título'
+}
+
+async function saveProject(saveAs = false) {
+  if (isBusy.value) return
+  canvasViewport.value?.commitPendingTransform()
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Preparando projeto Axia…'
+  try {
+    const target = await prepareAxiaProjectSave(activeDocument.value.name, projectPath.value, saveAs)
+    if (!target.token || !target.path) {
+      statusText.value = 'Salvamento cancelado'
+      return
+    }
+    const projectName = projectNameFromPath(target.path, activeDocument.value.name)
+    const { manifest, assetSources } = createAxiaProjectManifest({
+      document: { ...activeDocument.value, name: projectName },
+      layers: layers.value,
+      guides: guides.value,
+      view: {
+        activeLayerId: activeLayerId.value,
+        guideSnappingEnabled: guideSnappingEnabled.value,
+        guidesLocked: guidesLocked.value,
+        guidesVisible: guidesVisible.value,
+        rulerOrigin: rulerOrigin.value,
+        rulerUnit: rulerUnit.value,
+        zoom: zoom.value
+      }
+    })
+    statusText.value = assetSources.length
+      ? `Salvando projeto e ${assetSources.length} asset${assetSources.length === 1 ? '' : 's'}…`
+      : 'Salvando projeto…'
+    const saved = await uploadAxiaProject(target.token, manifest, assetSources)
+    activeDocument.value = { ...activeDocument.value, name: projectName }
+    projectPath.value = saved.path || target.path
+    savedHistoryRevision.value = historyRevision.value
+    statusText.value = `Projeto salvo: ${projectPath.value}`
+  } catch (error) {
+    showError(error, 'Não foi possível salvar o projeto Axia.')
+  } finally {
+    isBusy.value = false
+  }
+}
+
+async function openProject() {
+  if (isBusy.value || !confirmDiscardChanges()) return
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Abrindo projeto Axia…'
+  previewLayerCountHint = 0
+  let openedSessionID = ''
+  try {
+    const opened = await openAxiaProject()
+    if (!opened.path) {
+      statusText.value = 'Abertura cancelada'
+      return
+    }
+    openedSessionID = opened.sessionId
+    const restored = restoreAxiaProject(opened.manifest, opened.assetUrls)
+    const imageLayers = restored.layers.filter((layer) => layer.visible && layer.image && layer.transform)
+    previewLayerCountHint = imageLayers.length
+    zoom.value = restored.view.zoom
+    await nextTick()
+    if (previewRefreshTimer) {
+      clearTimeout(previewRefreshTimer)
+      previewRefreshTimer = undefined
+    }
+    for (const [index, layer] of imageLayers.entries()) {
+      statusText.value = imageLayers.length === 1
+        ? 'Otimizando imagem do projeto…'
+        : `Otimizando imagem ${index + 1} de ${imageLayers.length}…`
+      await refreshLayerPreview(layer, true, true, layer.id === restored.view.activeLayerId)
+    }
+
+    releaseAllEditorAssets()
+    history.clear('Projeto aberto')
+    previewGenerations.clear()
+    selection.value = null
+    selectionGeneration++
+    activeDocument.value = restored.document
+    guides.value = restored.guides
+    guidesVisible.value = restored.view.guidesVisible
+    guidesLocked.value = restored.view.guidesLocked
+    guideSnappingEnabled.value = restored.view.guideSnappingEnabled
+    rulerOrigin.value = restored.view.rulerOrigin
+    rulerUnit.value = restored.view.rulerUnit
+    layers.value = restored.layers
+    trackLayerAssets(restored.layers)
+    activeLayerId.value = restored.view.activeLayerId
+    activeTool.value = 'move'
+    projectPath.value = opened.path
+    savedHistoryRevision.value = historyRevision.value
+    previewLayerCountHint = 0
+    statusText.value = 'Sincronizando projeto…'
+    await nextTick()
+    await canvasViewport.value?.waitForLayerImages(imageLayers.map((layer) => ({
+      layerId: layer.id,
+      source: layer.image?.previewUrl ?? layer.image!.sourceUrl
+    })))
+    await finalizeAxiaProjectOpen(openedSessionID, true)
+    openedSessionID = ''
+    statusText.value = `${activeDocument.value.name} — projeto aberto`
+  } catch (error) {
+    if (openedSessionID) await finalizeAxiaProjectOpen(openedSessionID, false).catch(() => undefined)
+    showError(error, 'Não foi possível abrir o projeto Axia.')
+  } finally {
+    previewLayerCountHint = 0
+    isBusy.value = false
+  }
+}
+
 async function importImages() {
   errorText.value = ''
   if (!hasDesktopBackend()) {
@@ -1469,10 +1615,26 @@ function blockBrowserWheelZoom(event: WheelEvent) {
   if (event.ctrlKey || event.metaKey) event.preventDefault()
 }
 
+function protectUnsavedDocument(event: BeforeUnloadEvent) {
+  if (hasDesktopBackend() || !documentDirty.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
 function handleShortcut(event: KeyboardEvent) {
   if (event.defaultPrevented) return
 
   const command = event.ctrlKey || event.metaKey
+  if (command && event.code === 'KeyS' && !event.altKey) {
+    event.preventDefault()
+    void saveProject(event.shiftKey)
+    return
+  }
+  if (command && event.code === 'KeyO' && !event.shiftKey && !event.altKey) {
+    event.preventDefault()
+    void openProject()
+    return
+  }
   if (command && event.code === 'KeyR' && !event.shiftKey && !event.altKey) {
     event.preventDefault()
     rulersVisible.value = !rulersVisible.value
@@ -1533,6 +1695,7 @@ function handleShortcut(event: KeyboardEvent) {
 onMounted(async () => {
   window.addEventListener('wheel', blockBrowserWheelZoom, zoomEventOptions)
   window.addEventListener('keydown', handleShortcut)
+  window.addEventListener('beforeunload', protectUnsavedDocument)
 
   try {
     const status = await getEditorStatus()
@@ -1551,6 +1714,7 @@ onBeforeUnmount(() => {
   releaseAllEditorAssets()
   window.removeEventListener('wheel', blockBrowserWheelZoom, true)
   window.removeEventListener('keydown', handleShortcut)
+  window.removeEventListener('beforeunload', protectUnsavedDocument)
 })
 </script>
 
@@ -1559,6 +1723,7 @@ onBeforeUnmount(() => {
     <TopMenu
       :can-redo="canRedo"
       :can-undo="canUndo"
+      :document-dirty="documentDirty"
       :document-name="activeDocument.name"
       :history-bytes="historyBytes"
       :history-items="historyItems"
@@ -1569,9 +1734,11 @@ onBeforeUnmount(() => {
       @export-document="exportDocument"
       @history-jump="jumpHistory"
       @import-images="importImages"
-      @new-document="showNewDocumentDialog = true"
+      @new-document="requestNewDocument"
+      @open-project="openProject"
       @preview-filter="previewFilter"
       @redo="redoHistory"
+      @save-project="saveProject()"
       @undo="undoHistory"
     />
 

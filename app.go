@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -22,11 +23,15 @@ import (
 )
 
 type App struct {
-	ctx          context.Context
-	assetsMu     sync.RWMutex
-	imagePaths   map[string]string
-	previewSlots chan struct{}
-	previewCache *previewCache
+	ctx           context.Context
+	assetsMu      sync.RWMutex
+	imagePaths    map[string]string
+	projectMu     sync.Mutex
+	projectSaves  map[string]string
+	projectFiles  map[string]projectSession
+	documentDirty atomic.Bool
+	previewSlots  chan struct{}
+	previewCache  *previewCache
 }
 
 // previewCacheCapacityBytes and previewCacheMaxEntries are vars (not consts) so
@@ -143,6 +148,8 @@ type ImportedImage struct {
 func NewApp() *App {
 	return &App{
 		imagePaths:   make(map[string]string),
+		projectSaves: make(map[string]string),
+		projectFiles: make(map[string]projectSession),
 		previewSlots: make(chan struct{}, 1),
 		previewCache: newPreviewCache(),
 	}
@@ -150,6 +157,32 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+func (a *App) shutdown(context.Context) {
+	a.releaseProjectSessions("")
+	a.projectMu.Lock()
+	a.projectSaves = make(map[string]string)
+	a.projectMu.Unlock()
+}
+
+func (a *App) SetDocumentDirty(dirty bool) {
+	a.documentDirty.Store(dirty)
+}
+
+func (a *App) beforeClose(ctx context.Context) bool {
+	if !a.documentDirty.Load() {
+		return false
+	}
+	result, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
+		Type:          runtime.QuestionDialog,
+		Title:         "Alterações não salvas",
+		Message:       "O projeto possui alterações não salvas. Deseja sair mesmo assim?",
+		Buttons:       []string{"Sair sem salvar", "Cancelar"},
+		DefaultButton: "Cancelar",
+		CancelButton:  "Cancelar",
+	})
+	return err != nil || result != "Sair sem salvar"
 }
 
 func (a *App) GetEditorStatus() EditorStatus {
@@ -436,9 +469,14 @@ func writePreviewEntry(response http.ResponseWriter, entry previewCacheEntry) {
 
 func (a *App) assetMiddleware(next http.Handler) http.Handler {
 	assets := a.assetHandler()
+	projects := a.projectHandler()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/__axia_asset/") {
 			assets.ServeHTTP(response, request)
+			return
+		}
+		if strings.HasPrefix(request.URL.Path, "/__axia_project/") {
+			projects.ServeHTTP(response, request)
 			return
 		}
 		next.ServeHTTP(response, request)

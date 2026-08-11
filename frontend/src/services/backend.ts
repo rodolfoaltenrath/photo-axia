@@ -1,8 +1,13 @@
 import {
   ApplyPreviewFilter,
   CreateDocument,
+  FinalizeAxiaProjectOpen,
   GetEditorStatus,
+  OpenAxiaProject,
+  PrepareAxiaProjectSave,
+  ReleaseAxiaProjectAssets,
   SaveExportedPNG,
+  SetDocumentDirty,
   SelectImageFiles
 } from '../../wailsjs/go/main/App'
 import type { DocumentSpec, ImportedImage, NewDocumentSettings } from '../types/editor'
@@ -68,6 +73,31 @@ export async function selectDesktopImages(): Promise<ImportedImage[]> {
 export async function applyPreviewFilter(filterName: string) {
   if (!hasDesktopBackend()) return `Prévia do filtro: ${filterName}`
   return ApplyPreviewFilter(filterName)
+}
+
+export async function prepareAxiaProjectSave(suggestedName: string, currentPath: string, saveAs: boolean) {
+  if (!hasDesktopBackend()) throw new Error('Projetos .axia precisam ser salvos pelo aplicativo nativo.')
+  return PrepareAxiaProjectSave(suggestedName, currentPath, saveAs)
+}
+
+export async function openAxiaProject() {
+  if (!hasDesktopBackend()) throw new Error('Projetos .axia precisam ser abertos pelo aplicativo nativo.')
+  return OpenAxiaProject()
+}
+
+export async function finalizeAxiaProjectOpen(sessionId: string, accepted: boolean) {
+  if (!hasDesktopBackend() || !sessionId) return
+  await FinalizeAxiaProjectOpen(sessionId, accepted)
+}
+
+export async function releaseAxiaProjectAssets() {
+  if (!hasDesktopBackend()) return
+  await ReleaseAxiaProjectAssets()
+}
+
+export async function setNativeDocumentDirty(dirty: boolean) {
+  if (!hasDesktopBackend()) return
+  await SetDocumentDirty(dirty)
 }
 
 export async function saveExportedPNG(name: string, dataURL: string) {
