@@ -1,5 +1,6 @@
 import type { EditorGuide, RulerOrigin, RulerUnit } from '../editor/guides'
 import type { DocumentSpec, ImageAsset, LayerItem, LayerTransform, TextLayerContent } from '../types/editor'
+import { normalizeLayerBlendMode } from '../editor/blendModes'
 
 export const AXIA_PROJECT_VERSION = 1
 
@@ -103,6 +104,7 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
       name: layer.name,
       visible: layer.visible,
       opacity: layer.opacity,
+      blendMode: normalizeLayerBlendMode(layer.blendMode),
       kind: layer.kind,
       image: storedImage,
       text: cloneText(layer.text),
@@ -228,6 +230,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
       name: requireString(stored.name, 'Nome da camada'),
       visible: Boolean(stored.visible),
       opacity: Math.max(0, Math.min(100, stored.opacity)),
+      blendMode: normalizeLayerBlendMode(stored.blendMode),
       kind: stored.kind,
       image,
       text,

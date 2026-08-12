@@ -51,6 +51,7 @@ Consulte [docs/axia-format.md](docs/axia-format.md) para detalhes do formato de 
 - Miniaturas otimizadas e cache de previews para imagens grandes.
 - Criação, seleção automática, movimentação, renomeação, duplicação, exclusão e reordenação de camadas.
 - Controle individual de visibilidade e opacidade.
+- Modos de mesclagem Normal, Multiplicação, Divisão, Sobrepor, Escurecer e Clarear.
 - Transformação livre com movimento, escala proporcional ou livre, escala pelo centro e rotação.
 - Duplicação da camada completa ou somente da região selecionada com `Ctrl+J`.
 - Exclusão contextual: apaga pixels quando existe uma seleção e remove a camada quando não existe.

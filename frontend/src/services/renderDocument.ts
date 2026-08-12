@@ -1,6 +1,7 @@
 import type { DocumentSpec, LayerItem } from '../types/editor'
 import { textFont, textLines } from '../editor/text'
 import { layerIntersectsDocument } from '../editor/renderBounds'
+import { canvasBlendOperation } from '../editor/blendModes'
 
 function loadImage(source: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -63,6 +64,7 @@ async function renderDocumentCanvas(
     const centerY = layer.transform.y + layer.transform.height / 2
     context.save()
     context.globalAlpha = layer.opacity / 100
+    context.globalCompositeOperation = canvasBlendOperation(layer.blendMode)
     context.translate(centerX, centerY)
     context.rotate(((layer.transform.rotation ?? 0) * Math.PI) / 180)
 

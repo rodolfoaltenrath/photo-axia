@@ -17,7 +17,7 @@ O manifesto identifica o formato com `"format": "axia"` e `"version": 1`.
 Ele contém:
 
 - propriedades e dimensões do documento;
-- ordem, visibilidade e opacidade das camadas;
+- ordem, visibilidade, opacidade e modo de mesclagem das camadas;
 - textos editáveis e transformações;
 - referências aos assets raster incorporados;
 - guias, origem/unidade das réguas e estado visual do documento.
@@ -38,3 +38,6 @@ edição nunca são persistidos: a engine os regenera conforme os pixels visíve
 
 Versões futuras devem adicionar campos de forma compatível ou introduzir uma
 nova versão acompanhada de migração explícita.
+
+O campo `blendMode` foi adicionado de forma retrocompatível à versão 1. Quando
+ausente ou desconhecido, a camada é restaurada em `normal`.

@@ -562,12 +562,18 @@ select:focus-visible {
   background-size: 24px 24px;
 }
 
+.document-composite,
 .document-background {
   position: absolute;
   inset: 0;
 }
 
+.document-composite {
+  isolation: isolate;
+}
+
 .document-layers,
+.document-layer-composite,
 .document-layer,
 .document-layer img,
 .selection-move-preview,
@@ -760,10 +766,6 @@ select:focus-visible {
   left: 8px;
 }
 
-.brush-preview {
-  z-index: 15;
-}
-
 .brush-preview--eraser {
   z-index: auto;
 }
@@ -778,10 +780,21 @@ select:focus-visible {
   contain: layout paint style;
 }
 
+.document-layer-composite {
+  display: contents;
+}
+
+.document-layer-composite--active {
+  display: block;
+  inset: 0;
+  pointer-events: none;
+}
+
 .document-layer {
   overflow: hidden;
   contain: layout paint style;
   cursor: pointer;
+  pointer-events: auto;
   transform-origin: center;
   touch-action: none;
 }
@@ -1172,7 +1185,8 @@ select:focus-visible {
   height: 29px;
 }
 
-.compact-range {
+.compact-range,
+.compact-select {
   grid-template-columns: 68px minmax(0, 1fr);
   align-items: center;
 }

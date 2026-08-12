@@ -20,7 +20,7 @@ function projectState() {
     },
     layers: [
       {
-        id: 'image-a', name: 'Imagem A', visible: true, opacity: 80, kind: 'image',
+        id: 'image-a', name: 'Imagem A', visible: true, opacity: 80, blendMode: 'multiply', kind: 'image',
         image: {
           width: 800, height: 600, mimeType: 'image/png', sourceUrl,
           previewUrl: '/__axia_asset/image-1?previewWidth=400&previewHeight=300',
@@ -63,6 +63,7 @@ test('manifesto .axia deduplica originals e descarta previews derivados', () => 
   assert.equal(manifest.assets.length, 1)
   assert.equal(assetSources.length, 1)
   assert.equal(manifest.layers[0].image.assetId, manifest.layers[1].image.assetId)
+  assert.equal(manifest.layers[0].blendMode, 'multiply')
   assert.equal('previewUrl' in manifest.layers[0].image, false)
   assert.equal('editToken' in manifest.layers[0].image, false)
 })
@@ -74,12 +75,22 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
   })
   assert.equal(restored.document.name, 'Projeto')
   assert.equal(restored.layers[0].image.sourceUrl, '/__axia_asset/restored')
+  assert.equal(restored.layers[0].blendMode, 'multiply')
   assert.equal(restored.layers[0].image.previewUrl, undefined)
   assert.equal(restored.layers[2].text.content, 'Axia')
   assert.equal(restored.layers[2].transform.rotation, -5)
   assert.deepEqual(restored.guides, projectState().guides)
   assert.equal(restored.view.activeLayerId, 'image-a')
   assert.equal(restored.view.zoom, 68.89)
+})
+
+test('projetos antigos sem mesclagem são restaurados em modo normal', () => {
+  const { manifest } = createAxiaProjectManifest(projectState())
+  for (const layer of manifest.layers) delete layer.blendMode
+  const restored = restoreAxiaProject(JSON.stringify(manifest), {
+    [manifest.assets[0].id]: '/__axia_asset/restored'
+  })
+  assert.ok(restored.layers.every((layer) => layer.blendMode === 'normal'))
 })
 
 test('rejeita versão futura e assets ausentes', () => {

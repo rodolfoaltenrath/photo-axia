@@ -1,6 +1,7 @@
 export type EditorTool = 'move' | 'brush' | 'eraser' | 'crop' | 'text' | 'hand' | 'zoom'
 
 export type LayerKind = 'pixel' | 'image' | 'text' | 'adjustment' | 'background'
+export type LayerBlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
 export type DocumentUnit = 'px' | 'cm' | 'mm' | 'in'
 export type DocumentBackground = 'transparent' | 'white' | 'black'
 export type TextAlignment = 'left' | 'center' | 'right'
@@ -24,6 +25,7 @@ export interface LayerItem {
   name: string
   visible: boolean
   opacity: number
+  blendMode: LayerBlendMode
   kind: LayerKind
   image?: ImageAsset
   text?: TextLayerContent

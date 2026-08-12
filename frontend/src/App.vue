@@ -90,6 +90,7 @@ import type {
   EditorTool,
   ImageAsset,
   ImportedImage,
+  LayerBlendMode,
   LayerItem,
   LayerTransform,
   NewDocumentSettings,
@@ -261,7 +262,7 @@ watch(rulersVisible, (visible) => {
 })
 
 function createBackgroundLayer(): LayerItem {
-  return { id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, kind: 'background' }
+  return { id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, blendMode: 'normal', kind: 'background' }
 }
 
 function recordHistory(label: string, delta: EditorHistoryDelta, options?: HistoryRecordOptions) {
@@ -403,6 +404,7 @@ function addLayer() {
     name: `Camada ${layers.value.length}`,
     visible: true,
     opacity: 100,
+    blendMode: 'normal',
     kind: 'pixel'
   }
   layers.value.splice(insertionIndex, 0, layer)
@@ -431,6 +433,7 @@ function addTextLayer(point: { x: number; y: number }) {
     name: text.content,
     visible: true,
     opacity: 100,
+    blendMode: 'normal',
     kind: 'text',
     text,
     transform: {
@@ -649,6 +652,7 @@ async function duplicateSelectionOrLayer() {
       name: `${source.name} seleção`,
       visible: true,
       opacity: 100,
+      blendMode: source.blendMode,
       kind: 'image',
       image: {
         ...asset,
@@ -778,6 +782,20 @@ function updateLayerOpacity(value: number) {
     },
     { mergeKey: `opacity:${layer.id}`, mergeWindowMs: 800 }
   )
+}
+
+function updateLayerBlendMode(blendMode: LayerBlendMode) {
+  const layer = activeLayer.value
+  if (layer.kind === 'background' || layer.blendMode === blendMode) return
+  const before = layer.blendMode
+  layer.blendMode = blendMode
+  recordHistory('Alterar modo de mesclagem', {
+    type: 'layer:patch',
+    layerId: layer.id,
+    before: { blendMode: before },
+    after: { blendMode }
+  })
+  statusText.value = 'Modo de mesclagem atualizado'
 }
 
 function updateLayerTransform(layerId: string, transform: LayerTransform) {
@@ -939,6 +957,7 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
       name: image.name,
       visible: true,
       opacity: 100,
+      blendMode: 'normal',
       kind: 'image',
       image: {
         width: image.width,
@@ -1992,6 +2011,7 @@ onBeforeUnmount(() => {
           :zoom="zoom"
           @update:brush-color="brushColor = $event"
           @update:brush-size="brushSize = $event"
+          @update:layer-blend-mode="updateLayerBlendMode"
           @update:layer-opacity="updateLayerOpacity"
           @update:text="updateTextLayer(activeLayer.id, $event)"
           @update:zoom="setZoom"

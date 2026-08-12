@@ -5,6 +5,7 @@ import CanvasRulers from './CanvasRulers.vue'
 import GuideOverlay from './GuideOverlay.vue'
 import SelectionOverlay from './SelectionOverlay.vue'
 import type { DocumentSpec, EditorTool, ImageAsset, ImportedImage, LayerItem, LayerTransform } from '../types/editor'
+import { layerCompositingStyle } from '../editor/blendModes'
 import { readBrowserImages, releasePreparedImage } from '../services/imageImport'
 import {
   clampZoom,
@@ -261,7 +262,6 @@ const selectionMoveInteraction = shallowRef<{
   previewDocumentWidth: number
   previewDocumentHeight: number
   transform: LayerTransform
-  opacity: number
   baseCanvas?: HTMLCanvasElement
   contentCanvas?: HTMLCanvasElement
 } | null>(null)
@@ -428,10 +428,7 @@ const brushPreviewStyle = computed(() => {
       height: `${props.document.height}px`
     }
   }
-  return {
-    ...positionedTransformStyle(transform),
-    opacity: activeBrushOperation.value === 'erase' ? layer.opacity / 100 : undefined
-  }
+  return positionedTransformStyle(transform)
 })
 const selectionMovePreviewStyle = computed(() => {
   const interaction = selectionMoveInteraction.value
@@ -440,16 +437,22 @@ const selectionMovePreviewStyle = computed(() => {
     left: `${interaction.previewX}px`,
     top: `${interaction.previewY}px`,
     width: `${interaction.previewDocumentWidth}px`,
-    height: `${interaction.previewDocumentHeight}px`,
-    opacity: interaction.opacity / 100
+    height: `${interaction.previewDocumentHeight}px`
   }
 })
 const selectionMoveHidesLayer = (layerId: string) =>
   selectionMoveReady.value && selectionMoveInteraction.value?.layerId === layerId
 const brushPreviewHidesLayer = (layerId: string) =>
   eraserPreviewReady.value &&
-  activeBrushOperation.value === 'erase' &&
   (brushInteraction.value?.layerId ?? pendingBrushLayerId) === layerId
+const compositeGroupLayerId = computed(() =>
+  selectionMoveInteraction.value?.layerId ??
+  (brushInteraction.value?.layerId ?? (brushPreviewPending.value ? pendingBrushLayerId : undefined))
+)
+const activeCompositeStyle = computed(() => {
+  const layer = props.layers.find((item) => item.id === compositeGroupLayerId.value)
+  return layer ? layerCompositingStyle(layer.blendMode, layer.opacity) : undefined
+})
 
 function syncViewportScroll() {
   const scroll = scrollArea.value
@@ -1272,8 +1275,7 @@ function beginSelectionMove(pointerId: number, start: SelectionPoint, selection:
     previewY: previewGeometry.y,
     previewDocumentWidth: previewGeometry.width,
     previewDocumentHeight: previewGeometry.height,
-    transform: { ...previewTransform },
-    opacity: layer.opacity
+    transform: { ...previewTransform }
   }
   selectionDraft.value = selection
   nextTick(() => void prepareSelectionMovePreview())
@@ -2488,51 +2490,64 @@ defineExpose({
         <div class="canvas-frame" :style="frameStyle">
           <div ref="surface" class="canvas-surface" :style="surfaceStyle">
             <div class="transparent-grid"></div>
-            <div class="document-background" :style="backgroundStyle"></div>
-            <div class="document-layers">
-              <template v-for="layer in renderedLayers" :key="layer.id">
-                <CanvasLayer
-                  :active="layer.id === activeLayerId"
-                  :content-hidden="selectionMoveHidesLayer(layer.id) || brushPreviewHidesLayer(layer.id)"
-                  :layer="layer"
-                  :transform="displayTransform(layer) ?? defaultLayerTransform"
-                  @image-error="handleLayerImageError"
-                  @image-loaded="handleLayerImageLoaded"
-                  @pointerdown="startLayerPointer($event, layer)"
-                />
-                <canvas
-                  v-if="
-                    brushPreviewStyle &&
-                    activeBrushOperation === 'erase' &&
-                    paintableLayer?.id === layer.id
-                  "
-                  :ref="captureBrushPreviewCanvas"
-                  class="brush-preview brush-preview--eraser"
-                  :style="brushPreviewStyle"
-                  :width="brushPreviewDimensions.width"
-                  :height="brushPreviewDimensions.height"
-                ></canvas>
-                <canvas
-                  v-if="
-                    selectionMovePreviewStyle &&
-                    selectionMoveInteraction?.layerId === layer.id
-                  "
-                  :ref="captureSelectionMoveCanvas"
-                  class="selection-move-preview"
-                  :style="selectionMovePreviewStyle"
-                  :width="selectionMoveInteraction.previewWidth"
-                  :height="selectionMoveInteraction.previewHeight"
-                ></canvas>
-              </template>
+            <div class="document-composite">
+              <div class="document-background" :style="backgroundStyle"></div>
+              <div class="document-layers">
+                <div
+                  v-for="layer in renderedLayers"
+                  :key="layer.id"
+                  class="document-layer-composite"
+                  :class="{ 'document-layer-composite--active': compositeGroupLayerId === layer.id }"
+                  :style="compositeGroupLayerId === layer.id ? activeCompositeStyle : undefined"
+                >
+                  <CanvasLayer
+                    :active="layer.id === activeLayerId"
+                    :content-hidden="selectionMoveHidesLayer(layer.id) || brushPreviewHidesLayer(layer.id)"
+                    :grouped="compositeGroupLayerId === layer.id"
+                    :layer="layer"
+                    :transform="displayTransform(layer) ?? defaultLayerTransform"
+                    @image-error="handleLayerImageError"
+                    @image-loaded="handleLayerImageLoaded"
+                    @pointerdown="startLayerPointer($event, layer)"
+                  />
+                  <canvas
+                    v-if="
+                      brushPreviewStyle &&
+                      activeBrushOperation === 'paint' &&
+                      paintableLayer?.id === layer.id
+                    "
+                    :ref="captureBrushPreviewCanvas"
+                    class="brush-preview"
+                    :style="brushPreviewStyle"
+                    :width="brushPreviewDimensions.width"
+                    :height="brushPreviewDimensions.height"
+                  ></canvas>
+                  <canvas
+                    v-if="
+                      brushPreviewStyle &&
+                      activeBrushOperation === 'erase' &&
+                      paintableLayer?.id === layer.id
+                    "
+                    :ref="captureBrushPreviewCanvas"
+                    class="brush-preview brush-preview--eraser"
+                    :style="brushPreviewStyle"
+                    :width="brushPreviewDimensions.width"
+                    :height="brushPreviewDimensions.height"
+                  ></canvas>
+                  <canvas
+                    v-if="
+                      selectionMovePreviewStyle &&
+                      selectionMoveInteraction?.layerId === layer.id
+                    "
+                    :ref="captureSelectionMoveCanvas"
+                    class="selection-move-preview"
+                    :style="selectionMovePreviewStyle"
+                    :width="selectionMoveInteraction.previewWidth"
+                    :height="selectionMoveInteraction.previewHeight"
+                  ></canvas>
+                </div>
+              </div>
             </div>
-            <canvas
-              v-if="brushPreviewStyle && activeBrushOperation === 'paint' && paintableLayer?.image"
-              :ref="captureBrushPreviewCanvas"
-              class="brush-preview"
-              :style="brushPreviewStyle"
-              :width="brushPreviewDimensions.width"
-              :height="brushPreviewDimensions.height"
-            ></canvas>
             <SelectionOverlay
               v-if="visibleSelection"
               :document-height="document.height"

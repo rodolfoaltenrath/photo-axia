@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { LayerItem, LayerTransform } from '../types/editor'
+import { layerCompositingStyle } from '../editor/blendModes'
 
 const props = defineProps<{
   active: boolean
   contentHidden: boolean
+  grouped: boolean
   layer: LayerItem
   transform: LayerTransform
 }>()
@@ -172,12 +174,15 @@ onBeforeUnmount(() => {
 
 const layerStyle = computed(() => {
   const transform = props.layer.kind === 'image' ? activeImageTransform.value : props.transform
+  const compositing = props.grouped
+    ? { mixBlendMode: undefined, opacity: undefined }
+    : layerCompositingStyle(props.layer.blendMode, props.layer.opacity)
   return {
     left: '0',
     top: '0',
     width: `${transform.width}px`,
     height: `${transform.height}px`,
-    opacity: props.layer.opacity === undefined ? 1 : props.layer.opacity / 100,
+    ...compositing,
     transform: `translate3d(${transform.x}px, ${transform.y}px, 0) rotate(${transform.rotation ?? 0}deg)`
   }
 })

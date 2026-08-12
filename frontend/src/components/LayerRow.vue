@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { LayerItem } from '../types/editor'
 import visibleIcon from '../assets/icons/visible.svg'
+import { blendModeLabel } from '../editor/blendModes'
 
 const props = defineProps<{
   active: boolean
@@ -236,7 +237,10 @@ function selectLayer(event: MouseEvent) {
           @keydown.esc.prevent="cancelRename"
         />
         <strong v-else>{{ layer.name }}</strong>
-        <small>{{ kindLabels[layer.kind] }} · {{ layer.opacity }}%</small>
+        <small>
+          {{ kindLabels[layer.kind] }} · {{ layer.opacity }}%
+          <template v-if="layer.blendMode !== 'normal'"> · {{ blendModeLabel(layer.blendMode) }}</template>
+        </small>
       </span>
     </div>
   </li>

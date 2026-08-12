@@ -255,6 +255,26 @@ test('desfazer uma transformação preserva o asset visual da camada', () => {
   assert.deepEqual(layers[0].transform, transform.before.transform)
 })
 
+test('desfaz e refaz o modo de mesclagem sem tocar no raster', () => {
+  const image = { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:blend' }
+  const layers = [{
+    id: 'blend', name: 'Mesclagem', visible: true, opacity: 100, blendMode: 'multiply', kind: 'image', image
+  }]
+  const delta = {
+    type: 'layer:patch',
+    layerId: 'blend',
+    before: { blendMode: 'normal' },
+    after: { blendMode: 'multiply' }
+  }
+
+  applyEditorHistoryDelta(layers, 'blend', delta, 'undo')
+  assert.equal(layers[0].blendMode, 'normal')
+  assert.equal(layers[0].image, image)
+  applyEditorHistoryDelta(layers, 'blend', delta, 'redo')
+  assert.equal(layers[0].blendMode, 'multiply')
+  assert.equal(layers[0].image, image)
+})
+
 test('mantém dez mil ações dentro dos limites configurados', () => {
   const history = useHistory({
     maxBytes: 8 * 1024 * 1024,
