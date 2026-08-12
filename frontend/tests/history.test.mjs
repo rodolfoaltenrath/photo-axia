@@ -275,6 +275,29 @@ test('desfaz e refaz o modo de mesclagem sem tocar no raster', () => {
   assert.equal(layers[0].image, image)
 })
 
+test('desfaz e refaz a substituição de várias camadas por uma mesclagem', () => {
+  const base = { id: 'base', name: 'Base', visible: true, opacity: 100, blendMode: 'normal', kind: 'background' }
+  const first = { id: 'first', name: 'Primeira', visible: true, opacity: 100, blendMode: 'normal', kind: 'image' }
+  const second = { id: 'second', name: 'Segunda', visible: true, opacity: 100, blendMode: 'normal', kind: 'image' }
+  const merged = { id: 'merged', name: 'Mesclagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'image' }
+  const layers = [first, second, base]
+  const delta = {
+    type: 'layers:replace',
+    before: [{ index: 0, layer: first }, { index: 1, layer: second }],
+    after: [{ index: 0, layer: merged }],
+    activeBefore: 'second',
+    activeAfter: 'merged'
+  }
+
+  let result = applyEditorHistoryDelta(layers, 'second', delta, 'redo')
+  assert.deepEqual(layers.map((layer) => layer.id), ['merged', 'base'])
+  assert.equal(result.activeLayerId, 'merged')
+
+  result = applyEditorHistoryDelta(layers, 'merged', delta, 'undo')
+  assert.deepEqual(layers.map((layer) => layer.id), ['first', 'second', 'base'])
+  assert.equal(result.activeLayerId, 'second')
+})
+
 test('mantém dez mil ações dentro dos limites configurados', () => {
   const history = useHistory({
     maxBytes: 8 * 1024 * 1024,

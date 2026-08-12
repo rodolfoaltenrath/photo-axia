@@ -344,7 +344,7 @@ function layerIntersectsDocument(layer: LayerItem) {
 }
 
 const renderedLayers = computed(() => [...props.layers].reverse().filter((layer) =>
-  layer.kind !== 'background' && layer.visible && layerIntersectsDocument(layer)
+  (layer.kind !== 'background' || Boolean(layer.image)) && layer.visible && layerIntersectsDocument(layer)
 ))
 const defaultLayerTransform = computed<LayerTransform>(() => ({
   x: 0,
@@ -356,7 +356,7 @@ const defaultLayerTransform = computed<LayerTransform>(() => ({
 const backgroundLayer = computed(() => props.layers.find((layer) => layer.kind === 'background'))
 const backgroundStyle = computed(() => {
   const background = backgroundLayer.value
-  if (!background?.visible || props.document.background === 'transparent') return { display: 'none' }
+  if (!background?.visible || background.image || props.document.background === 'transparent') return { display: 'none' }
 
   return {
     background: props.document.background === 'black' ? '#000000' : '#ffffff',
@@ -378,7 +378,12 @@ const freeTransformStyle = computed(() => {
 })
 const paintableLayer = computed(() => {
   const layer = activeLayer.value
-  if (!layer?.visible || layer.kind !== 'image' || !layer.image || !layer.transform) return undefined
+  if (
+    !layer?.visible ||
+    (layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') ||
+    !layer.image ||
+    !layer.transform
+  ) return undefined
   return layer
 })
 const activeBrushOperation = computed<BrushOperation | undefined>(() =>
@@ -445,14 +450,7 @@ const selectionMoveHidesLayer = (layerId: string) =>
 const brushPreviewHidesLayer = (layerId: string) =>
   eraserPreviewReady.value &&
   (brushInteraction.value?.layerId ?? pendingBrushLayerId) === layerId
-const compositeGroupLayerId = computed(() =>
-  selectionMoveInteraction.value?.layerId ??
-  (brushInteraction.value?.layerId ?? (brushPreviewPending.value ? pendingBrushLayerId : undefined))
-)
-const activeCompositeStyle = computed(() => {
-  const layer = props.layers.find((item) => item.id === compositeGroupLayerId.value)
-  return layer ? layerCompositingStyle(layer.blendMode, layer.opacity) : undefined
-})
+const layerCompositeStyle = (layer: LayerItem) => layerCompositingStyle(layer.blendMode, layer.opacity)
 
 function syncViewportScroll() {
   const scroll = scrollArea.value
@@ -1698,7 +1696,12 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
     event.stopPropagation()
     event.preventDefault()
     const point = pointerToDocument(event)
-    if (point && activeLayer.value?.kind === 'image') startSelectionMove(event, point, props.selection)
+    if (
+      point &&
+      (activeLayer.value?.kind === 'image' || activeLayer.value?.kind === 'background' || activeLayer.value?.kind === 'pixel')
+    ) {
+      startSelectionMove(event, point, props.selection)
+    }
     return
   }
 
@@ -2497,13 +2500,12 @@ defineExpose({
                   v-for="layer in renderedLayers"
                   :key="layer.id"
                   class="document-layer-composite"
-                  :class="{ 'document-layer-composite--active': compositeGroupLayerId === layer.id }"
-                  :style="compositeGroupLayerId === layer.id ? activeCompositeStyle : undefined"
+                  :style="layerCompositeStyle(layer)"
                 >
                   <CanvasLayer
                     :active="layer.id === activeLayerId"
                     :content-hidden="selectionMoveHidesLayer(layer.id) || brushPreviewHidesLayer(layer.id)"
-                    :grouped="compositeGroupLayerId === layer.id"
+                    grouped
                     :layer="layer"
                     :transform="displayTransform(layer) ?? defaultLayerTransform"
                     @image-error="handleLayerImageError"

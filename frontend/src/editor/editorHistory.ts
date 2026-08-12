@@ -23,6 +23,12 @@ export interface RemoveLayersDelta extends SelectionDelta {
   items: LayerHistoryItem[]
 }
 
+export interface ReplaceLayersDelta extends SelectionDelta {
+  type: 'layers:replace'
+  before: LayerHistoryItem[]
+  after: LayerHistoryItem[]
+}
+
 export interface PatchLayerDelta extends SelectionDelta {
   type: 'layer:patch'
   layerId: string
@@ -48,6 +54,7 @@ export interface ChangeGuidesDelta {
 export type EditorHistoryDelta =
   | AddLayersDelta
   | RemoveLayersDelta
+  | ReplaceLayersDelta
   | PatchLayerDelta
   | ReorderLayerDelta
   | ChangeGuidesDelta
@@ -88,7 +95,7 @@ export function mergeEditorHistoryDelta(previous: EditorHistoryDelta, next: Edit
 export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
   const referencedImageBytes = delta.type === 'layer:patch'
     ? [delta.before.image, delta.after.image].reduce((total, image) => total + (image?.byteSize ?? 0), 0)
-    : 0
+    : historyDeltaLayers(delta).reduce((total, layer) => total + (layer.image?.byteSize ?? 0), 0)
   return JSON.stringify(delta).length * 2 + referencedImageBytes + 96
 }
 
@@ -103,6 +110,7 @@ export function isEditorHistoryDeltaNoop(delta: EditorHistoryDelta) {
 }
 
 export function historyDeltaLayers(delta: EditorHistoryDelta) {
+  if (delta.type === 'layers:replace') return [...delta.before, ...delta.after].map((item) => item.layer)
   return delta.type === 'layers:add' || delta.type === 'layers:remove'
     ? delta.items.map((item) => item.layer)
     : []
@@ -115,7 +123,9 @@ export function historyDeltaObjectUrls(delta: EditorHistoryDelta) {
       if (source?.startsWith('blob:')) urls.add(source)
     }
   }
-  if (delta.type === 'layers:add' || delta.type === 'layers:remove') {
+  if (delta.type === 'layers:replace') {
+    for (const item of [...delta.before, ...delta.after]) collect(item.layer)
+  } else if (delta.type === 'layers:add' || delta.type === 'layers:remove') {
     for (const item of delta.items) collect(item.layer)
   } else if (delta.type === 'layer:patch') {
     collect(delta.before)
@@ -157,7 +167,10 @@ export function applyEditorHistoryDelta(
     }
   }
 
-  if (delta.type === 'layers:add') {
+  if (delta.type === 'layers:replace') {
+    remove(redo ? delta.before : delta.after)
+    insert(redo ? delta.after : delta.before)
+  } else if (delta.type === 'layers:add') {
     if (redo) insert(delta.items)
     else remove(delta.items)
   } else if (delta.type === 'layers:remove') {

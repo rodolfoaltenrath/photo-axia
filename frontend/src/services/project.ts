@@ -1,6 +1,6 @@
 import type { EditorGuide, RulerOrigin, RulerUnit } from '../editor/guides'
 import type { DocumentSpec, ImageAsset, LayerItem, LayerTransform, TextLayerContent } from '../types/editor'
-import { normalizeLayerBlendMode } from '../editor/blendModes'
+import { normalizeLayerBlendMode } from '../editor/blendModes.ts'
 
 export const AXIA_PROJECT_VERSION = 1
 

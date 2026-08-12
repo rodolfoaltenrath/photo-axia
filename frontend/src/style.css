@@ -781,11 +781,6 @@ select:focus-visible {
 }
 
 .document-layer-composite {
-  display: contents;
-}
-
-.document-layer-composite--active {
-  display: block;
   inset: 0;
   pointer-events: none;
 }
@@ -1373,6 +1368,12 @@ select:focus-visible {
   box-shadow: inset 3px 0 #58c4b3;
 }
 
+.layer-row--selected:not(.layer-row--active) .layer-button {
+  border-color: #555f6b;
+  background: #252c34;
+  box-shadow: inset 3px 0 #7d8792;
+}
+
 .layer-drag-handle {
   overflow: hidden;
   color: #6f7b87;
@@ -1524,7 +1525,7 @@ select:focus-visible {
 
 .layer-actions {
   display: grid;
-  grid-template-columns: repeat(5, 32px);
+  grid-template-columns: repeat(6, 32px);
   justify-content: end;
   gap: 4px;
   border-top: 1px solid #303844;
@@ -2499,6 +2500,52 @@ input[type='checkbox'] {
   border-color: var(--ui-accent);
   background: linear-gradient(90deg, var(--ui-accent-soft), var(--ui-accent-soft-deep));
   box-shadow: inset 3px 0 var(--ui-accent);
+}
+
+.layer-context-menu {
+  position: fixed;
+  z-index: 1000;
+  width: 216px;
+  padding: 5px;
+  border: 1px solid var(--ui-border-strong, #3d4652);
+  border-radius: 7px;
+  background: var(--ui-surface-raised, #20262e);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 52%);
+}
+
+.layer-context-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 9px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.layer-context-menu button:hover:not(:disabled),
+.layer-context-menu button:focus-visible {
+  border-color: var(--ui-border-strong, #3d4652);
+  background: var(--ui-control-hover, #2b323b);
+  outline: none;
+}
+
+.layer-context-menu button:disabled {
+  opacity: 0.38;
+}
+
+.layer-context-menu kbd {
+  color: var(--ui-text-muted, #8d98a5);
+  font: inherit;
+  font-size: 11px;
+}
+
+.layer-row--selected:not(.layer-row--active) .layer-button {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-accent-soft-deep);
+  box-shadow: inset 3px 0 var(--ui-text-dim);
 }
 
 .layer-row--dragging .layer-button,

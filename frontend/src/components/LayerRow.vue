@@ -3,9 +3,11 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { LayerItem } from '../types/editor'
 import visibleIcon from '../assets/icons/visible.svg'
 import { blendModeLabel } from '../editor/blendModes'
+import type { LayerSelectionMode } from '../editor/layerSelection'
 
 const props = defineProps<{
   active: boolean
+  selected: boolean
   dragging: boolean
   editing: boolean
   layer: LayerItem
@@ -18,9 +20,10 @@ const emit = defineEmits<{
   (event: 'dragEnd'): void
   (event: 'dragMove', clientX: number, clientY: number): void
   (event: 'dragStart', layerId: string): void
+  (event: 'openContextMenu', layerId: string, clientX: number, clientY: number): void
   (event: 'rename', layerId: string, name: string): void
   (event: 'requestRename', layerId: string): void
-  (event: 'select', layerId: string): void
+  (event: 'select', layerId: string, mode: LayerSelectionMode): void
   (event: 'toggle', layerId: string): void
 }>()
 
@@ -160,7 +163,17 @@ function selectLayer(event: MouseEvent) {
   }
   const row = event.currentTarget as HTMLElement
   row.focus({ preventScroll: true })
-  emit('select', props.layer.id)
+  const mode: LayerSelectionMode = event.shiftKey
+    ? 'range'
+    : event.ctrlKey || event.metaKey
+      ? 'toggle'
+      : 'replace'
+  emit('select', props.layer.id, mode)
+}
+
+function openContextMenu(event: MouseEvent) {
+  event.preventDefault()
+  emit('openContextMenu', props.layer.id, event.clientX, event.clientY)
 }
 </script>
 
@@ -169,6 +182,7 @@ function selectLayer(event: MouseEvent) {
     class="layer-row"
     :class="{
       'layer-row--active': active,
+      'layer-row--selected': selected,
       'layer-row--background': layer.kind === 'background',
       'layer-row--dragging': dragging,
       'layer-row--drop-after': dropPosition === 'after',
@@ -176,6 +190,7 @@ function selectLayer(event: MouseEvent) {
     }"
     :data-layer-id="layer.id"
     :data-layer-kind="layer.kind"
+    @contextmenu="openContextMenu"
   >
     <button
       class="visibility-button"
@@ -192,10 +207,11 @@ function selectLayer(event: MouseEvent) {
       role="button"
       tabindex="0"
       :aria-current="active ? 'true' : undefined"
+      :aria-pressed="selected"
       @click="selectLayer"
       @dblclick="emit('requestRename', layer.id)"
-      @keydown.enter.self.prevent="emit('select', layer.id)"
-      @keydown.space.self.prevent="emit('select', layer.id)"
+      @keydown.enter.self.prevent="emit('select', layer.id, 'replace')"
+      @keydown.space.self.prevent="emit('select', layer.id, 'replace')"
       @lostpointercapture="cancelPointerDrag"
       @pointercancel="cancelPointerDrag"
       @pointerdown="startPointerDrag"

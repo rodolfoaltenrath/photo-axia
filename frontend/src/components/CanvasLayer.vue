@@ -68,27 +68,25 @@ function activateImageSlot(slot: 0 | 1, source: string) {
     return
   }
 
-  // A fonte e a geometria pertencem ao mesmo buffer. O evento sincrono tambem
-  // remove a pre-visualizacao no mesmo render em que o novo raster entra.
-  activeImageTransform.value = copyTransform(imageTransforms.value[slot])
-  activeImageSlot.value = slot
-  releaseInactiveSlot(slot, source)
   cancelAnimationFrame(compositorReadyFrame)
-  const confirmReady = () => {
+  const commitBuffer = () => {
     compositorReadyFrame = 0
-    if (activeImageSlot.value !== slot || desiredImageSource.value !== source) return
+    if (imageSources.value[slot] !== source || desiredImageSource.value !== source) return
+    // Buffer e prévia mudam na mesma tarefa para o Vue publicar um só frame.
+    activeImageTransform.value = copyTransform(imageTransforms.value[slot])
+    activeImageSlot.value = slot
     emit('imageLoaded', props.layer.id, source)
+    releaseInactiveSlot(slot, source)
   }
   if (!props.active) {
-    confirmReady()
+    commitBuffer()
     return
   }
 
-  // A camada ativa permanece promovida pelo CSS. Dois frames dão ao WebKit
-  // tempo para pintar o raster e enviar a textura ao compositor antes de o
-  // fluxo de importacao liberar o primeiro arraste.
+  // O novo buffer permanece invisível por dois frames para o WebView preparar
+  // sua textura; só então ele substitui atomicamente o canvas ao vivo.
   compositorReadyFrame = requestAnimationFrame(() => {
-    compositorReadyFrame = requestAnimationFrame(confirmReady)
+    compositorReadyFrame = requestAnimationFrame(commitBuffer)
   })
 }
 
@@ -105,11 +103,15 @@ function finishInteractiveTransform(event: Event) {
   activateImageSlot(pending.slot, pending.source)
 }
 
-function handleImageLoad(slot: 0 | 1, event: Event) {
+async function handleImageLoad(slot: 0 | 1, event: Event) {
   const source = imageSources.value[slot]
   if (!source) return
   const image = event.currentTarget as HTMLImageElement
-  if (!image.complete || image.naturalWidth === 0) return
+  try {
+    await image.decode()
+  } catch {
+    if (!image.complete || image.naturalWidth === 0) return
+  }
   if (imageSources.value[slot] !== source) return
   const readiness = [...imageReady.value] as [boolean, boolean]
   readiness[slot] = true
@@ -173,7 +175,7 @@ onBeforeUnmount(() => {
 })
 
 const layerStyle = computed(() => {
-  const transform = props.layer.kind === 'image' ? activeImageTransform.value : props.transform
+  const transform = props.layer.image ? activeImageTransform.value : props.transform
   const compositing = props.grouped
     ? { mixBlendMode: undefined, opacity: undefined }
     : layerCompositingStyle(props.layer.blendMode, props.layer.opacity)
@@ -216,7 +218,7 @@ const textStyle = computed(() => {
     @axia-interaction-end="finishInteractiveTransform"
     @pointerdown="emit('pointerdown', $event)"
   >
-    <template v-if="layer.kind === 'image' && layer.image">
+    <template v-if="layer.image">
       <img
         v-for="(source, slot) in imageSources"
         v-show="source"

@@ -1,6 +1,6 @@
 import type { DocumentSpec, LayerItem } from '../types/editor'
 import { textFont, textLines } from '../editor/text'
-import { layerIntersectsDocument } from '../editor/renderBounds'
+import { layerDocumentBounds, layerIntersectsDocument, type DocumentBounds } from '../editor/renderBounds'
 import { canvasBlendOperation } from '../editor/blendModes'
 
 function loadImage(source: string) {
@@ -17,7 +17,8 @@ async function renderDocumentCanvas(
   layers: LayerItem[],
   width: number,
   height: number,
-  usePreviewSources: boolean
+  usePreviewSources: boolean,
+  viewport: DocumentBounds = { x: 0, y: 0, width: document.width, height: document.height }
 ) {
   const canvas = window.document.createElement('canvas')
   canvas.width = width
@@ -25,10 +26,11 @@ async function renderDocumentCanvas(
 
   const context = canvas.getContext('2d')
   if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
-  context.scale(width / document.width, height / document.height)
+  context.scale(width / viewport.width, height / viewport.height)
+  context.translate(-viewport.x, -viewport.y)
 
   const background = layers.find((layer) => layer.kind === 'background')
-  if (background?.visible && document.background !== 'transparent') {
+  if (background?.visible && !background.image && document.background !== 'transparent') {
     context.save()
     context.globalAlpha = background.opacity / 100
     context.fillStyle = document.background === 'black' ? '#000000' : '#ffffff'
@@ -42,7 +44,7 @@ async function renderDocumentCanvas(
   const sourcePromises = new Map<string, Promise<HTMLImageElement>>()
   const images = new Map<string, HTMLImageElement>()
   await Promise.all(orderedLayers.map(async (layer) => {
-    if (layer.kind !== 'image' || !layer.image) return
+    if (!layer.image) return
     const source = usePreviewSources
       ? layer.image.previewUrl ?? layer.image.sourceUrl
       : layer.image.sourceUrl
@@ -123,4 +125,42 @@ export async function renderDocumentThumbnail(
   const height = Math.max(1, Math.round(document.height * scale))
   const canvas = await renderDocumentCanvas(document, layers, width, height, true)
   return (await canvasBlob(canvas, 'image/webp', 0.82)) ?? (await canvasBlob(canvas, 'image/png'))
+}
+
+export async function renderMergedLayers(document: DocumentSpec, layers: LayerItem[]) {
+  const visibleLayers = layers.filter((layer) => layer.visible)
+  if (!visibleLayers.length) throw new Error('Selecione ao menos uma camada visível para mesclar.')
+
+  const hasSyntheticBackground = visibleLayers.some((layer) =>
+    layer.kind === 'background' && !layer.image && document.background !== 'transparent'
+  )
+  let left = hasSyntheticBackground ? 0 : document.width
+  let top = hasSyntheticBackground ? 0 : document.height
+  let right = hasSyntheticBackground ? document.width : 0
+  let bottom = hasSyntheticBackground ? document.height : 0
+  let hasBounds = hasSyntheticBackground
+
+  for (const layer of visibleLayers) {
+    if (!layer.image && !layer.text) continue
+    const bounds = layerDocumentBounds(layer)
+    if (!bounds) continue
+    hasBounds = true
+    left = Math.min(left, bounds.x)
+    top = Math.min(top, bounds.y)
+    right = Math.max(right, bounds.x + bounds.width)
+    bottom = Math.max(bottom, bounds.y + bounds.height)
+  }
+  if (!hasBounds) throw new Error('As camadas selecionadas não possuem pixels visíveis para mesclar.')
+
+  left = Math.max(0, Math.floor(left))
+  top = Math.max(0, Math.floor(top))
+  right = Math.min(document.width, Math.ceil(right))
+  bottom = Math.min(document.height, Math.ceil(bottom))
+  if (right <= left || bottom <= top) throw new Error('As camadas selecionadas estão fora do documento.')
+
+  const viewport = { x: left, y: top, width: right - left, height: bottom - top }
+  const canvas = await renderDocumentCanvas(document, layers, viewport.width, viewport.height, false, viewport)
+  const blob = await canvasBlob(canvas, 'image/png')
+  if (!blob) throw new Error('Não foi possível gerar os pixels da mesclagem.')
+  return { blob, ...viewport }
 }

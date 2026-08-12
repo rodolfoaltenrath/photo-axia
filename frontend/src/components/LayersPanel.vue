@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import LayerRow from './LayerRow.vue'
 import type { LayerItem } from '../types/editor'
 import addLayerIcon from '../assets/icons/add-layer.svg'
+import type { LayerSelectionMode } from '../editor/layerSelection'
 
 const props = defineProps<{
   activeLayerId: string
+  selectedLayerIds: string[]
   layers: LayerItem[]
 }>()
 
@@ -16,7 +18,8 @@ const emit = defineEmits<{
   (event: 'moveLayer', layerId: string, direction: -1 | 1): void
   (event: 'renameLayer', layerId: string, name: string): void
   (event: 'reorderLayer', layerId: string, targetId: string, position: 'before' | 'after'): void
-  (event: 'selectLayer', layerId: string): void
+  (event: 'mergeLayers'): void
+  (event: 'selectLayer', layerId: string, mode: LayerSelectionMode): void
   (event: 'toggleLayer', layerId: string): void
 }>()
 
@@ -25,13 +28,21 @@ const draggedLayerId = ref<string>()
 const dropTarget = ref<{ layerId: string; position: 'before' | 'after' }>()
 const layerList = ref<HTMLOListElement | null>(null)
 const dragPreview = ref<HTMLDivElement | null>(null)
+const contextMenuButton = ref<HTMLButtonElement | null>(null)
+const contextMenu = ref<{ x: number; y: number }>()
 let dragFrame = 0
 let pendingDragPoint: { clientX: number; clientY: number } | undefined
 
 const activeIndex = computed(() => props.layers.findIndex((layer) => layer.id === props.activeLayerId))
 const activeLayer = computed(() => props.layers[activeIndex.value])
+const selectedIdSet = computed(() => new Set(props.selectedLayerIds))
+const selectedCount = computed(() => props.layers.reduce(
+  (count, layer) => count + Number(selectedIdSet.value.has(layer.id)),
+  0
+))
 const draggedLayer = computed(() => props.layers.find((layer) => layer.id === draggedLayerId.value))
 const canManipulate = computed(() => Boolean(activeLayer.value && activeLayer.value.kind !== 'background'))
+const canDuplicate = computed(() => Boolean(activeLayer.value?.image || activeLayer.value?.text))
 const canMoveUp = computed(() => canManipulate.value && activeIndex.value > 0)
 const canMoveDown = computed(() => {
   if (!canManipulate.value || activeIndex.value < 0) return false
@@ -49,9 +60,49 @@ function renameLayer(layerId: string, name: string) {
 }
 
 function startDrag(layerId: string) {
+  closeContextMenu()
   draggedLayerId.value = layerId
   editingLayerId.value = undefined
-  emit('selectLayer', layerId)
+  emit('selectLayer', layerId, 'replace')
+}
+
+function closeContextMenu() {
+  contextMenu.value = undefined
+  window.removeEventListener('pointerdown', closeContextMenu)
+  window.removeEventListener('blur', closeContextMenu)
+  window.removeEventListener('resize', closeContextMenu)
+  window.removeEventListener('scroll', closeContextMenu, true)
+  window.removeEventListener('keydown', handleContextMenuKeydown)
+}
+
+function handleContextMenuKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  closeContextMenu()
+}
+
+async function openContextMenu(layerId: string, clientX: number, clientY: number) {
+  closeContextMenu()
+  if (!selectedIdSet.value.has(layerId)) emit('selectLayer', layerId, 'replace')
+  const menuWidth = 224
+  const menuHeight = 48
+  contextMenu.value = {
+    x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
+    y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8))
+  }
+  window.addEventListener('pointerdown', closeContextMenu)
+  window.addEventListener('blur', closeContextMenu)
+  window.addEventListener('resize', closeContextMenu)
+  window.addEventListener('scroll', closeContextMenu, true)
+  window.addEventListener('keydown', handleContextMenuKeydown)
+  await nextTick()
+  contextMenuButton.value?.focus({ preventScroll: true })
+}
+
+function mergeFromContextMenu() {
+  if (selectedCount.value < 2) return
+  closeContextMenu()
+  emit('mergeLayers')
 }
 
 function setDropTarget(target?: { layerId: string; position: 'before' | 'after' }) {
@@ -143,7 +194,10 @@ function handlePanelKeydown(event: KeyboardEvent) {
   }
 }
 
-onBeforeUnmount(clearDrag)
+onBeforeUnmount(() => {
+  clearDrag()
+  closeContextMenu()
+})
 </script>
 
 <template>
@@ -158,11 +212,12 @@ onBeforeUnmount(clearDrag)
       </button>
     </div>
 
-    <ol ref="layerList" class="layer-list">
+    <ol ref="layerList" class="layer-list" aria-label="Camadas">
       <LayerRow
         v-for="layer in layers"
         :key="layer.id"
         :active="layer.id === activeLayerId"
+        :selected="selectedIdSet.has(layer.id)"
         :drop-position="dropTarget?.layerId === layer.id ? dropTarget.position : undefined"
         :dragging="draggedLayerId === layer.id"
         :editing="editingLayerId === layer.id"
@@ -173,8 +228,9 @@ onBeforeUnmount(clearDrag)
         @drag-move="moveDrag"
         @drag-start="startDrag"
         @rename="renameLayer"
+        @open-context-menu="openContextMenu"
         @request-rename="requestRename"
-        @select="emit('selectLayer', $event)"
+        @select="(layerId, mode) => emit('selectLayer', layerId, mode)"
         @toggle="emit('toggleLayer', $event)"
       />
     </ol>
@@ -202,7 +258,38 @@ onBeforeUnmount(clearDrag)
       </div>
     </Teleport>
 
+    <Teleport to="body">
+      <div
+        v-if="contextMenu"
+        class="layer-context-menu"
+        role="menu"
+        aria-label="Ações das camadas"
+        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+        @contextmenu.prevent
+        @pointerdown.stop
+      >
+        <button
+          ref="contextMenuButton"
+          type="button"
+          role="menuitem"
+          :disabled="selectedCount < 2"
+          @click="mergeFromContextMenu"
+        >
+          <span>Mesclar camadas</span>
+          <kbd>Ctrl+E</kbd>
+        </button>
+      </div>
+    </Teleport>
+
     <div class="layer-actions" aria-label="Ações da camada selecionada">
+      <button
+        type="button"
+        title="Mesclar camadas selecionadas (Ctrl+E)"
+        :disabled="selectedCount < 2"
+        @click="emit('mergeLayers')"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 8 8-4 8 4-8 4-8-4Zm0 4 8 4 8-4M4 16l8 4 8-4" /></svg>
+      </button>
       <button
         type="button"
         title="Renomear camada (F2)"
@@ -214,7 +301,7 @@ onBeforeUnmount(clearDrag)
       <button
         type="button"
         title="Duplicar camada (Ctrl+J)"
-        :disabled="!canManipulate"
+        :disabled="!canDuplicate"
         @click="activeLayer && emit('duplicateLayer', activeLayer.id)"
       >
         <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="1" /><path d="M16 8V5H5v11h3" /></svg>

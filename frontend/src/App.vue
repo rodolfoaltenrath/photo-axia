@@ -37,7 +37,7 @@ import {
   releasePreparedImage,
   releaseLayerAssets
 } from './services/imageImport'
-import { renderDocumentPNG, renderDocumentThumbnail } from './services/renderDocument'
+import { renderDocumentPNG, renderDocumentThumbnail, renderMergedLayers } from './services/renderDocument'
 import {
   createAxiaProjectManifest,
   restoreAxiaProject,
@@ -58,6 +58,7 @@ import { useHistory, type HistoryRecordOptions, type HistoryStep } from './edito
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
+import { updateLayerSelection, type LayerSelectionMode } from './editor/layerSelection'
 import { LatestPathTaskQueue, LatestRequestGate } from './editor/recentTasks'
 import type { EditorGuide, RulerOrigin, RulerUnit } from './editor/guides'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
@@ -132,6 +133,8 @@ const statusText = ref('Inicializando…')
 const errorText = ref('')
 const isBusy = ref(false)
 const activeLayerId = ref('layer-bg')
+const selectedLayerIds = ref<string[]>(['layer-bg'])
+const layerSelectionAnchorId = ref('layer-bg')
 const showNewDocumentDialog = ref(false)
 const appScreen = ref<'home' | 'editor'>('home')
 const hasOpenDocument = ref(false)
@@ -166,6 +169,7 @@ let pendingSelectionTasks = 0
 let previewRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let previewLayerCountHint = 0
 let discardChangesResolver: ((confirmed: boolean) => void) | undefined
+let rasterPreparationPromise: Promise<void> | undefined
 const recentRefreshGate = new LatestRequestGate()
 const thumbnailQueue = new LatestPathTaskQueue()
 const ACTIVE_PREVIEW_PIXELS = 4_194_304
@@ -214,6 +218,27 @@ watch(documentDirty, (dirty) => {
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
 })
+
+function selectSingleLayer(layerId: string) {
+  if (!layers.value.some((layer) => layer.id === layerId)) return
+  selectedLayerIds.value = [layerId]
+  layerSelectionAnchorId.value = layerId
+  activeLayerId.value = layerId
+}
+
+function selectLayerFromPanel(layerId: string, mode: LayerSelectionMode) {
+  const next = updateLayerSelection(
+    layers.value,
+    selectedLayerIds.value,
+    activeLayerId.value,
+    layerSelectionAnchorId.value,
+    layerId,
+    mode
+  )
+  selectedLayerIds.value = next.selectedIds
+  layerSelectionAnchorId.value = next.anchorId
+  activeLayerId.value = next.activeId
+}
 const selectionMoveAnchor = computed(() => {
   const session = floatingSelectionSession.value
   if (!session) return null
@@ -228,12 +253,34 @@ const selectionMoveAnchor = computed(() => {
 })
 
 watch(activeLayerId, (layerId, previousLayerId) => {
+  if (!selectedLayerIds.value.includes(layerId)) {
+    selectedLayerIds.value = [layerId]
+    layerSelectionAnchorId.value = layerId
+  }
   if (floatingSelectionSession.value?.layerId !== layerId) clearFloatingSelectionSession()
   for (const candidateId of [layerId, previousLayerId]) {
     const layer = layers.value.find((item) => item.id === candidateId)
     if (layer?.visible && layer.image && layer.transform) void refreshLayerPreview(layer)
   }
 })
+
+watch(
+  () => layers.value.map((layer) => layer.id).join('\u0000'),
+  () => {
+    const available = new Set(layers.value.map((layer) => layer.id))
+    const retained = selectedLayerIds.value.filter((id) => available.has(id))
+    selectedLayerIds.value = retained.length ? retained : [activeLayerId.value]
+    if (!available.has(layerSelectionAnchorId.value)) layerSelectionAnchorId.value = activeLayerId.value
+  }
+)
+
+watch(
+  [activeTool, activeLayerId, () => activeDocument.value.id],
+  () => {
+    if (activeTool.value === 'brush' || activeTool.value === 'eraser') void ensureRasterLayerPaintable()
+  },
+  { flush: 'post' }
+)
 
 watch(selection, (currentSelection) => {
   const session = floatingSelectionSession.value
@@ -263,6 +310,90 @@ watch(rulersVisible, (visible) => {
 
 function createBackgroundLayer(): LayerItem {
   return { id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, blendMode: 'normal', kind: 'background' }
+}
+
+function canvasToPngBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Não foi possível preparar a camada raster.')), 'image/png')
+  })
+}
+
+async function materializeRasterLayer(
+  layer: LayerItem,
+  width: number,
+  height: number,
+  background: DocumentSpec['background'] = 'transparent'
+) {
+  const canvas = window.document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
+  if (background !== 'transparent') {
+    context.fillStyle = background === 'black' ? '#000000' : '#ffffff'
+    context.fillRect(0, 0, width, height)
+  }
+  const blob = await canvasToPngBlob(canvas)
+  canvas.width = 1
+  canvas.height = 1
+  const sourceUrl = URL.createObjectURL(blob)
+  trackedObjectUrls.add(sourceUrl)
+  layer.image = {
+    width,
+    height,
+    mimeType: 'image/png',
+    sourceUrl,
+    byteSize: blob.size
+  }
+  layer.transform = { x: 0, y: 0, width, height, rotation: 0 }
+  await preloadImage(sourceUrl)
+  return sourceUrl
+}
+
+async function ensureRasterLayerPaintable() {
+  if (rasterPreparationPromise) return rasterPreparationPromise
+  const layer = activeLayer.value
+  if (
+    isBusy.value ||
+    (activeTool.value !== 'brush' && activeTool.value !== 'eraser') ||
+    (layer.kind !== 'background' && layer.kind !== 'pixel') ||
+    layer.image ||
+    layer.transform
+  ) return
+
+  const documentId = activeDocument.value.id
+  const width = activeDocument.value.width
+  const height = activeDocument.value.height
+  const background = layer.kind === 'background' ? activeDocument.value.background : 'transparent'
+  const previousStatus = statusText.value
+  rasterPreparationPromise = (async () => {
+    isBusy.value = true
+    errorText.value = ''
+    statusText.value = 'Preparando camada para edição…'
+    let sourceUrl: string | undefined
+    try {
+      sourceUrl = await materializeRasterLayer(layer, width, height, background)
+      if (activeDocument.value.id !== documentId || activeLayer.value !== layer) {
+        URL.revokeObjectURL(sourceUrl)
+        trackedObjectUrls.delete(sourceUrl)
+        layer.image = undefined
+        layer.transform = undefined
+        return
+      }
+      await refreshLayerPreview(layer, true)
+      statusText.value = previousStatus
+    } catch (error) {
+      if (sourceUrl && !layer.image) {
+        URL.revokeObjectURL(sourceUrl)
+        trackedObjectUrls.delete(sourceUrl)
+      }
+      showError(error, 'Não foi possível preparar a camada para pintura.')
+    } finally {
+      isBusy.value = false
+      rasterPreparationPromise = undefined
+    }
+  })()
+  return rasterPreparationPromise
 }
 
 function recordHistory(label: string, delta: EditorHistoryDelta, options?: HistoryRecordOptions) {
@@ -531,19 +662,20 @@ function renameLayer(layerId: string, name: string) {
 function duplicateLayer(layerId = activeLayerId.value) {
   const index = layers.value.findIndex((layer) => layer.id === layerId)
   const source = layers.value[index]
-  if (!source || source.kind === 'background') return
+  if (!source) return
 
   const duplicate: LayerItem = {
     ...source,
     id: crypto.randomUUID(),
     name: `${source.name} cópia`,
+    kind: source.kind === 'background' ? 'image' : source.kind,
     image: source.image ? { ...source.image } : undefined,
     text: source.text ? { ...source.text } : undefined,
     transform: source.transform
       ? {
           ...source.transform,
-          x: source.transform.x + 12,
-          y: source.transform.y + 12
+          x: source.transform.x + (source.kind === 'background' ? 0 : 12),
+          y: source.transform.y + (source.kind === 'background' ? 0 : 12)
         }
       : undefined
   }
@@ -598,7 +730,7 @@ async function duplicateSelectionOrLayer() {
   if (isBusy.value) return
   clearFloatingSelectionSession()
   const source = activeLayer.value
-  if (source.kind !== 'image' || !source.image || !source.transform) {
+  if ((source.kind !== 'image' && source.kind !== 'background' && source.kind !== 'pixel') || !source.image || !source.transform) {
     showError(new Error('A seleção precisa estar sobre uma camada de imagem.'), 'Não foi possível copiar a seleção.')
     return
   }
@@ -687,6 +819,98 @@ async function duplicateSelectionOrLayer() {
     }
     transientObjectUrls.clear()
     showError(error, 'Não foi possível copiar a seleção.')
+  } finally {
+    isBusy.value = false
+  }
+}
+
+async function mergeSelectedLayers() {
+  if (isBusy.value) return
+  const selected = new Set(selectedLayerIds.value)
+  const selectedItems = layers.value
+    .map((layer, index) => ({ index, layer }))
+    .filter((item) => selected.has(item.layer.id))
+  if (selectedItems.length < 2) {
+    errorText.value = 'Selecione pelo menos duas camadas com Ctrl+clique.'
+    statusText.value = 'São necessárias duas camadas para mesclar'
+    return
+  }
+  if (selectedItems.some((item) => !item.layer.visible)) {
+    errorText.value = 'Existem camadas ocultas na seleção. Torne-as visíveis ou remova-as da seleção antes de mesclar.'
+    statusText.value = 'A mesclagem foi cancelada para preservar camadas ocultas'
+    return
+  }
+
+  canvasViewport.value?.commitPendingTransform()
+  clearFloatingSelectionSession()
+  selection.value = null
+  selectionGeneration++
+  const activeBefore = activeLayerId.value
+  const selectedLayers = selectedItems.map((item) => item.layer)
+  for (const layer of selectedLayers) {
+    for (const source of layerObjectUrls(layer)) transientObjectUrls.add(source)
+  }
+  let createdSource: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Mesclando camadas…'
+  try {
+    const result = await renderMergedLayers(activeDocument.value, selectedLayers)
+    createdSource = URL.createObjectURL(result.blob)
+    trackedObjectUrls.add(createdSource)
+    const includesBackground = selectedLayers.some((layer) => layer.kind === 'background')
+    const merged: LayerItem = {
+      id: crypto.randomUUID(),
+      name: includesBackground ? 'Fundo mesclado' : `Mesclagem (${selectedItems.length})`,
+      visible: true,
+      opacity: 100,
+      blendMode: 'normal',
+      kind: includesBackground ? 'background' : 'image',
+      image: {
+        width: result.width,
+        height: result.height,
+        mimeType: 'image/png',
+        sourceUrl: createdSource,
+        byteSize: result.blob.size
+      },
+      transform: {
+        x: result.x,
+        y: result.y,
+        width: result.width,
+        height: result.height,
+        rotation: 0
+      }
+    }
+    await preloadImage(createdSource)
+
+    const remaining = layers.value.filter((layer) => !selected.has(layer.id))
+    const firstSelectedIndex = selectedItems[0]!.index
+    const insertionIndex = includesBackground
+      ? remaining.length
+      : layers.value.slice(0, firstSelectedIndex).filter((layer) => !selected.has(layer.id)).length
+    remaining.splice(insertionIndex, 0, merged)
+    layers.value = remaining
+    trackLayerAssets([merged])
+    selectSingleLayer(merged.id)
+    await refreshLayerPreview(merged, true, false, true)
+
+    recordHistory('Mesclar camadas', {
+      type: 'layers:replace',
+      before: selectedItems.map((item) => ({ index: item.index, layer: cloneLayerState(item.layer) })),
+      after: [{ index: insertionIndex, layer: cloneLayerState(merged) }],
+      activeBefore,
+      activeAfter: merged.id
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = `${selectedItems.length} camadas mescladas`
+  } catch (error) {
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível mesclar as camadas selecionadas.')
   } finally {
     isBusy.value = false
   }
@@ -850,9 +1074,14 @@ async function createDocument(settings: NewDocumentSettings) {
     activeDocument.value = document
     guides.value = []
     rulerOrigin.value = { x: 0, y: 0 }
-    layers.value = [createBackgroundLayer()]
+    const baseLayer = createBackgroundLayer()
+    layers.value = [baseLayer]
     activeLayerId.value = 'layer-bg'
+    selectedLayerIds.value = ['layer-bg']
+    layerSelectionAnchorId.value = 'layer-bg'
     zoom.value = 100
+    await materializeRasterLayer(baseLayer, document.width, document.height, document.background)
+    await refreshLayerPreview(baseLayer, true, false, true)
     projectPath.value = ''
     savedHistoryRevision.value = null
     showNewDocumentDialog.value = false
@@ -863,6 +1092,7 @@ async function createDocument(settings: NewDocumentSettings) {
     showError(error, 'Não foi possível criar o documento.')
   } finally {
     isBusy.value = false
+    if (activeTool.value === 'brush' || activeTool.value === 'eraser') void ensureRasterLayerPaintable()
   }
 }
 
@@ -1018,7 +1248,7 @@ async function selectWithMagicWand(point: SelectionPoint) {
   if (isBusy.value) return
   clearFloatingSelectionSession()
   const layer = activeLayer.value
-  if (layer.kind !== 'image' || !layer.image || !layer.transform) {
+  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
     showError(new Error('A varinha mágica precisa de uma camada de imagem ativa.'), 'Seleção indisponível.')
     return
   }
@@ -1066,7 +1296,7 @@ async function deleteSelectedPixels() {
   const currentSelection = selection.value
   const layer = activeLayer.value
   if (!currentSelection || selectionIsEmpty(currentSelection)) return
-  if (layer.kind !== 'image' || !layer.image || !layer.transform) {
+  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
     showError(new Error('Selecione uma camada de imagem para apagar pixels.'), 'Não foi possível apagar a seleção.')
     return
   }
@@ -1174,7 +1404,7 @@ async function commitSelectionMove(
 ) {
   if (isBusy.value || (!deltaX && !deltaY)) return
   const layer = activeLayer.value
-  if (layer.kind !== 'image' || !layer.image || !layer.transform) {
+  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
     showError(new Error('Selecione uma camada de imagem para mover pixels.'), 'Não foi possível mover a seleção.')
     return
   }
@@ -1350,7 +1580,7 @@ async function commitBrushStroke(
   if (isBusy.value) return
   clearFloatingSelectionSession()
   const layer = activeLayer.value
-  if (layer.kind !== 'image' || !layer.image || !layer.transform || points.length === 0) return
+  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform || points.length === 0) return
 
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
@@ -1850,6 +2080,12 @@ function handleShortcut(event: KeyboardEvent) {
     return
   }
 
+  if (command && event.code === 'KeyE' && !event.shiftKey && !event.altKey) {
+    event.preventDefault()
+    void mergeSelectedLayers()
+    return
+  }
+
   if (event.ctrlKey || event.metaKey || event.altKey) return
 
   const toolsByKey: Record<string, EditorTool> = {
@@ -1985,7 +2221,7 @@ onBeforeUnmount(() => {
         @paint-stroke="commitBrushStroke"
         @update-guide="updateGuide"
         @create-text="addTextLayer"
-        @select-layer="activeLayerId = $event"
+        @select-layer="selectSingleLayer"
         @update:magic-wand-contiguous="magicWandContiguous = $event"
         @update:magic-wand-tolerance="magicWandTolerance = $event"
         @update:guides-locked="guidesLocked = $event"
@@ -2020,13 +2256,15 @@ onBeforeUnmount(() => {
         <LayersPanel
           :active-layer-id="activeLayerId"
           :layers="layers"
+          :selected-layer-ids="selectedLayerIds"
           @add-layer="addLayer"
           @delete-layer="deleteLayer"
           @duplicate-layer="duplicateLayer"
           @move-layer="moveLayer"
+          @merge-layers="mergeSelectedLayers"
           @rename-layer="renameLayer"
           @reorder-layer="reorderLayer"
-          @select-layer="activeLayerId = $event"
+          @select-layer="selectLayerFromPanel"
           @toggle-layer="toggleLayer"
         />
       </aside>
