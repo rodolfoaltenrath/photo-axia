@@ -2,6 +2,33 @@
 
 Editor de imagens desktop construído com Go, Wails, Vue 3, TypeScript e Vite. O Axia reúne edição raster por camadas, ferramentas aceleradas por workers, projetos nativos e uma interface voltada para fluxos rápidos no Windows e Linux.
 
+## Instalar no Linux com Flatpak
+
+Baixe o arquivo `Axia.flatpak` da versão desejada e, na pasta onde ele foi
+salvo, execute:
+
+```sh
+flatpak install --user ./Axia.flatpak
+```
+
+Abra pelo menu de aplicativos ou pelo terminal:
+
+```sh
+flatpak run io.github.rodolfoaltenrath.photo-axia
+```
+
+Para instalar manualmente uma versão mais recente por cima da atual:
+
+```sh
+flatpak install --user --reinstall ./Axia.flatpak
+```
+
+As atualizações não são recebidas apenas porque o código foi atualizado no
+GitHub. Enquanto o Axia for distribuído como um arquivo avulso, cada nova
+versão precisa ser baixada e reinstalada com o comando acima. Atualizações pelo
+comando `flatpak update` estarão disponíveis quando o Axia possuir um
+repositório Flatpak publicado.
+
 ![Tela inicial do Axia com projetos recentes](assets/background%201.jpeg)
 
 ![Editor do Axia com documento, camadas, propriedades, réguas e guias](assets/background%202.jpeg)
