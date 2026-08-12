@@ -196,6 +196,32 @@ Gerar a build:
 ./scripts/wails-build.sh
 ```
 
+### Executar como Flatpak
+
+O empacotamento usa o runtime GNOME 50, que fornece GTK 3 e WebKitGTK 4.1,
+e compila o backend Go dentro do SDK. Na primeira execução, o comando baixa o
+runtime e as ferramentas necessárias:
+
+```sh
+./scripts/flatpak-build.sh
+```
+
+Ao terminar, o Axia estará instalado para o usuário atual e também será gerado
+em `dist/flatpak/Axia.flatpak`:
+
+```sh
+flatpak run io.github.rodolfoaltenrath.photo-axia
+```
+
+Para remover a instalação de teste:
+
+```sh
+flatpak uninstall --user io.github.rodolfoaltenrath.photo-axia
+```
+
+O App ID definitivo é `io.github.rodolfoaltenrath.photo-axia`. O manifesto fica
+na raiz do projeto e os arquivos de integração ficam em `packaging/flatpak`.
+
 O `sudo` é usado somente pelo `dnf`. As toolchains ficam em `.toolchains`, sem alterar instalações globais. Em outras distribuições, instale GTK 3, WebKit2GTK 4.1, um compilador C/C++ e `pkg-config` antes de executar os scripts de configuração.
 
 ## Testes

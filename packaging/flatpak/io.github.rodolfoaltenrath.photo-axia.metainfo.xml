@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.rodolfoaltenrath.photo-axia</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <!-- Atualize quando uma licença definitiva for escolhida para o projeto. -->
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Axia</name>
+  <summary>A fast, layer-based image editor</summary>
+  <summary xml:lang="pt-BR">Um editor de imagens rápido e baseado em camadas</summary>
+  <description>
+    <p>
+      Axia is a desktop image editor focused on responsive raster editing,
+      layered documents and a familiar creative workflow.
+    </p>
+    <p xml:lang="pt-BR">
+      O Axia é um editor de imagens desktop focado em edição raster responsiva,
+      documentos com camadas e um fluxo criativo familiar.
+    </p>
+  </description>
+  <developer id="io.github.rodolfoaltenrath">
+    <name>Rodolfo Altenrath</name>
+  </developer>
+  <launchable type="desktop-id">io.github.rodolfoaltenrath.photo-axia.desktop</launchable>
+  <url type="homepage">https://github.com/rodolfoaltenrath/photo-axia</url>
+  <url type="bugtracker">https://github.com/rodolfoaltenrath/photo-axia/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/rodolfoaltenrath/photo-axia/master/assets/background%202.jpeg</image>
+      <caption>The Axia editor with layers, properties, rulers and guides</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/rodolfoaltenrath/photo-axia/master/assets/background%201.jpeg</image>
+      <caption>The recent projects screen</caption>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Graphics</category>
+    <category>2DGraphics</category>
+    <category>RasterGraphics</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-08-11" type="development">
+      <description>
+        <p>Initial development package for Linux testing.</p>
+      </description>
+    </release>
+  </releases>
+</component>
