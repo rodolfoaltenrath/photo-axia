@@ -23,11 +23,8 @@ Para instalar manualmente uma versão mais recente por cima da atual:
 flatpak install --user --reinstall ./Axia.flatpak
 ```
 
-As atualizações não são recebidas apenas porque o código foi atualizado no
-GitHub. Enquanto o Axia for distribuído como um arquivo avulso, cada nova
-versão precisa ser baixada e reinstalada com o comando acima. Atualizações pelo
-comando `flatpak update` estarão disponíveis quando o Axia possuir um
-repositório Flatpak publicado.
+Estamos trabalhando para publicar o repositório Flatpak, portanto o comando `flatpak update` eainda não está disponível para atualizações automáticas.
+
 
 ![Tela inicial do Axia com projetos recentes](assets/background%201.jpeg)
 
