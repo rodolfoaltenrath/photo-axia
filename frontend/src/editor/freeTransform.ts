@@ -36,6 +36,24 @@ export function transformCenter(transform: LayerTransform): DocumentPoint {
   }
 }
 
+export function layerTransformsMatch(first: LayerTransform, second: LayerTransform) {
+  return first.x === second.x &&
+    first.y === second.y &&
+    first.width === second.width &&
+    first.height === second.height &&
+    (first.rotation ?? 0) === (second.rotation ?? 0)
+}
+
+export function layerTransformStyle(transform: LayerTransform) {
+  return {
+    left: '0',
+    top: '0',
+    width: `${transform.width}px`,
+    height: `${transform.height}px`,
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0) rotate(${transform.rotation ?? 0}deg)`
+  }
+}
+
 export function normalizeRotation(value: number) {
   const normalized = ((value + 180) % 360 + 360) % 360 - 180
   return Math.abs(normalized) < 0.005 ? 0 : Math.round(normalized * 100) / 100

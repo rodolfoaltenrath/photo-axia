@@ -17,6 +17,7 @@ import {
   SelectImageFiles
 } from '../../wailsjs/go/main/App'
 import type { DocumentSpec, ImportedImage, NewDocumentSettings, RecentProject } from '../types/editor'
+import { DEFAULT_LAYER_STYLE_GLOBAL_LIGHT, normalizeLayerStyleGlobalLight } from '../editor/layerStyles'
 
 interface EditorStatus {
   appName: string
@@ -53,7 +54,8 @@ export async function createEditorDocument(
       resolutionDpi: settings.resolutionDpi,
       colorSpace: 'sRGB',
       background: settings.background,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      layerStyleGlobalLight: { ...DEFAULT_LAYER_STYLE_GLOBAL_LIGHT }
     }
   }
 
@@ -68,7 +70,10 @@ export async function createEditorDocument(
     settings.background
   )
 
-  return document as DocumentSpec
+  return {
+    ...(document as Omit<DocumentSpec, 'layerStyleGlobalLight'> & Partial<Pick<DocumentSpec, 'layerStyleGlobalLight'>>),
+    layerStyleGlobalLight: normalizeLayerStyleGlobalLight((document as Partial<DocumentSpec>).layerStyleGlobalLight)
+  }
 }
 
 export async function selectDesktopImages(): Promise<ImportedImage[]> {

@@ -1,7 +1,8 @@
-import type { LayerItem } from '../types/editor'
+import type { LayerItem, LayerStyleGlobalLight } from '../types/editor'
 import type { HistoryDirection } from './history'
 import type { SelectionRegion } from './selection'
 import type { EditorGuide } from './guides'
+import { cloneLayerStyleConfig, createLayerStyleConfig, layerStylePatternAssets } from './layerStyles.ts'
 
 interface SelectionDelta {
   activeBefore?: string
@@ -51,6 +52,12 @@ export interface ChangeGuidesDelta {
   after: EditorGuide[]
 }
 
+export interface ChangeLayerStyleGlobalLightDelta {
+  type: 'document:global-light'
+  before: LayerStyleGlobalLight
+  after: LayerStyleGlobalLight
+}
+
 export type EditorHistoryDelta =
   | AddLayersDelta
   | RemoveLayersDelta
@@ -58,13 +65,15 @@ export type EditorHistoryDelta =
   | PatchLayerDelta
   | ReorderLayerDelta
   | ChangeGuidesDelta
+  | ChangeLayerStyleGlobalLightDelta
 
 export function cloneLayerState(layer: LayerItem): LayerItem {
   return {
     ...layer,
     image: layer.image ? { ...layer.image } : undefined,
     text: layer.text ? { ...layer.text } : undefined,
-    transform: layer.transform ? { ...layer.transform } : undefined
+    transform: layer.transform ? { ...layer.transform } : undefined,
+    styles: layer.styles ? cloneLayerStyleConfig(layer.styles) : createLayerStyleConfig()
   }
 }
 
@@ -73,12 +82,16 @@ export function cloneLayerPatch(patch: Partial<LayerItem>): Partial<LayerItem> {
   if ('image' in patch) cloned.image = patch.image ? { ...patch.image } : patch.image
   if ('text' in patch) cloned.text = patch.text ? { ...patch.text } : patch.text
   if ('transform' in patch) cloned.transform = patch.transform ? { ...patch.transform } : patch.transform
+  if ('styles' in patch) cloned.styles = patch.styles ? cloneLayerStyleConfig(patch.styles) : patch.styles
   return cloned
 }
 
 export function mergeEditorHistoryDelta(previous: EditorHistoryDelta, next: EditorHistoryDelta) {
   if (previous.type === 'guides:change' && next.type === 'guides:change') {
     return { ...next, before: previous.before.map((guide) => ({ ...guide })) } satisfies ChangeGuidesDelta
+  }
+  if (previous.type === 'document:global-light' && next.type === 'document:global-light') {
+    return { ...next, before: { ...previous.before } } satisfies ChangeLayerStyleGlobalLightDelta
   }
   if (previous.type !== 'layer:patch' || next.type !== 'layer:patch' || previous.layerId !== next.layerId) {
     return next
@@ -96,11 +109,17 @@ export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
   const referencedImageBytes = delta.type === 'layer:patch'
     ? [delta.before.image, delta.after.image].reduce((total, image) => total + (image?.byteSize ?? 0), 0)
     : historyDeltaLayers(delta).reduce((total, layer) => total + (layer.image?.byteSize ?? 0), 0)
-  return JSON.stringify(delta).length * 2 + referencedImageBytes + 96
+  const styleAssets = delta.type === 'layer:patch'
+    ? [...layerStylePatternAssets(delta.before.styles), ...layerStylePatternAssets(delta.after.styles)]
+    : historyDeltaLayers(delta).flatMap((layer) => layerStylePatternAssets(layer.styles))
+  const referencedStyleBytes = [...new Map(styleAssets.map((asset) => [asset.sourceUrl, asset])).values()]
+    .reduce((total, asset) => total + (asset.byteSize ?? 0), 0)
+  return JSON.stringify(delta).length * 2 + referencedImageBytes + referencedStyleBytes + 96
 }
 
 export function isEditorHistoryDeltaNoop(delta: EditorHistoryDelta) {
   if (delta.type === 'guides:change') return JSON.stringify(delta.before) === JSON.stringify(delta.after)
+  if (delta.type === 'document:global-light') return JSON.stringify(delta.before) === JSON.stringify(delta.after)
   if (delta.type === 'layer:patch') {
     return JSON.stringify(delta.before) === JSON.stringify(delta.after) &&
       JSON.stringify(delta.selectionBefore) === JSON.stringify(delta.selectionAfter)
@@ -121,6 +140,9 @@ export function historyDeltaObjectUrls(delta: EditorHistoryDelta) {
   const collect = (layer: Partial<LayerItem>) => {
     for (const source of [layer.image?.sourceUrl, layer.image?.previewUrl]) {
       if (source?.startsWith('blob:')) urls.add(source)
+    }
+    for (const asset of layerStylePatternAssets(layer.styles)) {
+      if (asset.sourceUrl.startsWith('blob:')) urls.add(asset.sourceUrl)
     }
   }
   if (delta.type === 'layers:replace') {
@@ -145,7 +167,7 @@ export function applyEditorHistoryDelta(
   const removedLayerIds: string[] = []
   const refreshLayerIds: string[] = []
 
-  if (delta.type === 'guides:change') {
+  if (delta.type === 'guides:change' || delta.type === 'document:global-light') {
     return { activeLayerId, insertedLayers, refreshLayerIds, removedLayerIds }
   }
 
@@ -181,7 +203,7 @@ export function applyEditorHistoryDelta(
     if (layer) {
       const patch = cloneLayerPatch(redo ? delta.after : delta.before)
       Object.assign(layer, patch)
-      if (layer.image && (patch.transform || patch.image)) refreshLayerIds.push(layer.id)
+      if (layer.image && (patch.transform || patch.image || patch.styles)) refreshLayerIds.push(layer.id)
     }
   } else {
     const index = layers.findIndex((layer) => layer.id === delta.layerId)

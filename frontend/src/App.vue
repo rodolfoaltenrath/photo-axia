@@ -55,6 +55,7 @@ import {
   type EditorHistoryDelta
 } from './editor/editorHistory'
 import { useHistory, type HistoryRecordOptions, type HistoryStep } from './editor/history'
+import { MutationBarrier } from './editor/mutationBarrier'
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
@@ -62,6 +63,13 @@ import { updateLayerSelection, type LayerSelectionMode } from './editor/layerSel
 import { LatestPathTaskQueue, LatestRequestGate } from './editor/recentTasks'
 import type { EditorGuide, RulerOrigin, RulerUnit } from './editor/guides'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
+import {
+  cloneLayerStyleConfig,
+  createLayerStyleConfig,
+  DEFAULT_LAYER_STYLE_GLOBAL_LIGHT,
+  layerStylePatternAssets,
+  normalizeLayerStyleGlobalLight
+} from './editor/layerStyles'
 import {
   cloneSelection,
   layerSourceToDocumentMatrix,
@@ -79,6 +87,7 @@ import {
   extractImageSelection
 } from './services/selectionEngine'
 import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
+import { disposeLayerStyleCompositor } from './services/layerStyleCompositor'
 import type { BrushOperation } from './editor/brush'
 import {
   disposeSelectionMoveEngine,
@@ -156,7 +165,8 @@ const activeDocument = ref<DocumentSpec>({
   resolutionDpi: 72,
   colorSpace: 'sRGB',
   background: 'transparent',
-  createdAt: ''
+  createdAt: '',
+  layerStyleGlobalLight: { ...DEFAULT_LAYER_STYLE_GLOBAL_LIGHT }
 })
 const layers = ref<LayerItem[]>([createBackgroundLayer()])
 const zoomEventOptions = { capture: true, passive: false }
@@ -273,6 +283,11 @@ watch(
     if (!available.has(layerSelectionAnchorId.value)) layerSelectionAnchorId.value = activeLayerId.value
   }
 )
+const rasterMutationBarrier = new MutationBarrier()
+let pendingBrushCommit: {
+  controller: AbortController
+  label: string
+} | undefined
 
 watch(
   [activeTool, activeLayerId, () => activeDocument.value.id],
@@ -309,7 +324,10 @@ watch(rulersVisible, (visible) => {
 })
 
 function createBackgroundLayer(): LayerItem {
-  return { id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, blendMode: 'normal', kind: 'background' }
+  return {
+    id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, blendMode: 'normal', kind: 'background',
+    styles: createLayerStyleConfig()
+  }
 }
 
 function canvasToPngBlob(canvas: HTMLCanvasElement) {
@@ -404,7 +422,11 @@ function recordHistory(label: string, delta: EditorHistoryDelta, options?: Histo
 }
 
 function layerObjectUrls(layer: LayerItem) {
-  return [layer.image?.sourceUrl, layer.image?.previewUrl].filter(
+  return [
+    layer.image?.sourceUrl,
+    layer.image?.previewUrl,
+    ...layerStylePatternAssets(layer.styles).map((asset) => asset.sourceUrl)
+  ].filter(
     (source): source is string => Boolean(source?.startsWith('blob:'))
   )
 }
@@ -458,6 +480,12 @@ function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
       guides.value = (direction === 'redo' ? delta.after : delta.before).map((guide) => ({ ...guide }))
       continue
     }
+    if (delta.type === 'document:global-light') {
+      activeDocument.value.layerStyleGlobalLight = normalizeLayerStyleGlobalLight(
+        direction === 'redo' ? delta.after : delta.before
+      )
+      continue
+    }
     const result = applyEditorHistoryDelta(layers.value, activeLayerId.value, delta, direction)
     activeLayerId.value = result.activeLayerId
     trackLayerAssets(result.insertedLayers)
@@ -485,8 +513,20 @@ function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
   }
 }
 
-function undoHistory() {
+async function undoHistory() {
   canvasViewport.value?.commitPendingTransform()
+  if (pendingBrushCommit && rasterMutationBarrier.isPending) {
+    const { controller, label } = pendingBrushCommit
+    pendingBrushCommit = undefined
+    controller.abort()
+    rasterMutationBarrier.discard()
+    canvasViewport.value?.discardPendingBrushPreview()
+    statusText.value = `Desfeito: ${label}`
+    errorText.value = ''
+    return
+  }
+  if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição antes de desfazer…'
+  if (!await rasterMutationBarrier.wait()) return
   selection.value = null
   const transition = history.undo()
   if (!transition) return
@@ -495,8 +535,10 @@ function undoHistory() {
   errorText.value = ''
 }
 
-function redoHistory() {
+async function redoHistory() {
   canvasViewport.value?.commitPendingTransform()
+  if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição antes de refazer…'
+  if (!await rasterMutationBarrier.wait()) return
   selection.value = null
   const transition = history.redo()
   if (!transition) return
@@ -505,8 +547,10 @@ function redoHistory() {
   errorText.value = ''
 }
 
-function jumpHistory(position: number) {
+async function jumpHistory(position: number) {
   canvasViewport.value?.commitPendingTransform()
+  if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição antes de navegar no histórico…'
+  if (!await rasterMutationBarrier.wait()) return
   selection.value = null
   const transition = history.jump(position)
   if (!transition) return
@@ -536,7 +580,8 @@ function addLayer() {
     visible: true,
     opacity: 100,
     blendMode: 'normal',
-    kind: 'pixel'
+    kind: 'pixel',
+    styles: createLayerStyleConfig()
   }
   layers.value.splice(insertionIndex, 0, layer)
   activeLayerId.value = id
@@ -566,6 +611,7 @@ function addTextLayer(point: { x: number; y: number }) {
     opacity: 100,
     blendMode: 'normal',
     kind: 'text',
+    styles: createLayerStyleConfig(),
     text,
     transform: {
       x: Math.round(Math.max(0, Math.min(point.x, activeDocument.value.width - size.width))),
@@ -669,6 +715,7 @@ function duplicateLayer(layerId = activeLayerId.value) {
     id: crypto.randomUUID(),
     name: `${source.name} cópia`,
     kind: source.kind === 'background' ? 'image' : source.kind,
+    styles: cloneLayerStyleConfig(source.styles),
     image: source.image ? { ...source.image } : undefined,
     text: source.text ? { ...source.text } : undefined,
     transform: source.transform
@@ -786,6 +833,7 @@ async function duplicateSelectionOrLayer() {
       opacity: 100,
       blendMode: source.blendMode,
       kind: 'image',
+      styles: cloneLayerStyleConfig(source.styles),
       image: {
         ...asset,
         previewUrl: preview?.url,
@@ -866,6 +914,7 @@ async function mergeSelectedLayers() {
       opacity: 100,
       blendMode: 'normal',
       kind: includesBackground ? 'background' : 'image',
+      styles: createLayerStyleConfig(),
       image: {
         width: result.width,
         height: result.height,
@@ -1189,6 +1238,7 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
       opacity: 100,
       blendMode: 'normal',
       kind: 'image',
+      styles: createLayerStyleConfig(),
       image: {
         width: image.width,
         height: image.height,
@@ -1568,19 +1618,20 @@ async function commitSelectionMove(
   }
 }
 
-async function commitBrushStroke(
+async function performBrushStroke(
   points: SelectionPoint[],
   size: number,
   color: string,
   operation: BrushOperation,
   strokeSelection: SelectionRegion | null,
   livePreviewWidth: number,
-  livePreviewHeight: number
+  livePreviewHeight: number,
+  signal: AbortSignal
 ) {
-  if (isBusy.value) return
+  if (isBusy.value) return false
   clearFloatingSelectionSession()
   const layer = activeLayer.value
-  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform || points.length === 0) return
+  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform || points.length === 0) return false
 
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
@@ -1613,8 +1664,10 @@ async function commitBrushStroke(
       previewTarget.width,
       previewTarget.height,
       activeDocument.value.width,
-      activeDocument.value.height
+      activeDocument.value.height,
+      signal
     )
+    signal.throwIfAborted()
     createdSource = URL.createObjectURL(result.blob)
     trackedObjectUrls.add(createdSource)
     createdPreviewUrl = result.previewBlob ? URL.createObjectURL(result.previewBlob) : undefined
@@ -1631,7 +1684,8 @@ async function commitBrushStroke(
       previewWidth: result.previewWidth,
       previewHeight: result.previewHeight
     }
-    await preloadImage(newAsset.previewUrl ?? newAsset.sourceUrl)
+    await preloadImage(newAsset.previewUrl ?? newAsset.sourceUrl, signal)
+    signal.throwIfAborted()
 
     let newTransform = beforeTransform
     if (
@@ -1667,6 +1721,7 @@ async function commitBrushStroke(
     transientObjectUrls.clear()
     collectUnusedObjectUrls()
     statusText.value = isEraser ? 'Borracha aplicada' : 'Pincelada aplicada'
+    return true
   } catch (error) {
     layer.image = beforeImage
     layer.transform = beforeTransform
@@ -1679,17 +1734,63 @@ async function commitBrushStroke(
       trackedObjectUrls.delete(createdPreviewUrl)
     }
     transientObjectUrls.clear()
-    showError(error, isEraser ? 'Não foi possível aplicar a borracha.' : 'Não foi possível aplicar a pincelada.')
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      showError(error, isEraser ? 'Não foi possível aplicar a borracha.' : 'Não foi possível aplicar a pincelada.')
+    }
+    return false
   } finally {
     isBusy.value = false
   }
 }
 
-function preloadImage(url: string) {
-  return new Promise<void>((resolve) => {
+function commitBrushStroke(
+  points: SelectionPoint[],
+  size: number,
+  color: string,
+  operation: BrushOperation,
+  strokeSelection: SelectionRegion | null,
+  livePreviewWidth: number,
+  livePreviewHeight: number
+) {
+  if (rasterMutationBarrier.isPending) return
+  const controller = new AbortController()
+  const label = operation === 'erase' ? 'Borracha' : 'Pincelada'
+  pendingBrushCommit = { controller, label }
+  const commit = rasterMutationBarrier.track(performBrushStroke(
+    points,
+    size,
+    color,
+    operation,
+    strokeSelection,
+    livePreviewWidth,
+    livePreviewHeight,
+    controller.signal
+  ))
+  void commit.finally(() => {
+    if (pendingBrushCommit?.controller === controller) pendingBrushCommit = undefined
+  }).catch(() => undefined)
+}
+
+function preloadImage(url: string, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
     const image = new Image()
-    image.onload = () => resolve()
-    image.onerror = () => resolve()
+    const cleanup = () => signal?.removeEventListener('abort', cancel)
+    const complete = () => {
+      cleanup()
+      resolve()
+    }
+    const cancel = () => {
+      image.src = ''
+      cleanup()
+      reject(new DOMException('Carregamento cancelado.', 'AbortError'))
+    }
+    image.onload = complete
+    image.onerror = complete
+    signal?.addEventListener('abort', cancel, { once: true })
+    if (signal?.aborted) {
+      cancel()
+      return
+    }
     image.src = url
   })
 }
@@ -2055,13 +2156,13 @@ function handleShortcut(event: KeyboardEvent) {
   }
   if (command && event.code === 'KeyZ') {
     event.preventDefault()
-    if (event.shiftKey) redoHistory()
-    else undoHistory()
+    if (event.shiftKey) void redoHistory()
+    else void undoHistory()
     return
   }
   if (command && event.code === 'KeyY') {
     event.preventDefault()
-    redoHistory()
+    void redoHistory()
     return
   }
 
@@ -2119,10 +2220,14 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (previewRefreshTimer) clearTimeout(previewRefreshTimer)
+  pendingBrushCommit?.controller.abort()
+  pendingBrushCommit = undefined
+  rasterMutationBarrier.discard()
   disposeSelectionEngine()
   disposeBrushEngine()
   disposeSelectionMoveEngine()
   disposeImagePreviewWorker()
+  disposeLayerStyleCompositor()
   releaseAllEditorAssets()
   window.removeEventListener('wheel', blockBrowserWheelZoom, true)
   window.removeEventListener('keydown', handleShortcut)

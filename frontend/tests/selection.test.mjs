@@ -14,6 +14,7 @@ import {
   selectionContainsPoint,
   selectionDocumentBounds,
   selectionExtractionGeometry,
+  selectionMoveDelta,
   selectionMoveGeometry,
   selectionNudgeDelta,
   snapShapeSelectionToBounds,
@@ -26,6 +27,12 @@ test('setas deslocam a seleção em um pixel ou dez com Shift', () => {
   assert.deepEqual(selectionNudgeDelta('ArrowUp'), { x: 0, y: -1 })
   assert.deepEqual(selectionNudgeDelta('ArrowRight', true), { x: 10, y: 0 })
   assert.equal(selectionNudgeDelta('Enter'), undefined)
+})
+
+test('movimento da seleção arredonda pixels e Shift restringe a ângulos de 45 graus', () => {
+  assert.deepEqual(selectionMoveDelta({ x: 10.2, y: 20.2 }, { x: 14.7, y: 22.6 }), { x: 5, y: 2 })
+  assert.deepEqual(selectionMoveDelta({ x: 0, y: 0 }, { x: 10, y: 3 }, true), { x: 10, y: 0 })
+  assert.deepEqual(selectionMoveDelta({ x: 0, y: 0 }, { x: 8, y: 7 }, true), { x: 8, y: 8 })
 })
 
 test('extração limita a seleção aos pixels da camada sem adicionar sangria', () => {

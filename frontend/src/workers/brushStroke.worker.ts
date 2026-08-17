@@ -32,6 +32,10 @@ interface BrushRequest {
   documentHeight: number
 }
 
+interface BrushCancelRequest {
+  cancel: number
+}
+
 interface BrushResult {
   blob: Blob
   width: number
@@ -52,6 +56,12 @@ interface CachedSurface {
 
 let cachedSurface: CachedSurface | undefined
 let nextEditToken = 1
+const cancelledRequests = new Set<number>()
+const activeRequests = new Set<number>()
+
+function requestWasCancelled(id: number) {
+  return cancelledRequests.has(id)
+}
 
 async function sourceCanvas(request: BrushRequest) {
   if (
@@ -95,10 +105,18 @@ async function encodePreview(source: OffscreenCanvas, width: number, height: num
   }
 }
 
-self.onmessage = async (event: MessageEvent<BrushRequest>) => {
+self.onmessage = async (event: MessageEvent<BrushRequest | BrushCancelRequest>) => {
+  if ('cancel' in event.data) {
+    if (activeRequests.has(event.data.cancel)) cancelledRequests.add(event.data.cancel)
+    // A superfície reutilizável pode já ter sido alterada pela operação cancelada.
+    cachedSurface = undefined
+    return
+  }
   const request = event.data
+  activeRequests.add(request.id)
   try {
     const source = await sourceCanvas(request)
+    if (requestWasCancelled(request.id)) return
     let minimumX = Number.POSITIVE_INFINITY
     let minimumY = Number.POSITIVE_INFINITY
     let maximumX = Number.NEGATIVE_INFINITY
@@ -149,7 +167,6 @@ self.onmessage = async (event: MessageEvent<BrushRequest>) => {
     context.restore()
 
     const editToken = `stroke:${request.layerId}:${nextEditToken++}`
-    cachedSurface = { layerId: request.layerId, token: editToken, canvas }
     const previewScaleX = request.previewWidth / request.assetWidth
     const previewScaleY = request.previewHeight / request.assetHeight
     const previewWidth = Math.max(1, Math.min(canvas.width, Math.round(canvas.width * previewScaleX)))
@@ -158,6 +175,8 @@ self.onmessage = async (event: MessageEvent<BrushRequest>) => {
       canvas.convertToBlob({ type: 'image/png' }),
       encodePreview(canvas, previewWidth, previewHeight)
     ])
+    if (requestWasCancelled(request.id)) return
+    cachedSurface = { layerId: request.layerId, token: editToken, canvas }
     const result: BrushResult = {
       blob,
       width: canvas.width,
@@ -171,9 +190,13 @@ self.onmessage = async (event: MessageEvent<BrushRequest>) => {
     }
     self.postMessage({ id: request.id, result })
   } catch (error) {
+    if (requestWasCancelled(request.id)) return
     self.postMessage({
       id: request.id,
       error: error instanceof Error ? error.message : 'Não foi possível aplicar a pincelada.'
     })
+  } finally {
+    activeRequests.delete(request.id)
+    cancelledRequests.delete(request.id)
   }
 }

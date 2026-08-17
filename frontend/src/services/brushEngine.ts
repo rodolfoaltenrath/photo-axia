@@ -31,6 +31,7 @@ interface PendingStroke {
   layerId: string
   resolve: (result: BrushStrokeResult) => void
   reject: (error: Error) => void
+  cleanup: () => void
 }
 
 interface WorkerCacheState {
@@ -51,6 +52,7 @@ function brushWorkerInstance() {
     const pending = pendingStrokes.get(event.data.id)
     if (!pending) return
     pendingStrokes.delete(event.data.id)
+    pending.cleanup()
     if (event.data.error) {
       pending.reject(new Error(event.data.error))
     } else if (event.data.result) {
@@ -63,7 +65,10 @@ function brushWorkerInstance() {
     }
   }
   brushWorker.onerror = () => {
-    for (const pending of pendingStrokes.values()) pending.reject(new Error('A pincelada foi interrompida.'))
+    for (const pending of pendingStrokes.values()) {
+      pending.cleanup()
+      pending.reject(new Error('A pincelada foi interrompida.'))
+    }
     pendingStrokes.clear()
     brushWorker?.terminate()
     brushWorker = undefined
@@ -98,8 +103,26 @@ async function encodeCanvas(canvas: HTMLCanvasElement | OffscreenCanvas, type = 
   })
 }
 
-async function fetchAssetBlob(asset: ImageAsset) {
-  const response = await fetch(asset.sourceUrl)
+function abortError() {
+  return new DOMException('Pincelada cancelada.', 'AbortError')
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw abortError()
+}
+
+function abortable<T>(operation: Promise<T>, signal?: AbortSignal) {
+  if (!signal) return operation
+  throwIfAborted(signal)
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(abortError())
+    signal.addEventListener('abort', abort, { once: true })
+    void operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+  })
+}
+
+async function fetchAssetBlob(asset: ImageAsset, signal?: AbortSignal) {
+  const response = await fetch(asset.sourceUrl, { signal })
   if (!response.ok) throw new Error('Não foi possível carregar a camada para edição.')
   return response.blob()
 }
@@ -116,9 +139,15 @@ async function fallbackBrushStroke(
   previewWidth: number,
   previewHeight: number,
   documentWidth: number,
-  documentHeight: number
+  documentHeight: number,
+  signal?: AbortSignal
 ): Promise<BrushStrokeResult> {
+  throwIfAborted(signal)
   const bitmap = await createImageBitmap(sourceBlob)
+  if (signal?.aborted) {
+    bitmap.close()
+    throw abortError()
+  }
   const geometry = brushStrokeGeometry(
     asset.width,
     asset.height,
@@ -164,6 +193,10 @@ async function fallbackBrushStroke(
       resizeHeight: outputPreviewHeight,
       resizeQuality: 'high'
     })
+    if (signal?.aborted) {
+      previewBitmap.close()
+      throw abortError()
+    }
     previewContext.drawImage(previewBitmap, 0, 0, outputPreviewWidth, outputPreviewHeight)
     previewBitmap.close()
   }
@@ -171,6 +204,7 @@ async function fallbackBrushStroke(
     encodeCanvas(canvas),
     previewCanvas ? encodeCanvas(previewCanvas, 'image/webp') : Promise.resolve(undefined)
   ])
+  throwIfAborted(signal)
   canvas.width = 1
   canvas.height = 1
   if (previewCanvas) {
@@ -201,13 +235,15 @@ export async function applyBrushStroke(
   previewWidth: number,
   previewHeight: number,
   documentWidth: number,
-  documentHeight: number
+  documentHeight: number,
+  signal?: AbortSignal
 ): Promise<BrushStrokeResult> {
+  throwIfAborted(signal)
   const activeSelection = selection && !selectionIsEmpty(selection) ? selection : null
   const worker = brushWorkerInstance()
   if (!worker) {
-    return fallbackBrushStroke(
-      await fetchAssetBlob(asset),
+    return abortable(fallbackBrushStroke(
+      await fetchAssetBlob(asset, signal),
       asset,
       transform,
       points,
@@ -218,8 +254,9 @@ export async function applyBrushStroke(
       previewWidth,
       previewHeight,
       documentWidth,
-      documentHeight
-    )
+      documentHeight,
+      signal
+    ), signal)
   }
 
   const canReuseWorkerSurface = Boolean(
@@ -227,7 +264,8 @@ export async function applyBrushStroke(
     workerCacheState?.layerId === layerId &&
     workerCacheState.editToken === asset.editToken
   )
-  const blob = canReuseWorkerSurface ? undefined : await fetchAssetBlob(asset)
+  const blob = canReuseWorkerSurface ? undefined : await fetchAssetBlob(asset, signal)
+  throwIfAborted(signal)
   const packedPoints = new Float32Array(points.length * 2)
   for (let index = 0; index < points.length; index++) {
     packedPoints[index * 2] = points[index]!.x
@@ -236,7 +274,22 @@ export async function applyBrushStroke(
 
   const id = nextStrokeRequestId++
   return new Promise<BrushStrokeResult>((resolve, reject) => {
-    pendingStrokes.set(id, { layerId, resolve, reject })
+    const cleanup = () => signal?.removeEventListener('abort', cancel)
+    const cancel = () => {
+      const pending = pendingStrokes.get(id)
+      if (!pending) return
+      pendingStrokes.delete(id)
+      cleanup()
+      workerCacheState = undefined
+      worker.postMessage({ cancel: id })
+      reject(abortError())
+    }
+    pendingStrokes.set(id, { layerId, resolve, reject, cleanup })
+    signal?.addEventListener('abort', cancel, { once: true })
+    if (signal?.aborted) {
+      cancel()
+      return
+    }
     worker.postMessage(
       {
         id,
@@ -265,6 +318,9 @@ export function disposeBrushEngine() {
   brushWorker?.terminate()
   brushWorker = undefined
   workerCacheState = undefined
-  for (const pending of pendingStrokes.values()) pending.reject(new Error('Pincelada cancelada.'))
+  for (const pending of pendingStrokes.values()) {
+    pending.cleanup()
+    pending.reject(new Error('Pincelada cancelada.'))
+  }
   pendingStrokes.clear()
 }

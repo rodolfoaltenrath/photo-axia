@@ -9,6 +9,19 @@ export interface BrushPreviewSize {
   height: number
 }
 
+export type BrushPreviewHandoffAction = 'keep' | 'mark-committed' | 'clear'
+
+export function brushPreviewHandoffAction(
+  baseSource: string | undefined,
+  observedSource: string | undefined,
+  busy: boolean,
+  sourceReady: boolean
+): BrushPreviewHandoffAction {
+  if (!observedSource) return busy ? 'keep' : 'clear'
+  if (observedSource === baseSource) return busy ? 'keep' : 'clear'
+  return sourceReady ? 'clear' : 'mark-committed'
+}
+
 const MAX_PREVIEW_PIXELS = 4_194_304
 
 export function brushPointSpacing(size: number, viewportScale: number) {

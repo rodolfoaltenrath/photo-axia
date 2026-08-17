@@ -4,6 +4,7 @@ import {
   appendBrushPoint,
   brushOperationExpandsRaster,
   brushPointSpacing,
+  brushPreviewHandoffAction,
   brushPreviewSize,
   brushPreviewUsesLayerSpace,
   brushStrokeGeometry,
@@ -68,6 +69,17 @@ test('a borracha usa o espaço da camada mesmo sem seleção', () => {
   assert.equal(brushPreviewUsesLayerSpace('erase', false), true)
   assert.equal(brushPreviewUsesLayerSpace('paint', true), true)
   assert.equal(brushPreviewUsesLayerSpace('paint', false), false)
+})
+
+test('undo rápido limpa a prévia quando a camada retorna à fonte anterior', () => {
+  assert.equal(brushPreviewHandoffAction('blob:before', 'blob:before', true, false), 'keep')
+  assert.equal(brushPreviewHandoffAction('blob:before', 'blob:after', true, false), 'mark-committed')
+  assert.equal(brushPreviewHandoffAction('blob:before', 'blob:before', false, false), 'clear')
+})
+
+test('raster definitivo pronto substitui a prévia e ausência de fonte limpa após falha', () => {
+  assert.equal(brushPreviewHandoffAction('blob:before', 'blob:after', false, true), 'clear')
+  assert.equal(brushPreviewHandoffAction('blob:before', undefined, false, false), 'clear')
 })
 
 test('a borracha remove alfa usando o mesmo traçado incremental do pincel', () => {

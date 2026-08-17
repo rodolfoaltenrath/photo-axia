@@ -360,6 +360,22 @@ export function selectionNudgeDelta(key: string, accelerated = false) {
   return movements[key]
 }
 
+export function selectionMoveDelta(
+  start: SelectionPoint,
+  point: SelectionPoint,
+  constrain = false
+): SelectionPoint {
+  let x = point.x - start.x
+  let y = point.y - start.y
+  if (constrain && (x || y)) {
+    const distance = Math.hypot(x, y)
+    const angle = Math.round(Math.atan2(y, x) / (Math.PI / 4)) * (Math.PI / 4)
+    x = Math.cos(angle) * distance
+    y = Math.sin(angle) * distance
+  }
+  return { x: Math.round(x), y: Math.round(y) }
+}
+
 export function cloneSelection(selection: SelectionRegion | null): SelectionRegion | null {
   if (!selection) return null
   if (selection.kind === 'pixels') {

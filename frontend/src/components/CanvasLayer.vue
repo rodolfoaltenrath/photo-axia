@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import type { LayerItem, LayerTransform } from '../types/editor'
 import { layerCompositingStyle } from '../editor/blendModes'
+import { useLayerImageBuffer } from './canvas/composables/useLayerImageHandoff'
 
 const props = defineProps<{
   active: boolean
@@ -18,160 +19,20 @@ const emit = defineEmits<{
 }>()
 
 const layerRoot = ref<HTMLElement | null>(null)
-const desiredImageSource = computed(() => props.layer.image?.previewUrl ?? props.layer.image?.sourceUrl ?? null)
-
-function copyTransform(transform: LayerTransform): LayerTransform {
-  return {
-    x: transform.x,
-    y: transform.y,
-    width: transform.width,
-    height: transform.height,
-    rotation: transform.rotation
-  }
-}
-
-const imageSources = ref<[string | null, string | null]>([desiredImageSource.value, null])
-const imageReady = ref<[boolean, boolean]>([false, false])
-const imageTransforms = ref<[LayerTransform, LayerTransform]>([
-  copyTransform(props.transform),
-  copyTransform(props.transform)
-])
-const activeImageSlot = ref<0 | 1>(0)
-const activeImageTransform = ref(copyTransform(props.transform))
-let releaseFrame = 0
-let compositorReadyFrame = 0
-let deferredActivation: { slot: 0 | 1; source: string } | undefined
-
-function releaseInactiveSlot(activeSlot: 0 | 1, source: string) {
-  cancelAnimationFrame(releaseFrame)
-  releaseFrame = requestAnimationFrame(() => {
-    releaseFrame = 0
-    if (activeImageSlot.value !== activeSlot || desiredImageSource.value !== source) return
-    const inactiveSlot: 0 | 1 = activeSlot === 0 ? 1 : 0
-    if (!imageSources.value[inactiveSlot]) return
-    const sources = [...imageSources.value] as [string | null, string | null]
-    const readiness = [...imageReady.value] as [boolean, boolean]
-    sources[inactiveSlot] = null
-    readiness[inactiveSlot] = false
-    imageSources.value = sources
-    imageReady.value = readiness
-  })
-}
-
-function activateImageSlot(slot: 0 | 1, source: string) {
-  if (imageSources.value[slot] !== source || desiredImageSource.value !== source) return
-  if (
-    layerRoot.value?.classList.contains('document-layer--dragging') ||
-    layerRoot.value?.classList.contains('document-layer--transforming')
-  ) {
-    deferredActivation = { slot, source }
-    return
-  }
-
-  cancelAnimationFrame(compositorReadyFrame)
-  const commitBuffer = () => {
-    compositorReadyFrame = 0
-    if (imageSources.value[slot] !== source || desiredImageSource.value !== source) return
-    // Buffer e prévia mudam na mesma tarefa para o Vue publicar um só frame.
-    activeImageTransform.value = copyTransform(imageTransforms.value[slot])
-    activeImageSlot.value = slot
-    emit('imageLoaded', props.layer.id, source)
-    releaseInactiveSlot(slot, source)
-  }
-  if (!props.active) {
-    commitBuffer()
-    return
-  }
-
-  // O novo buffer permanece invisível por dois frames para o WebView preparar
-  // sua textura; só então ele substitui atomicamente o canvas ao vivo.
-  compositorReadyFrame = requestAnimationFrame(() => {
-    compositorReadyFrame = requestAnimationFrame(commitBuffer)
-  })
-}
-
-function finishInteractiveTransform(event: Event) {
-  const pending = deferredActivation
-  deferredActivation = undefined
-  if (!pending) return
-  const transform = (event as CustomEvent<LayerTransform>).detail
-  if (transform) {
-    const transforms = [...imageTransforms.value] as [LayerTransform, LayerTransform]
-    transforms[pending.slot] = copyTransform(transform)
-    imageTransforms.value = transforms
-  }
-  activateImageSlot(pending.slot, pending.source)
-}
-
-async function handleImageLoad(slot: 0 | 1, event: Event) {
-  const source = imageSources.value[slot]
-  if (!source) return
-  const image = event.currentTarget as HTMLImageElement
-  try {
-    await image.decode()
-  } catch {
-    if (!image.complete || image.naturalWidth === 0) return
-  }
-  if (imageSources.value[slot] !== source) return
-  const readiness = [...imageReady.value] as [boolean, boolean]
-  readiness[slot] = true
-  imageReady.value = readiness
-  if (source === desiredImageSource.value) activateImageSlot(slot, source)
-}
-
-function handleImageError(slot: 0 | 1) {
-  const source = imageSources.value[slot]
-  if (source && source === desiredImageSource.value) emit('imageError', props.layer.id, source)
-}
-
-watch(desiredImageSource, (source) => {
-  if (!source || imageSources.value[activeImageSlot.value] === source) return
-  const targetSlot: 0 | 1 = activeImageSlot.value === 0 ? 1 : 0
-  const transforms = [...imageTransforms.value] as [LayerTransform, LayerTransform]
-  transforms[targetSlot] = copyTransform(props.transform)
-  imageTransforms.value = transforms
-  if (imageSources.value[targetSlot] === source && imageReady.value[targetSlot]) {
-    activateImageSlot(targetSlot, source)
-    return
-  }
-  const sources = [...imageSources.value] as [string | null, string | null]
-  const readiness = [...imageReady.value] as [boolean, boolean]
-  sources[targetSlot] = source
-  readiness[targetSlot] = false
-  imageSources.value = sources
-  imageReady.value = readiness
-})
-
-watch(
-  () => [
-    props.transform.x,
-    props.transform.y,
-    props.transform.width,
-    props.transform.height,
-    props.transform.rotation
-  ],
-  () => {
-    const desiredSource = desiredImageSource.value
-    if (!desiredSource) return
-
-    const matchingSlot = imageSources.value.findIndex((source) => source === desiredSource)
-    if (matchingSlot < 0) return
-
-    const slot = matchingSlot as 0 | 1
-    const transform = copyTransform(props.transform)
-    const transforms = [...imageTransforms.value] as [LayerTransform, LayerTransform]
-    transforms[slot] = transform
-    imageTransforms.value = transforms
-
-    // Movimentos e redimensionamentos comuns continuam imediatos. Durante a
-    // troca de raster, somente o buffer ainda invisivel recebe a nova geometria.
-    if (slot === activeImageSlot.value) activeImageTransform.value = transform
-  }
-)
-
-onBeforeUnmount(() => {
-  cancelAnimationFrame(releaseFrame)
-  cancelAnimationFrame(compositorReadyFrame)
+const {
+  activeImageSlot,
+  activeImageTransform,
+  finishInteractiveTransform,
+  handleImageError,
+  handleImageLoad,
+  imageSources
+} = useLayerImageBuffer({
+  active: () => props.active,
+  layer: () => props.layer,
+  transform: () => props.transform,
+  layerRoot,
+  imageLoaded: (layerId, source) => emit('imageLoaded', layerId, source),
+  imageError: (layerId, source) => emit('imageError', layerId, source)
 })
 
 const layerStyle = computed(() => {

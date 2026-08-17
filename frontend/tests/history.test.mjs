@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   applyEditorHistoryDelta,
+  cloneLayerState,
   estimateEditorHistoryBytes,
   historyDeltaObjectUrls,
   isEditorHistoryDeltaNoop,
@@ -273,6 +274,81 @@ test('desfaz e refaz o modo de mesclagem sem tocar no raster', () => {
   applyEditorHistoryDelta(layers, 'blend', delta, 'redo')
   assert.equal(layers[0].blendMode, 'multiply')
   assert.equal(layers[0].image, image)
+})
+
+test('agrupa e reverte alterações da luz global do documento', () => {
+  const first = {
+    type: 'document:global-light',
+    before: { angle: 120, altitude: 30 },
+    after: { angle: 100, altitude: 30 }
+  }
+  const second = {
+    type: 'document:global-light',
+    before: { angle: 100, altitude: 30 },
+    after: { angle: 80, altitude: 45 }
+  }
+  const merged = mergeEditorHistoryDelta(first, second)
+  assert.deepEqual(merged.before, first.before)
+  assert.deepEqual(merged.after, second.after)
+  assert.equal(isEditorHistoryDeltaNoop(merged), false)
+  assert.equal(isEditorHistoryDeltaNoop({ ...merged, after: merged.before }), true)
+})
+
+test('clona estilos no histórico e retém URLs de padrões sem compartilhar estado', () => {
+  const layer = {
+    id: 'styled', name: 'Com estilo', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
+    styles: {
+      enabled: true,
+      fillOpacity: 75,
+      effects: [{
+        type: 'pattern-overlay', id: 'pattern-effect', enabled: true, opacity: 100, blendMode: 'normal',
+        pattern: {
+          id: 'pattern-1', name: 'Grade', width: 16, height: 16,
+          mimeType: 'image/png', sourceUrl: 'blob:pattern', byteSize: 256
+        },
+        angle: 0, scale: 100, linkWithLayer: true
+      }]
+    }
+  }
+  const cloned = cloneLayerState(layer)
+  cloned.styles.effects[0].pattern.name = 'Alterado'
+  assert.equal(layer.styles.effects[0].pattern.name, 'Grade')
+
+  const delta = { type: 'layers:add', items: [{ index: 0, layer }] }
+  assert.deepEqual(historyDeltaObjectUrls(delta), ['blob:pattern'])
+  assert.ok(estimateEditorHistoryBytes(delta) >= 256)
+})
+
+test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização visual', () => {
+  const initialStyles = { enabled: true, fillOpacity: 100, effects: [] }
+  const styled = {
+    enabled: true,
+    fillOpacity: 45,
+    effects: [{
+      type: 'color-overlay', id: 'color-1', enabled: true, opacity: 80,
+      blendMode: 'normal', color: '#112233'
+    }]
+  }
+  const layers = [{
+    id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+    image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
+    transform: { x: 0, y: 0, width: 10, height: 10 },
+    styles: initialStyles
+  }]
+  const delta = {
+    type: 'layer:patch', layerId: 'image',
+    before: { styles: initialStyles }, after: { styles: styled }
+  }
+
+  let result = applyEditorHistoryDelta(layers, 'image', delta, 'redo')
+  assert.equal(layers[0].styles.fillOpacity, 45)
+  assert.deepEqual(result.refreshLayerIds, ['image'])
+  layers[0].styles.effects[0].color = '#abcdef'
+  assert.equal(delta.after.styles.effects[0].color, '#112233')
+
+  result = applyEditorHistoryDelta(layers, 'image', delta, 'undo')
+  assert.deepEqual(layers[0].styles, initialStyles)
+  assert.deepEqual(result.refreshLayerIds, ['image'])
 })
 
 test('desfaz e refaz a substituição de várias camadas por uma mesclagem', () => {

@@ -86,11 +86,79 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
 
 test('projetos antigos sem mesclagem são restaurados em modo normal', () => {
   const { manifest } = createAxiaProjectManifest(projectState())
-  for (const layer of manifest.layers) delete layer.blendMode
+  delete manifest.document.layerStyleGlobalLight
+  for (const layer of manifest.layers) {
+    delete layer.blendMode
+    delete layer.styles
+  }
   const restored = restoreAxiaProject(JSON.stringify(manifest), {
     [manifest.assets[0].id]: '/__axia_asset/restored'
   })
   assert.ok(restored.layers.every((layer) => layer.blendMode === 'normal'))
+  assert.ok(restored.layers.every((layer) => layer.styles.fillOpacity === 100))
+  assert.deepEqual(restored.document.layerStyleGlobalLight, { angle: 120, altitude: 30 })
+})
+
+test('persiste estilos, luz global e padrões sem gravar URLs transitórias no manifesto', () => {
+  const state = projectState()
+  state.document.layerStyleGlobalLight = { angle: -45, altitude: 55 }
+  state.layers[0].styles = {
+    enabled: true,
+    fillOpacity: 72,
+    effects: [{
+      type: 'pattern-overlay', id: 'pattern-effect', enabled: true, opacity: 65, blendMode: 'overlay',
+      pattern: {
+        id: 'pattern-1', name: 'Grade', width: 24, height: 24,
+        mimeType: 'image/png', sourceUrl: 'blob:pattern', byteSize: 384
+      },
+      angle: 15, scale: 80, linkWithLayer: true
+    }]
+  }
+
+  const { manifest, assetSources } = createAxiaProjectManifest(state)
+  assert.equal(manifest.version, 1)
+  assert.equal(manifest.assets.length, 2)
+  assert.equal(assetSources.length, 2)
+  assert.equal(JSON.stringify(manifest).includes('blob:pattern'), false)
+  const patternAsset = manifest.assets.find((asset) => asset.name === 'Grade')
+  assert.ok(patternAsset)
+
+  const restored = restoreAxiaProject(JSON.stringify(manifest), Object.fromEntries(
+    manifest.assets.map((asset) => [asset.id, `/__axia_asset/${asset.id}`])
+  ))
+  assert.deepEqual(restored.document.layerStyleGlobalLight, { angle: -45, altitude: 55 })
+  assert.equal(restored.layers[0].styles.fillOpacity, 72)
+  assert.equal(restored.layers[0].styles.effects[0].pattern.sourceUrl, `/__axia_asset/${patternAsset.id}`)
+})
+
+test('normaliza estilos adulterados e rejeita asset de padrão ausente', () => {
+  const state = projectState()
+  state.layers[0].styles = {
+    enabled: true,
+    fillOpacity: -50,
+    effects: [{
+      type: 'drop-shadow', id: 'shadow', enabled: true, opacity: 999,
+      blendMode: 'invalid', size: 50_000, distance: -30
+    }]
+  }
+  const { manifest } = createAxiaProjectManifest(state)
+  manifest.layers[0].styles.fillOpacity = 1_000
+  manifest.layers[0].styles.effects[0].size = 99_999
+  const restored = restoreAxiaProject(JSON.stringify(manifest), {
+    [manifest.assets[0].id]: '/__axia_asset/restored'
+  })
+  assert.equal(restored.layers[0].styles.fillOpacity, 100)
+  assert.equal(restored.layers[0].styles.effects[0].size, 250)
+
+  manifest.layers[0].styles = {
+    enabled: true,
+    fillOpacity: 100,
+    effects: [{ type: 'pattern-overlay', id: 'pattern', pattern: { assetId: 'missing' } }]
+  }
+  assert.throws(
+    () => restoreAxiaProject(JSON.stringify(manifest), { [manifest.assets[0].id]: '/__axia_asset/restored' }),
+    /padrão ausente/
+  )
 })
 
 test('rejeita versão futura e assets ausentes', () => {

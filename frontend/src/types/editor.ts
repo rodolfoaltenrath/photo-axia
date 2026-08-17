@@ -6,6 +6,198 @@ export type DocumentUnit = 'px' | 'cm' | 'mm' | 'in'
 export type DocumentBackground = 'transparent' | 'white' | 'black'
 export type TextAlignment = 'left' | 'center' | 'right'
 
+export interface LayerStyleGlobalLight {
+  angle: number
+  altitude: number
+}
+
+export interface LayerStyleContourPoint {
+  x: number
+  y: number
+}
+
+export interface LayerStyleContour {
+  preset: 'linear' | 'cone' | 'inverted-cone' | 'gaussian' | 'ring' | 'custom'
+  points: LayerStyleContourPoint[]
+}
+
+export interface LayerStyleGradientColorStop {
+  position: number
+  color: string
+}
+
+export interface LayerStyleGradientOpacityStop {
+  position: number
+  opacity: number
+}
+
+export interface LayerStyleGradient {
+  type: 'linear' | 'radial' | 'angle' | 'reflected' | 'diamond'
+  colorStops: LayerStyleGradientColorStop[]
+  opacityStops: LayerStyleGradientOpacityStop[]
+  interpolation: 'srgb'
+}
+
+export interface LayerStylePatternAsset {
+  id: string
+  name: string
+  width: number
+  height: number
+  mimeType: string
+  sourceUrl: string
+  byteSize?: number
+}
+
+export type LayerStylePaint =
+  | { type: 'color'; color: string }
+  | { type: 'gradient'; gradient: LayerStyleGradient; angle: number; scale: number; reverse: boolean; alignWithLayer: boolean }
+  | { type: 'pattern'; pattern?: LayerStylePatternAsset; angle: number; scale: number; linkWithLayer: boolean }
+
+export interface LayerEffectBase {
+  id: string
+  enabled: boolean
+  opacity: number
+  blendMode: LayerBlendMode
+}
+
+export interface DropShadowEffect extends LayerEffectBase {
+  type: 'drop-shadow'
+  color: string
+  angle: number
+  useGlobalLight: boolean
+  distance: number
+  spread: number
+  size: number
+  noise: number
+  contour: LayerStyleContour
+  layerKnocksOutShadow: boolean
+}
+
+export interface InnerShadowEffect extends LayerEffectBase {
+  type: 'inner-shadow'
+  color: string
+  angle: number
+  useGlobalLight: boolean
+  distance: number
+  choke: number
+  size: number
+  noise: number
+  contour: LayerStyleContour
+}
+
+export interface OuterGlowEffect extends LayerEffectBase {
+  type: 'outer-glow'
+  paint: Extract<LayerStylePaint, { type: 'color' | 'gradient' }>
+  technique: 'softer' | 'precise'
+  spread: number
+  size: number
+  noise: number
+  contour: LayerStyleContour
+  range: number
+  jitter: number
+}
+
+export interface InnerGlowEffect extends LayerEffectBase {
+  type: 'inner-glow'
+  paint: Extract<LayerStylePaint, { type: 'color' | 'gradient' }>
+  technique: 'softer' | 'precise'
+  source: 'edge' | 'center'
+  choke: number
+  size: number
+  noise: number
+  contour: LayerStyleContour
+  range: number
+  jitter: number
+}
+
+export interface StrokeEffect extends LayerEffectBase {
+  type: 'stroke'
+  size: number
+  position: 'inside' | 'center' | 'outside'
+  paint: LayerStylePaint
+}
+
+export interface ColorOverlayEffect extends LayerEffectBase {
+  type: 'color-overlay'
+  color: string
+}
+
+export interface GradientOverlayEffect extends LayerEffectBase {
+  type: 'gradient-overlay'
+  gradient: LayerStyleGradient
+  angle: number
+  scale: number
+  reverse: boolean
+  alignWithLayer: boolean
+}
+
+export interface PatternOverlayEffect extends LayerEffectBase {
+  type: 'pattern-overlay'
+  pattern?: LayerStylePatternAsset
+  angle: number
+  scale: number
+  linkWithLayer: boolean
+}
+
+export interface SatinEffect extends LayerEffectBase {
+  type: 'satin'
+  color: string
+  angle: number
+  distance: number
+  size: number
+  invert: boolean
+  contour: LayerStyleContour
+}
+
+export interface BevelEmbossEffect extends LayerEffectBase {
+  type: 'bevel-emboss'
+  style: 'inner-bevel' | 'outer-bevel' | 'emboss' | 'pillow-emboss'
+  technique: 'smooth' | 'chisel-hard' | 'chisel-soft'
+  depth: number
+  direction: 'up' | 'down'
+  size: number
+  soften: number
+  angle: number
+  altitude: number
+  useGlobalLight: boolean
+  glossContour: LayerStyleContour
+  highlightMode: LayerBlendMode
+  highlightColor: string
+  highlightOpacity: number
+  shadowMode: LayerBlendMode
+  shadowColor: string
+  shadowOpacity: number
+  contourEnabled: boolean
+  contour: LayerStyleContour
+  contourRange: number
+  textureEnabled: boolean
+  texture?: LayerStylePatternAsset
+  textureScale: number
+  textureDepth: number
+  textureInvert: boolean
+  textureLinkWithLayer: boolean
+}
+
+export type LayerEffect =
+  | DropShadowEffect
+  | InnerShadowEffect
+  | OuterGlowEffect
+  | InnerGlowEffect
+  | StrokeEffect
+  | ColorOverlayEffect
+  | GradientOverlayEffect
+  | PatternOverlayEffect
+  | SatinEffect
+  | BevelEmbossEffect
+
+export type LayerEffectType = LayerEffect['type']
+
+export interface LayerStyleConfig {
+  enabled: boolean
+  fillOpacity: number
+  effects: LayerEffect[]
+}
+
 export interface DocumentSpec {
   id: string
   name: string
@@ -18,6 +210,7 @@ export interface DocumentSpec {
   colorSpace: string
   background: DocumentBackground
   createdAt: string
+  layerStyleGlobalLight: LayerStyleGlobalLight
 }
 
 export interface LayerItem {
@@ -27,6 +220,7 @@ export interface LayerItem {
   opacity: number
   blendMode: LayerBlendMode
   kind: LayerKind
+  styles: LayerStyleConfig
   image?: ImageAsset
   text?: TextLayerContent
   transform?: LayerTransform

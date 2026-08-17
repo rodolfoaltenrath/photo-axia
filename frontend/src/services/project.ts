@@ -1,6 +1,12 @@
 import type { EditorGuide, RulerOrigin, RulerUnit } from '../editor/guides'
-import type { DocumentSpec, ImageAsset, LayerItem, LayerTransform, TextLayerContent } from '../types/editor'
+import type { DocumentSpec, ImageAsset, LayerItem, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, TextLayerContent } from '../types/editor'
 import { normalizeLayerBlendMode } from '../editor/blendModes.ts'
+import {
+  cloneLayerStyleConfig,
+  createLayerStyleConfig,
+  normalizeLayerStyleConfig,
+  normalizeLayerStyleGlobalLight
+} from '../editor/layerStyles.ts'
 
 export const AXIA_PROJECT_VERSION = 1
 
@@ -35,8 +41,9 @@ interface AxiaStoredImage extends Omit<ImageAsset, 'sourceUrl' | 'previewUrl' | 
   assetId: string
 }
 
-interface AxiaStoredLayer extends Omit<LayerItem, 'image'> {
+interface AxiaStoredLayer extends Omit<LayerItem, 'image' | 'styles'> {
   image?: AxiaStoredImage
+  styles?: unknown
 }
 
 export interface AxiaProjectManifest {
@@ -58,6 +65,7 @@ export interface AxiaProjectAssetSource {
 function extensionForMime(mimeType: string) {
   if (mimeType === 'image/jpeg') return 'jpg'
   if (mimeType === 'image/gif') return 'gif'
+  if (mimeType === 'image/webp') return 'webp'
   return 'png'
 }
 
@@ -69,28 +77,50 @@ function cloneText(text?: TextLayerContent) {
   return text ? { ...text } : undefined
 }
 
+function replaceStoredPatternReferences(
+  styles: LayerStyleConfig,
+  replacement: (value: unknown) => unknown
+) {
+  const cloned = cloneLayerStyleConfig(styles) as unknown as {
+    enabled: boolean
+    fillOpacity: number
+    effects: Array<Record<string, unknown>>
+  }
+  for (const effect of cloned.effects) {
+    if (effect.type === 'pattern-overlay' && effect.pattern) effect.pattern = replacement(effect.pattern)
+    if (effect.type === 'stroke') {
+      const paint = effect.paint as Record<string, unknown> | undefined
+      if (paint?.type === 'pattern' && paint.pattern) paint.pattern = replacement(paint.pattern)
+    }
+    if (effect.type === 'bevel-emboss' && effect.texture) effect.texture = replacement(effect.texture)
+  }
+  return cloned
+}
+
 export function createAxiaProjectManifest(state: AxiaProjectState) {
   const sourceAssets = new Map<string, AxiaArchiveAsset>()
   const assetSources: AxiaProjectAssetSource[] = []
+  const registerAsset = (sourceUrl: string, asset: Omit<AxiaArchiveAsset, 'id' | 'path'>) => {
+    let stored = sourceAssets.get(sourceUrl)
+    if (!stored) {
+      const id = `asset-${String(sourceAssets.size + 1).padStart(4, '0')}`
+      stored = { ...asset, id, path: `assets/${id}.${extensionForMime(asset.mimeType)}` }
+      sourceAssets.set(sourceUrl, stored)
+      assetSources.push({ id, sourceUrl })
+    }
+    return stored
+  }
   const layers: AxiaStoredLayer[] = state.layers.map((layer) => {
     const image = layer.image
     let storedImage: AxiaStoredImage | undefined
     if (image) {
-      let asset = sourceAssets.get(image.sourceUrl)
-      if (!asset) {
-        const id = `asset-${String(sourceAssets.size + 1).padStart(4, '0')}`
-        asset = {
-          id,
-          path: `assets/${id}.${extensionForMime(image.mimeType)}`,
-          mimeType: image.mimeType,
-          width: image.width,
-          height: image.height,
-          byteSize: image.byteSize,
-          name: layer.name
-        }
-        sourceAssets.set(image.sourceUrl, asset)
-        assetSources.push({ id, sourceUrl: image.sourceUrl })
-      }
+      const asset = registerAsset(image.sourceUrl, {
+        mimeType: image.mimeType,
+        width: image.width,
+        height: image.height,
+        byteSize: image.byteSize,
+        name: layer.name
+      })
       storedImage = {
         assetId: asset.id,
         width: image.width,
@@ -99,6 +129,19 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
         byteSize: image.byteSize
       }
     }
+    const styles = normalizeLayerStyleConfig(layer.styles)
+    const storedStyles = replaceStoredPatternReferences(styles, (value) => {
+      const pattern = value as LayerStylePatternAsset
+      const asset = registerAsset(pattern.sourceUrl, {
+        mimeType: pattern.mimeType,
+        width: pattern.width,
+        height: pattern.height,
+        byteSize: pattern.byteSize,
+        name: pattern.name
+      })
+      const { sourceUrl: _sourceUrl, ...storedPattern } = pattern
+      return { ...storedPattern, assetId: asset.id }
+    })
     return {
       id: layer.id,
       name: layer.name,
@@ -107,6 +150,7 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
       blendMode: normalizeLayerBlendMode(layer.blendMode),
       kind: layer.kind,
       image: storedImage,
+      styles: storedStyles,
       text: cloneText(layer.text),
       transform: cloneTransform(layer.transform)
     }
@@ -116,7 +160,10 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
     format: 'axia',
     version: AXIA_PROJECT_VERSION,
     savedAt: new Date().toISOString(),
-    document: { ...state.document },
+    document: {
+      ...state.document,
+      layerStyleGlobalLight: normalizeLayerStyleGlobalLight(state.document.layerStyleGlobalLight)
+    },
     layers,
     assets: [...sourceAssets.values()],
     guides: state.guides.map((guide) => ({ ...guide })),
@@ -177,6 +224,53 @@ function restoreText(value: unknown): TextLayerContent | undefined {
   }
 }
 
+function restoreLayerStyles(
+  value: unknown,
+  assets: Map<string, AxiaArchiveAsset>,
+  assetUrls: Record<string, string>
+) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return createLayerStyleConfig()
+  const source = value as Record<string, unknown>
+  const hydratePattern = (patternValue: unknown) => {
+    if (!patternValue || typeof patternValue !== 'object' || Array.isArray(patternValue)) return undefined
+    const storedPattern = patternValue as Record<string, unknown>
+    if (typeof storedPattern.assetId !== 'string') return undefined
+    const archiveAsset = assets.get(storedPattern.assetId)
+    const sourceUrl = assetUrls[storedPattern.assetId]
+    if (!archiveAsset || !sourceUrl) throw new Error(`Asset de padrão ausente: ${storedPattern.assetId}.`)
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(archiveAsset.mimeType)) {
+      throw new Error(`Formato de padrão não suportado: ${archiveAsset.mimeType}.`)
+    }
+    if (
+      !Number.isFinite(archiveAsset.width) || !Number.isFinite(archiveAsset.height) ||
+      archiveAsset.width <= 0 || archiveAsset.height <= 0 ||
+      archiveAsset.width > 8_192 || archiveAsset.height > 8_192 ||
+      archiveAsset.width * archiveAsset.height > 16_777_216
+    ) throw new Error('Dimensões de padrão inválidas.')
+    return {
+      ...storedPattern,
+      width: archiveAsset.width,
+      height: archiveAsset.height,
+      mimeType: archiveAsset.mimeType,
+      byteSize: archiveAsset.byteSize,
+      sourceUrl
+    }
+  }
+  const effects = Array.isArray(source.effects) ? source.effects.map((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+    const effect = { ...(value as Record<string, unknown>) }
+    if (effect.type === 'pattern-overlay') effect.pattern = hydratePattern(effect.pattern)
+    if (effect.type === 'stroke' && effect.paint && typeof effect.paint === 'object' && !Array.isArray(effect.paint)) {
+      const paint = { ...(effect.paint as Record<string, unknown>) }
+      if (paint.type === 'pattern') paint.pattern = hydratePattern(paint.pattern)
+      effect.paint = paint
+    }
+    if (effect.type === 'bevel-emboss') effect.texture = hydratePattern(effect.texture)
+    return effect
+  }) : []
+  return normalizeLayerStyleConfig({ ...source, effects })
+}
+
 export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<string, string>): AxiaProjectState {
   const parsed = JSON.parse(manifestJSON) as Partial<AxiaProjectManifest>
   if (parsed.format !== 'axia' || parsed.version !== AXIA_PROJECT_VERSION) {
@@ -220,6 +314,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
     }
     const transform = restoreTransform(stored.transform)
     const text = restoreText(stored.text)
+    const styles = restoreLayerStyles(stored.styles, assets, assetUrls)
     if (stored.kind === 'image' && (!image || !transform)) throw new Error('Camada de imagem incompleta.')
     if (stored.kind === 'text' && (!text || !transform)) throw new Error('Camada de texto incompleta.')
     const id = requireString(stored.id, 'ID da camada')
@@ -232,6 +327,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
       opacity: Math.max(0, Math.min(100, stored.opacity)),
       blendMode: normalizeLayerBlendMode(stored.blendMode),
       kind: stored.kind,
+      styles,
       image,
       text,
       transform
@@ -258,7 +354,10 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
       }).map((guide) => ({ ...guide }))
     : []
   return {
-    document: { ...document },
+    document: {
+      ...document,
+      layerStyleGlobalLight: normalizeLayerStyleGlobalLight(document.layerStyleGlobalLight)
+    },
     layers,
     guides,
     view: {
