@@ -1,11 +1,11 @@
 import {
-  composeLayerStyleBase,
   layerStyleCacheKey,
-  layerStyleInsets,
   type LayerStyleRenderQuality
 } from '../editor/layerStyleCompositor.ts'
+import { composeLayerStyleRaster } from '../editor/layerStyleRaster.ts'
 import { normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from '../editor/layerStyles.ts'
 import { ByteBudgetLruCache, LatestGenerationByKey } from '../editor/renderCache.ts'
+import { prepareImageSource, releasePreparedImage } from './imageImport.ts'
 import type { LayerStyleWorkerRequest, LayerStyleWorkerResult } from '../editor/layerStyleRenderProtocol.ts'
 import type { LayerStyleConfig, LayerStyleGlobalLight } from '../types/editor.ts'
 
@@ -36,6 +36,20 @@ interface CachedLayerStyleRender extends Omit<LayerStyleRenderResult, 'fromCache
   byteSize: number
 }
 
+interface CachedDecodedLayerStyle {
+  byteSize: number
+  image: CanvasImageSource
+  leases: number
+  retired: boolean
+  dispose: () => void
+  releaseImage: () => void
+}
+
+export interface DecodedLayerStyleLease {
+  image: CanvasImageSource
+  release: () => void
+}
+
 interface WorkerPending {
   resolve: (value: Omit<LayerStyleRenderResult, 'cacheKey' | 'fromCache'>) => void
   reject: (error: Error) => void
@@ -55,12 +69,52 @@ export class LayerStyleRenderCancelledError extends Error {
 }
 
 const cache = new ByteBudgetLruCache<CachedLayerStyleRender>(96 * 1024 * 1024, 128)
+const decodedCache = new ByteBudgetLruCache<CachedDecodedLayerStyle>(64 * 1024 * 1024, 24)
+const decodedPending = new Map<string, Promise<CachedDecodedLayerStyle>>()
 const generations = new LatestGenerationByKey()
 const sharedPending = new Map<string, SharedPending>()
 const activeKeyByConsumer = new Map<string, string>()
 const workerPending = new Map<number, WorkerPending>()
 let compositorWorker: Worker | undefined
 let nextWorkerRequestId = 1
+let decodedGeneration = 0
+
+function retireDecoded(value: CachedDecodedLayerStyle) {
+  value.retired = true
+  if (!value.leases) value.releaseImage()
+}
+
+async function decodeLayerStyleResult(result: LayerStyleRenderResult) {
+  const byteSize = result.width * result.height * 4
+  let image: CanvasImageSource
+  let releaseImage: () => void
+  if (typeof createImageBitmap === 'function') {
+    const bitmap = await createImageBitmap(result.blob)
+    image = bitmap
+    releaseImage = () => bitmap.close()
+  } else {
+    const source = URL.createObjectURL(result.blob)
+    try {
+      image = await prepareImageSource(source)
+      releaseImage = () => {
+        releasePreparedImage(source)
+        URL.revokeObjectURL(source)
+      }
+    } catch (error) {
+      URL.revokeObjectURL(source)
+      throw error
+    }
+  }
+  const value: CachedDecodedLayerStyle = {
+    byteSize,
+    image,
+    leases: 0,
+    retired: false,
+    dispose: () => retireDecoded(value),
+    releaseImage
+  }
+  return value
+}
 
 function validateSourceDimensions(width: number, height: number) {
   if (
@@ -145,16 +199,24 @@ async function fallbackRender(
     const sourceContext = context2d(sourceCanvas, true)
     sourceContext.drawImage(bitmap, 0, 0, sourceWidth, sourceHeight)
     const pixels = sourceContext.getImageData(0, 0, sourceWidth, sourceHeight)
-    const composed = composeLayerStyleBase({ width: pixels.width, height: pixels.height, data: pixels.data }, styles)
-    const insets = layerStyleInsets(styles, globalLight, resolutionScale)
-    const width = composed.width + insets.left + insets.right
-    const height = composed.height + insets.top + insets.bottom
-    const output = makeCanvas(width, height)
+    const composed = composeLayerStyleRaster(
+      { width: pixels.width, height: pixels.height, data: pixels.data },
+      styles,
+      globalLight,
+      resolutionScale
+    )
+    const output = makeCanvas(composed.width, composed.height)
     try {
       const outputPixels = new ImageData(composed.width, composed.height)
       outputPixels.data.set(composed.data)
-      context2d(output).putImageData(outputPixels, insets.left, insets.top)
-      return { blob: await encodeCanvas(output), width, height, offsetX: -insets.left, offsetY: -insets.top }
+      context2d(output).putImageData(outputPixels, 0, 0)
+      return {
+        blob: await encodeCanvas(output),
+        width: composed.width,
+        height: composed.height,
+        offsetX: composed.offsetX,
+        offsetY: composed.offsetY
+      }
     } finally {
       output.width = 1
       output.height = 1
@@ -295,8 +357,50 @@ export function invalidateLayerStyleRender(consumerId: string) {
   activeKeyByConsumer.delete(consumerId)
 }
 
+export async function acquireDecodedLayerStyle(result: LayerStyleRenderResult): Promise<DecodedLayerStyleLease> {
+  let value = decodedCache.get(result.cacheKey)
+  if (!value) {
+    let pending = decodedPending.get(result.cacheKey)
+    if (!pending) {
+      const generation = decodedGeneration
+      pending = decodeLayerStyleResult(result).then((decoded) => {
+        if (generation !== decodedGeneration) {
+          decoded.releaseImage()
+          throw new LayerStyleRenderCancelledError()
+        }
+        if (!decodedCache.set(result.cacheKey, decoded)) decoded.retired = true
+        return decoded
+      })
+      decodedPending.set(result.cacheKey, pending)
+      void pending.finally(() => {
+        if (decodedPending.get(result.cacheKey) === pending) decodedPending.delete(result.cacheKey)
+      }).catch(() => undefined)
+    }
+    value = await pending
+  }
+
+  value.leases++
+  let released = false
+  return {
+    image: value.image,
+    release: () => {
+      if (released) return
+      released = true
+      value.leases--
+      if (value.retired && !value.leases) value.releaseImage()
+    }
+  }
+}
+
+export function releaseLayerStyleRenderConsumer(consumerId: string) {
+  invalidateLayerStyleRender(consumerId)
+  generations.delete(consumerId)
+}
+
 export function clearLayerStyleRenderCache() {
   cache.clear()
+  decodedGeneration++
+  decodedCache.clear()
 }
 
 export function disposeLayerStyleCompositor() {
@@ -305,6 +409,8 @@ export function disposeLayerStyleCompositor() {
   activeKeyByConsumer.clear()
   generations.clear()
   cache.clear()
+  decodedGeneration++
+  decodedCache.clear()
   compositorWorker?.terminate()
   compositorWorker = undefined
   for (const pending of workerPending.values()) pending.reject(new LayerStyleRenderCancelledError())

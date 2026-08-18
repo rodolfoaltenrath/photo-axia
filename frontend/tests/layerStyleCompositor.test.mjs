@@ -11,7 +11,8 @@ import {
   layerStyleNeedsCompositing,
   LAYER_STYLE_COMPOSITION_ORDER
 } from '../src/editor/layerStyleCompositor.ts'
-import { normalizeLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { createDefaultLayerEffect, normalizeLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { composeLayerStyleRaster } from '../src/editor/layerStyleRaster.ts'
 import { ByteBudgetLruCache, LatestGenerationByKey } from '../src/editor/renderCache.ts'
 
 const globalLight = { angle: 0, altitude: 30 }
@@ -136,4 +137,52 @@ test('controle de geração impede publicação de resultados obsoletos por cons
   generations.invalidate('canvas:layer-1')
   assert.equal(second.isCurrent(), false)
   assert.equal(independent.isCurrent(), true)
+  generations.delete('thumbnail:layer-1')
+  assert.equal(independent.isCurrent(), false)
+})
+
+test('brilho externo expande o raster, permanece atrás do conteúdo e sobrevive a fill zero', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([20, 40, 60, 255]) }
+  const glow = createDefaultLayerEffect('outer-glow', 'glow')
+  glow.size = 1
+  glow.spread = 100
+  glow.opacity = 80
+  const result = composeLayerStyleRaster(source, styles([glow], 0), globalLight)
+
+  assert.deepEqual(
+    { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
+    { width: 3, height: 3, offsetX: -1, offsetY: -1 }
+  )
+  assert.equal(result.data[3], 204)
+  assert.equal(result.data[(1 * 3 + 1) * 4 + 3], 0)
+  assert.equal(result.data[(1 * 3 + 2) * 4 + 3], 204)
+})
+
+test('compositor raster preserva dimensões e aplica fill quando não há efeito externo', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([10, 20, 30, 200]) }
+  const result = composeLayerStyleRaster(source, styles([], 25), globalLight)
+  assert.deepEqual(
+    { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
+    { width: 1, height: 1, offsetX: 0, offsetY: 0 }
+  )
+  assert.deepEqual([...result.data], [10, 20, 30, 50])
+})
+
+test('compositor raster recusa efeitos ativos fora do pacote implementado', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([0, 0, 0, 255]) }
+  assert.throws(
+    () => composeLayerStyleRaster(source, styles([createDefaultLayerEffect('stroke', 'stroke')]), globalLight),
+    /stroke/
+  )
+})
+
+test('brilho externo com ruído produz raster determinístico', () => {
+  const source = { width: 2, height: 2, data: new Uint8ClampedArray(16).fill(255) }
+  const glow = createDefaultLayerEffect('outer-glow', 'stable-glow')
+  glow.size = 2
+  glow.noise = 35
+  const config = styles([glow])
+  const first = composeLayerStyleRaster(source, config, globalLight)
+  const second = composeLayerStyleRaster(source, config, globalLight)
+  assert.deepEqual(first.data, second.data)
 })

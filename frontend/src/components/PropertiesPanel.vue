@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
-import type { EditorTool, LayerBlendMode, LayerItem, TextLayerContent } from '../types/editor'
-import { LAYER_BLEND_MODES } from '../editor/blendModes'
+import type { EditorTool, LayerItem, TextLayerContent } from '../types/editor'
 
 const props = defineProps<{
   activeLayer: LayerItem
@@ -11,11 +10,9 @@ const props = defineProps<{
   zoom: number
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (event: 'update:brushColor', value: string): void
   (event: 'update:brushSize', value: number): void
-  (event: 'update:layerBlendMode', value: LayerBlendMode): void
-  (event: 'update:layerOpacity', value: number): void
   (event: 'update:text', patch: Partial<TextLayerContent>): void
   (event: 'update:zoom', value: number): void
 }>()
@@ -31,6 +28,7 @@ watch(
     textInput.value?.select()
   }
 )
+
 </script>
 
 <template>
@@ -65,29 +63,6 @@ watch(
           :value="brushColor"
           type="color"
           @input="$emit('update:brushColor', ($event.target as HTMLInputElement).value)"
-        />
-      </label>
-
-      <label v-if="activeLayer.kind !== 'background'" class="compact-select">
-        <span>Mesclagem</span>
-        <select
-          :value="activeLayer.blendMode"
-          @change="$emit('update:layerBlendMode', ($event.target as HTMLSelectElement).value as LayerBlendMode)"
-        >
-          <option v-for="mode in LAYER_BLEND_MODES" :key="mode.value" :value="mode.value">
-            {{ mode.label }}
-          </option>
-        </select>
-      </label>
-
-      <label class="compact-range">
-        <span>Opacidade</span>
-        <input
-          :value="activeLayer.opacity"
-          max="100"
-          min="0"
-          type="range"
-          @input="$emit('update:layerOpacity', Number(($event.target as HTMLInputElement).value))"
         />
       </label>
 
@@ -218,5 +193,6 @@ watch(
         />
       </label>
     </div>
+
   </section>
 </template>

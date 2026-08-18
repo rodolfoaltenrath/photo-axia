@@ -83,6 +83,10 @@ export class LatestGenerationByKey {
     this.generations.set(key, (this.generations.get(key) ?? 0) + 1)
   }
 
+  delete(key: string) {
+    this.generations.delete(key)
+  }
+
   clear() {
     this.generations.clear()
   }

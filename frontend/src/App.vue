@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasViewport from './components/CanvasViewport.vue'
+import LayerStyleDialog from './components/LayerStyleDialog.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
 import ProjectHome from './components/ProjectHome.vue'
@@ -65,6 +66,7 @@ import { MutationBarrier } from './editor/mutationBarrier'
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
+import { moveLayerBy, moveLayerRelativeTo } from './editor/layerOrder'
 import { updateLayerSelection, type LayerSelectionMode } from './editor/layerSelection'
 import { LatestPathTaskQueue, LatestRequestGate } from './editor/recentTasks'
 import type { EditorGuide, RulerOrigin, RulerUnit } from './editor/guides'
@@ -93,7 +95,7 @@ import {
   extractImageSelection
 } from './services/selectionEngine'
 import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
-import { disposeLayerStyleCompositor } from './services/layerStyleCompositor'
+import { clearLayerStyleRenderCache, disposeLayerStyleCompositor } from './services/layerStyleCompositor'
 import type { BrushOperation } from './editor/brush'
 import {
   disposeSelectionMoveEngine,
@@ -108,6 +110,7 @@ import type {
   ImportedImage,
   LayerBlendMode,
   LayerItem,
+  LayerStyleConfig,
   LayerTransform,
   NewDocumentSettings,
   RecentProject,
@@ -157,6 +160,7 @@ const hasOpenDocument = ref(false)
 const recentProjects = ref<RecentProject[]>([])
 const recentProjectsLoading = ref(true)
 const showUnsavedChangesDialog = ref(false)
+const layerStyleDialog = shallowRef<{ layerId: string; before: LayerStyleConfig }>()
 const fileInput = ref<HTMLInputElement | null>(null)
 const canvasViewport = ref<InstanceType<typeof CanvasViewport> | null>(null)
 const projectPath = ref('')
@@ -226,7 +230,15 @@ const undoLabel = history.undoLabel
 const documentDirty = computed(() =>
   hasOpenDocument.value && (savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value)
 )
-const modalOpen = computed(() => showNewDocumentDialog.value || showUnsavedChangesDialog.value)
+const modalOpen = computed(() => editorIsBlockedByModal(
+  showNewDocumentDialog.value,
+  showUnsavedChangesDialog.value,
+  Boolean(layerStyleDialog.value)
+))
+const layerStyleDialogLayer = computed(() => {
+  const session = layerStyleDialog.value
+  return session ? layers.value.find((layer) => layer.id === session.layerId) : undefined
+})
 
 watch(documentDirty, (dirty) => {
   void setNativeDocumentDirty(dirty)
@@ -332,7 +344,7 @@ watch(rulersVisible, (visible) => {
 
 function createBackgroundLayer(): LayerItem {
   return {
-    id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, blendMode: 'normal', kind: 'background',
+    id: 'layer-bg', name: 'Fundo', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
     styles: createLayerStyleConfig()
   }
 }
@@ -474,6 +486,7 @@ function releaseAllEditorAssets() {
   previewControllers.clear()
   floatingSelectionSession.value = null
   clearPreparedImageCache()
+  clearLayerStyleRenderCache()
   releaseLayerAssets([...layers.value, ...retainedHistoryLayers()])
   for (const source of trackedObjectUrls) URL.revokeObjectURL(source)
   trackedObjectUrls.clear()
@@ -757,7 +770,7 @@ function toggleLayer(layerId: string) {
 function renameLayer(layerId: string, name: string) {
   const layer = layers.value.find((item) => item.id === layerId)
   const cleanName = name.trim()
-  if (!layer || layer.kind === 'background' || !cleanName) return
+  if (!layer || !cleanName) return
 
   if (layer.name === cleanName) return
   const before = layer.name
@@ -1061,46 +1074,27 @@ function deleteLayer(layerId: string) {
 }
 
 function moveLayer(layerId: string, direction: -1 | 1) {
-  const index = layers.value.findIndex((layer) => layer.id === layerId)
-  const layer = layers.value[index]
-  const targetIndex = index + direction
-  const target = layers.value[targetIndex]
-  if (!layer || layer.kind === 'background' || !target || target.kind === 'background') return
-
-  layers.value.splice(index, 1)
-  layers.value.splice(targetIndex, 0, layer)
+  const change = moveLayerBy(layers.value, layerId, direction)
+  if (!change) return
+  layers.value = change.layers
   recordHistory(direction < 0 ? 'Elevar camada' : 'Abaixar camada', {
     type: 'layer:reorder',
     layerId,
-    beforeIndex: index,
-    afterIndex: targetIndex
+    beforeIndex: change.beforeIndex,
+    afterIndex: change.afterIndex
   })
   statusText.value = direction < 0 ? 'Camada elevada' : 'Camada abaixada'
 }
 
 function reorderLayer(layerId: string, targetId: string, position: 'before' | 'after') {
-  const source = layers.value.find((layer) => layer.id === layerId)
-  if (!source || source.kind === 'background' || layerId === targetId) return
-
-  const reordered = layers.value.filter((layer) => layer.id !== layerId)
-  const targetIndex = reordered.findIndex((layer) => layer.id === targetId)
-  if (targetIndex < 0) return
-
-  const target = reordered[targetIndex]!
-  let insertionIndex = targetIndex + (position === 'after' && target.kind !== 'background' ? 1 : 0)
-  const backgroundIndex = reordered.findIndex((layer) => layer.kind === 'background')
-  if (backgroundIndex >= 0) insertionIndex = Math.min(insertionIndex, backgroundIndex)
-
-  reordered.splice(insertionIndex, 0, source)
-  if (reordered.every((layer, index) => layer.id === layers.value[index]?.id)) return
-  const beforeIndex = layers.value.findIndex((layer) => layer.id === layerId)
-  const afterIndex = reordered.findIndex((layer) => layer.id === layerId)
-  layers.value = reordered
+  const change = moveLayerRelativeTo(layers.value, layerId, targetId, position)
+  if (!change) return
+  layers.value = change.layers
   recordHistory('Reordenar camada', {
     type: 'layer:reorder',
     layerId,
-    beforeIndex,
-    afterIndex
+    beforeIndex: change.beforeIndex,
+    afterIndex: change.afterIndex
   })
   statusText.value = 'Ordem das camadas atualizada'
 }
@@ -1123,9 +1117,52 @@ function updateLayerOpacity(value: number) {
   )
 }
 
+function openLayerStyles(layerId: string) {
+  if (isBusy.value || layerStyleDialog.value) return
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (!layer) return
+  selectSingleLayer(layerId)
+  layerStyleDialog.value = { layerId, before: cloneLayerStyleConfig(layer.styles) }
+}
+
+function previewLayerStyles(styles: LayerStyleConfig) {
+  const layer = layerStyleDialogLayer.value
+  if (!layer) return
+  layer.styles = cloneLayerStyleConfig(styles)
+}
+
+function cancelLayerStyles() {
+  const session = layerStyleDialog.value
+  const layer = layerStyleDialogLayer.value
+  if (session && layer) layer.styles = cloneLayerStyleConfig(session.before)
+  layerStyleDialog.value = undefined
+}
+
+function applyLayerStyles(styles: LayerStyleConfig) {
+  const session = layerStyleDialog.value
+  const layer = layerStyleDialogLayer.value
+  if (!session || !layer) {
+    layerStyleDialog.value = undefined
+    return
+  }
+
+  const before = cloneLayerStyleConfig(session.before)
+  const after = cloneLayerStyleConfig(styles)
+  layer.styles = after
+  layerStyleDialog.value = undefined
+  if (JSON.stringify(before) === JSON.stringify(after)) return
+  recordHistory('Alterar estilos de camada', {
+    type: 'layer:patch',
+    layerId: layer.id,
+    before: { styles: before },
+    after: { styles: after }
+  })
+  statusText.value = 'Estilos de camada atualizados'
+}
+
 function updateLayerBlendMode(blendMode: LayerBlendMode) {
   const layer = activeLayer.value
-  if (layer.kind === 'background' || layer.blendMode === blendMode) return
+  if (layer.blendMode === blendMode) return
   const before = layer.blendMode
   layer.blendMode = blendMode
   recordHistory('Alterar modo de mesclagem', {
@@ -2176,7 +2213,7 @@ function handleShortcut(event: KeyboardEvent) {
   if (event.defaultPrevented) return
 
   const command = event.ctrlKey || event.metaKey
-  if (editorIsBlockedByModal(showNewDocumentDialog.value, showUnsavedChangesDialog.value)) {
+  if (modalOpen.value) {
     if (showUnsavedChangesDialog.value && event.key === 'Escape' && !isBusy.value) {
       event.preventDefault()
       resolveDiscardChanges(false)
@@ -2425,8 +2462,6 @@ onBeforeUnmount(() => {
           :zoom="zoom"
           @update:brush-color="brushColor = $event"
           @update:brush-size="brushSize = $event"
-          @update:layer-blend-mode="updateLayerBlendMode"
-          @update:layer-opacity="updateLayerOpacity"
           @update:text="updateTextLayer(activeLayer.id, $event)"
           @update:zoom="setZoom"
         />
@@ -2434,16 +2469,20 @@ onBeforeUnmount(() => {
         <LayersPanel
           :active-layer-id="activeLayerId"
           :layers="layers"
+          :layer-style-global-light="activeDocument.layerStyleGlobalLight"
           :selected-layer-ids="selectedLayerIds"
           @add-layer="addLayer"
           @delete-layer="deleteLayer"
           @duplicate-layer="duplicateLayer"
           @move-layer="moveLayer"
           @merge-layers="mergeSelectedLayers"
+          @open-layer-styles="openLayerStyles"
           @rename-layer="renameLayer"
           @reorder-layer="reorderLayer"
           @select-layer="selectLayerFromPanel"
           @toggle-layer="toggleLayer"
+          @update:layer-blend-mode="updateLayerBlendMode"
+          @update:layer-opacity="updateLayerOpacity"
         />
       </aside>
     </section>
@@ -2453,6 +2492,15 @@ onBeforeUnmount(() => {
       :open="showNewDocumentDialog"
       @close="showNewDocumentDialog = false"
       @create="createDocument"
+    />
+    <LayerStyleDialog
+      :layer-name="layerStyleDialogLayer?.name ?? ''"
+      :open="Boolean(layerStyleDialog)"
+      :raster-effects-available="Boolean(layerStyleDialogLayer?.image)"
+      :styles="layerStyleDialog?.before ?? createLayerStyleConfig()"
+      @apply="applyLayerStyles"
+      @cancel="cancelLayerStyles"
+      @preview="previewLayerStyles"
     />
     <UnsavedChangesDialog
       :busy="isBusy"

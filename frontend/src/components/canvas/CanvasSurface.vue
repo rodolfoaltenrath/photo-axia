@@ -64,6 +64,7 @@ defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
             :content-hidden="actions.selectionMoveHidesLayer(layer.id) || actions.brushPreviewHidesLayer(layer.id)"
             grouped
             :layer="layer"
+            :layer-style-global-light="view.layerStyleGlobalLight"
             :transform="actions.displayTransform(layer) ?? view.defaultLayerTransform"
             @image-error="actions.handleLayerImageError"
             @image-loaded="actions.handleLayerImageLoaded"

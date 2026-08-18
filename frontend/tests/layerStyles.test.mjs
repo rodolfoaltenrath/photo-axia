@@ -4,7 +4,9 @@ import {
   cloneLayerStyleConfig,
   createDefaultLayerEffect,
   createLayerStyleConfig,
+  layerStyleFillOpacity,
   layerStylePatternAssets,
+  normalizeLayerStyleFillOpacity,
   normalizeLayerEffect,
   normalizeLayerStyleConfig,
   normalizeLayerStyleGlobalLight
@@ -25,6 +27,15 @@ test('fornece defaults completos e IDs independentes para todos os efeitos', () 
     assert.notEqual(first.id, second.id)
   }
   assert.deepEqual(createLayerStyleConfig(), { enabled: true, fillOpacity: 100, effects: [] })
+})
+
+test('expõe a opacidade de preenchimento normalizada como fator de alfa', () => {
+  assert.equal(normalizeLayerStyleFillOpacity(125), 100)
+  assert.equal(normalizeLayerStyleFillOpacity('35'), 100)
+  assert.equal(layerStyleFillOpacity(undefined), 1)
+  assert.equal(layerStyleFillOpacity({ enabled: true, fillOpacity: 35, effects: [] }), 0.35)
+  assert.equal(layerStyleFillOpacity({ enabled: false, fillOpacity: -20, effects: [] }), 0)
+  assert.equal(layerStyleFillOpacity({ enabled: true, fillOpacity: Number.NaN, effects: [] }), 1)
 })
 
 test('normaliza limites, cores, IDs duplicados e descarta efeitos desconhecidos', () => {

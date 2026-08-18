@@ -1,5 +1,5 @@
-export function editorIsBlockedByModal(newDocumentOpen: boolean, unsavedChangesOpen: boolean) {
-  return newDocumentOpen || unsavedChangesOpen
+export function editorIsBlockedByModal(...openDialogs: boolean[]) {
+  return openDialogs.some(Boolean)
 }
 
 export function canCreateDocument(busy: boolean, validationError = '') {

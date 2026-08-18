@@ -1,4 +1,4 @@
-import { composeLayerStyleBase, layerStyleInsets } from '../editor/layerStyleCompositor.ts'
+import { composeLayerStyleRaster } from '../editor/layerStyleRaster.ts'
 import type {
   LayerStyleWorkerRenderRequest,
   LayerStyleWorkerRequest,
@@ -28,23 +28,31 @@ async function render(request: LayerStyleWorkerRenderRequest) {
     if (!sourceContext) throw new Error('Renderizador de estilos indisponível.')
     sourceContext.drawImage(bitmap, 0, 0, request.sourceWidth, request.sourceHeight)
     const source = sourceContext.getImageData(0, 0, request.sourceWidth, request.sourceHeight)
-    const composed = composeLayerStyleBase({ width: source.width, height: source.height, data: source.data }, request.styles)
-    const insets = layerStyleInsets(request.styles, request.globalLight, request.resolutionScale)
+    const composed = composeLayerStyleRaster(
+      { width: source.width, height: source.height, data: source.data },
+      request.styles,
+      request.globalLight,
+      request.resolutionScale
+    )
     ensureCurrent(request.id)
 
-    const width = composed.width + insets.left + insets.right
-    const height = composed.height + insets.top + insets.bottom
-    const output = new OffscreenCanvas(width, height)
+    const output = new OffscreenCanvas(composed.width, composed.height)
     const outputContext = output.getContext('2d', { alpha: true })
     if (!outputContext) throw new Error('Renderizador de estilos indisponível.')
     const outputPixels = new ImageData(composed.width, composed.height)
     outputPixels.data.set(composed.data)
-    outputContext.putImageData(outputPixels, insets.left, insets.top)
+    outputContext.putImageData(outputPixels, 0, 0)
     const blob = await output.convertToBlob({ type: 'image/png' })
     ensureCurrent(request.id)
     const message: LayerStyleWorkerResult = {
       id: request.id,
-      result: { blob, width, height, offsetX: -insets.left, offsetY: -insets.top }
+      result: {
+        blob,
+        width: composed.width,
+        height: composed.height,
+        offsetX: composed.offsetX,
+        offsetY: composed.offsetY
+      }
     }
     self.postMessage(message)
     sourceCanvas.width = 1

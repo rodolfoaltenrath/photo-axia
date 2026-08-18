@@ -269,6 +269,14 @@ export function cloneLayerStyleConfig(styles: LayerStyleConfig): LayerStyleConfi
   return normalizeLayerStyleConfig(styles)
 }
 
+export function normalizeLayerStyleFillOpacity(value: unknown) {
+  return clamp(value, 0, 100, 100)
+}
+
+export function layerStyleFillOpacity(styles: LayerStyleConfig | undefined) {
+  return normalizeLayerStyleFillOpacity(styles?.fillOpacity) / 100
+}
+
 export function normalizeLayerStyleGlobalLight(value: unknown): LayerStyleGlobalLight {
   const source = record(value)
   return { angle: angle(source.angle, DEFAULT_LAYER_STYLE_GLOBAL_LIGHT.angle), altitude: clamp(source.altitude, 0, 90, DEFAULT_LAYER_STYLE_GLOBAL_LIGHT.altitude) }

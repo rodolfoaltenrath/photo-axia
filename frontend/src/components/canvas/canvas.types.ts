@@ -8,6 +8,7 @@ import type {
   ImageAsset,
   ImportedImage,
   LayerItem,
+  LayerStyleGlobalLight,
   LayerTransform
 } from '../../types/editor'
 
@@ -108,6 +109,7 @@ export interface CanvasSurfaceView {
   guidesInteractive: boolean
   guidesVisible: boolean
   layers: LayerItem[]
+  layerStyleGlobalLight: LayerStyleGlobalLight
   origin: RulerOrigin
   paintableLayerId?: string
   pasteboardStyle: CSSProperties

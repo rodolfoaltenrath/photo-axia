@@ -12,6 +12,9 @@ interface LayerImageBufferOptions {
   layerRoot: Ref<HTMLElement | null>
   imageLoaded: (layerId: string, source: string) => void
   imageError: (layerId: string, source: string) => void
+  imageSource?: () => string | null
+  reportedSource?: (source: string) => string
+  sourceReleased?: (source: string) => void
 }
 
 function copyTransform(transform: LayerTransform): LayerTransform {
@@ -26,6 +29,7 @@ function copyTransform(transform: LayerTransform): LayerTransform {
 
 export function useLayerImageBuffer(options: LayerImageBufferOptions) {
   const desiredImageSource = computed(() => {
+    if (options.imageSource) return options.imageSource()
     const image = options.layer().image
     return image?.previewUrl ?? image?.sourceUrl ?? null
   })
@@ -52,10 +56,12 @@ export function useLayerImageBuffer(options: LayerImageBufferOptions) {
       if (!imageSources.value[inactiveSlot]) return
       const sources = [...imageSources.value] as [string | null, string | null]
       const readiness = [...imageReady.value] as [boolean, boolean]
+      const releasedSource = sources[inactiveSlot]
       sources[inactiveSlot] = null
       readiness[inactiveSlot] = false
       imageSources.value = sources
       imageReady.value = readiness
+      if (releasedSource) options.sourceReleased?.(releasedSource)
     })
   }
 
@@ -77,7 +83,7 @@ export function useLayerImageBuffer(options: LayerImageBufferOptions) {
       // Transformação e fonte mudam na mesma tarefa para o Vue publicar um só frame.
       activeImageTransform.value = copyTransform(imageTransforms.value[slot])
       activeImageSlot.value = slot
-      options.imageLoaded(options.layer().id, source)
+      options.imageLoaded(options.layer().id, options.reportedSource?.(source) ?? source)
       releaseInactiveSlot(slot, source)
     }
     if (!options.active()) {
@@ -124,7 +130,7 @@ export function useLayerImageBuffer(options: LayerImageBufferOptions) {
   function handleImageError(slot: ImageSlot) {
     const source = imageSources.value[slot]
     if (source && source === desiredImageSource.value) {
-      options.imageError(options.layer().id, source)
+      options.imageError(options.layer().id, options.reportedSource?.(source) ?? source)
     }
   }
 
@@ -140,10 +146,12 @@ export function useLayerImageBuffer(options: LayerImageBufferOptions) {
     }
     const sources = [...imageSources.value] as [string | null, string | null]
     const readiness = [...imageReady.value] as [boolean, boolean]
+    const replacedSource = sources[targetSlot]
     sources[targetSlot] = source
     readiness[targetSlot] = false
     imageSources.value = sources
     imageReady.value = readiness
+    if (replacedSource && replacedSource !== source) options.sourceReleased?.(replacedSource)
   })
 
   watch(

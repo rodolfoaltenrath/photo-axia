@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import LayerCompositionControls from './LayerCompositionControls.vue'
 import LayerRow from './LayerRow.vue'
-import type { LayerItem } from '../types/editor'
+import type { LayerBlendMode, LayerItem, LayerStyleGlobalLight } from '../types/editor'
 import addLayerIcon from '../assets/icons/add-layer.svg'
+import { layerStyleFillOpacity } from '../editor/layerStyles'
 import type { LayerSelectionMode } from '../editor/layerSelection'
 
 const props = defineProps<{
   activeLayerId: string
   selectedLayerIds: string[]
   layers: LayerItem[]
+  layerStyleGlobalLight: LayerStyleGlobalLight
 }>()
 
 const emit = defineEmits<{
@@ -19,8 +22,11 @@ const emit = defineEmits<{
   (event: 'renameLayer', layerId: string, name: string): void
   (event: 'reorderLayer', layerId: string, targetId: string, position: 'before' | 'after'): void
   (event: 'mergeLayers'): void
+  (event: 'openLayerStyles', layerId: string): void
   (event: 'selectLayer', layerId: string, mode: LayerSelectionMode): void
   (event: 'toggleLayer', layerId: string): void
+  (event: 'update:layerBlendMode', value: LayerBlendMode): void
+  (event: 'update:layerOpacity', value: number): void
 }>()
 
 const editingLayerId = ref<string>()
@@ -29,7 +35,7 @@ const dropTarget = ref<{ layerId: string; position: 'before' | 'after' }>()
 const layerList = ref<HTMLOListElement | null>(null)
 const dragPreview = ref<HTMLDivElement | null>(null)
 const contextMenuButton = ref<HTMLButtonElement | null>(null)
-const contextMenu = ref<{ x: number; y: number }>()
+const contextMenu = ref<{ layerId: string; x: number; y: number }>()
 let dragFrame = 0
 let pendingDragPoint: { clientX: number; clientY: number } | undefined
 
@@ -41,16 +47,18 @@ const selectedCount = computed(() => props.layers.reduce(
   0
 ))
 const draggedLayer = computed(() => props.layers.find((layer) => layer.id === draggedLayerId.value))
-const canManipulate = computed(() => Boolean(activeLayer.value && activeLayer.value.kind !== 'background'))
+const draggedLayerFillStyle = computed(() => ({
+  '--layer-fill-opacity': String(layerStyleFillOpacity(draggedLayer.value?.styles))
+}))
+const canManipulate = computed(() => Boolean(activeLayer.value))
 const canDuplicate = computed(() => Boolean(activeLayer.value?.image || activeLayer.value?.text))
 const canMoveUp = computed(() => canManipulate.value && activeIndex.value > 0)
 const canMoveDown = computed(() => {
   if (!canManipulate.value || activeIndex.value < 0) return false
-  return props.layers[activeIndex.value + 1]?.kind !== 'background' && activeIndex.value < props.layers.length - 1
+  return activeIndex.value < props.layers.length - 1
 })
 
 function requestRename(layerId: string) {
-  if (props.layers.find((layer) => layer.id === layerId)?.kind === 'background') return
   editingLayerId.value = layerId
 }
 
@@ -85,8 +93,9 @@ async function openContextMenu(layerId: string, clientX: number, clientY: number
   closeContextMenu()
   if (!selectedIdSet.value.has(layerId)) emit('selectLayer', layerId, 'replace')
   const menuWidth = 224
-  const menuHeight = 48
+  const menuHeight = 88
   contextMenu.value = {
+    layerId,
     x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
     y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8))
   }
@@ -103,6 +112,13 @@ function mergeFromContextMenu() {
   if (selectedCount.value < 2) return
   closeContextMenu()
   emit('mergeLayers')
+}
+
+function openStylesFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId) return
+  closeContextMenu()
+  emit('openLayerStyles', layerId)
 }
 
 function setDropTarget(target?: { layerId: string; position: 'before' | 'after' }) {
@@ -123,7 +139,7 @@ function updateDragTarget(allowAutoScroll = true) {
     setDropTarget()
   } else {
     const bounds = row.getBoundingClientRect()
-    const position = row.dataset.layerKind === 'background' || point.clientY < bounds.top + bounds.height / 2
+    const position = point.clientY < bounds.top + bounds.height / 2
       ? 'before'
       : 'after'
     setDropTarget({ layerId: targetId, position })
@@ -212,6 +228,12 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
+    <LayerCompositionControls
+      :active-layer="activeLayer"
+      @update:blend-mode="emit('update:layerBlendMode', $event)"
+      @update:opacity="emit('update:layerOpacity', $event)"
+    />
+
     <ol ref="layerList" class="layer-list" aria-label="Camadas">
       <LayerRow
         v-for="layer in layers"
@@ -222,6 +244,7 @@ onBeforeUnmount(() => {
         :dragging="draggedLayerId === layer.id"
         :editing="editingLayerId === layer.id"
         :layer="layer"
+        :layer-style-global-light="layerStyleGlobalLight"
         @cancel-rename="editingLayerId = undefined"
         @drag-cancel="clearDrag"
         @drag-end="finishDrag"
@@ -229,6 +252,7 @@ onBeforeUnmount(() => {
         @drag-start="startDrag"
         @rename="renameLayer"
         @open-context-menu="openContextMenu"
+        @open-layer-styles="emit('openLayerStyles', $event)"
         @request-rename="requestRename"
         @select="(layerId, mode) => emit('selectLayer', layerId, mode)"
         @toggle="emit('toggleLayer', $event)"
@@ -242,7 +266,11 @@ onBeforeUnmount(() => {
         :class="{ 'layer-drag-preview--visible': draggedLayer }"
         aria-hidden="true"
       >
-        <span class="layer-thumb" :class="{ 'layer-thumb--transparent': !draggedLayer?.image }">
+        <span
+          class="layer-thumb"
+          :class="{ 'layer-thumb--transparent': !draggedLayer?.image }"
+          :style="draggedLayerFillStyle"
+        >
           <img
             v-if="draggedLayer?.image"
             alt=""
@@ -272,6 +300,13 @@ onBeforeUnmount(() => {
           ref="contextMenuButton"
           type="button"
           role="menuitem"
+          @click="openStylesFromContextMenu"
+        >
+          <span>Opções de mesclagem…</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
           :disabled="selectedCount < 2"
           @click="mergeFromContextMenu"
         >
@@ -282,6 +317,15 @@ onBeforeUnmount(() => {
     </Teleport>
 
     <div class="layer-actions" aria-label="Ações da camada selecionada">
+      <button
+        class="layer-action--fx"
+        type="button"
+        title="Opções de mesclagem"
+        :disabled="!activeLayer"
+        @click="activeLayer && emit('openLayerStyles', activeLayer.id)"
+      >
+        <span aria-hidden="true">fx</span>
+      </button>
       <button
         type="button"
         title="Mesclar camadas selecionadas (Ctrl+E)"

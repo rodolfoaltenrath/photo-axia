@@ -11,6 +11,7 @@ test('qualquer modal de decisão isola os atalhos do editor', () => {
   assert.equal(editorIsBlockedByModal(true, false), true)
   assert.equal(editorIsBlockedByModal(false, true), true)
   assert.equal(editorIsBlockedByModal(true, true), true)
+  assert.equal(editorIsBlockedByModal(false, false, true), true)
 })
 
 test('criação duplicada é bloqueada durante operação ou validação', () => {

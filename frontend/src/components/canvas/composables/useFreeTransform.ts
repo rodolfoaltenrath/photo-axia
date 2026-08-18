@@ -132,7 +132,7 @@ export function useFreeTransform(options: FreeTransformOptions) {
     if (transformSession.value || options.isBusy()) return
     commitKeyboardLayerMove()
     const layer = options.activeLayer()
-    if (!layer?.transform || !layer.visible || layer.kind === 'background') return
+    if (!layer?.transform || !layer.visible) return
     const target = findLayerElement(layer.id)
     if (!target) return
 
@@ -317,7 +317,7 @@ export function useFreeTransform(options: FreeTransformOptions) {
     event.stopPropagation()
     event.preventDefault()
     const targetLayer = options.autoSelectLayer() ? clickedLayer : options.activeLayer()
-    if (!targetLayer?.visible || targetLayer.kind === 'background') return true
+    if (!targetLayer?.visible) return true
     if (targetLayer.id !== options.activeLayerId()) options.selectLayer(targetLayer.id)
     if (!targetLayer.transform) return true
 

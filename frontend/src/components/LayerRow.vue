@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import type { LayerItem } from '../types/editor'
+import type { LayerItem, LayerStyleGlobalLight } from '../types/editor'
 import visibleIcon from '../assets/icons/visible.svg'
 import { blendModeLabel } from '../editor/blendModes'
+import { layerStyleNeedsCompositing } from '../editor/layerStyleCompositor'
+import { layerStyleFillOpacity } from '../editor/layerStyles'
 import type { LayerSelectionMode } from '../editor/layerSelection'
+import { useLayerStyleRaster } from './canvas/composables/useLayerStyleRaster'
 
 const props = defineProps<{
   active: boolean
@@ -11,6 +14,7 @@ const props = defineProps<{
   dragging: boolean
   editing: boolean
   layer: LayerItem
+  layerStyleGlobalLight: LayerStyleGlobalLight
   dropPosition?: 'before' | 'after'
 }>()
 
@@ -21,6 +25,7 @@ const emit = defineEmits<{
   (event: 'dragMove', clientX: number, clientY: number): void
   (event: 'dragStart', layerId: string): void
   (event: 'openContextMenu', layerId: string, clientX: number, clientY: number): void
+  (event: 'openLayerStyles', layerId: string): void
   (event: 'rename', layerId: string, name: string): void
   (event: 'requestRename', layerId: string): void
   (event: 'select', layerId: string, mode: LayerSelectionMode): void
@@ -29,10 +34,22 @@ const emit = defineEmits<{
 
 const nameInput = ref<HTMLInputElement | null>(null)
 const draftName = ref(props.layer.name)
-const desiredThumbnailSource = computed(() => props.layer.image?.previewUrl ?? props.layer.image?.sourceUrl ?? null)
+const {
+  desiredImageSource,
+  geometryForSource,
+  releaseSource
+} = useLayerStyleRaster({
+  consumer: 'thumbnail',
+  globalLight: () => props.layerStyleGlobalLight,
+  layer: () => props.layer,
+  transform: () => props.layer.transform ?? { x: 0, y: 0, width: 1, height: 1 }
+})
+const desiredThumbnailSource = computed(() => desiredImageSource.value)
 const thumbnailSources = ref<[string | null, string | null]>([desiredThumbnailSource.value, null])
 const thumbnailReady = ref<[boolean, boolean]>([false, false])
 const activeThumbnailSlot = ref<0 | 1>(0)
+const thumbnailStyle = computed(() => ({ '--layer-fill-opacity': String(layerStyleFillOpacity(props.layer.styles)) }))
+const hasLayerStyle = computed(() => layerStyleNeedsCompositing(props.layer.styles))
 let releaseThumbnailFrame = 0
 let dragPointerId = -1
 let dragStartX = 0
@@ -51,10 +68,12 @@ function activateThumbnail(slot: 0 | 1, source: string) {
     if (!thumbnailSources.value[inactiveSlot]) return
     const sources = [...thumbnailSources.value] as [string | null, string | null]
     const readiness = [...thumbnailReady.value] as [boolean, boolean]
+    const releasedSource = sources[inactiveSlot]
     sources[inactiveSlot] = null
     readiness[inactiveSlot] = false
     thumbnailSources.value = sources
     thumbnailReady.value = readiness
+    if (releasedSource) releaseSource(releasedSource)
   })
 }
 
@@ -79,10 +98,12 @@ watch(desiredThumbnailSource, (source) => {
   }
   const sources = [...thumbnailSources.value] as [string | null, string | null]
   const readiness = [...thumbnailReady.value] as [boolean, boolean]
+  const replacedSource = sources[targetSlot]
   sources[targetSlot] = source
   readiness[targetSlot] = false
   thumbnailSources.value = sources
   thumbnailReady.value = readiness
+  if (replacedSource && replacedSource !== source) releaseSource(replacedSource)
 })
 
 const kindLabels: Record<LayerItem['kind'], string> = {
@@ -118,7 +139,7 @@ function cancelRename() {
 }
 
 function startPointerDrag(event: PointerEvent) {
-  if (event.button !== 0 || props.editing || props.layer.kind === 'background') return
+  if (event.button !== 0 || props.editing) return
   dragPointerId = event.pointerId
   dragStartX = event.clientX
   dragStartY = event.clientY
@@ -183,7 +204,6 @@ function openContextMenu(event: MouseEvent) {
     :class="{
       'layer-row--active': active,
       'layer-row--selected': selected,
-      'layer-row--background': layer.kind === 'background',
       'layer-row--dragging': dragging,
       'layer-row--drop-after': dropPosition === 'after',
       'layer-row--drop-before': dropPosition === 'before'
@@ -219,7 +239,13 @@ function openContextMenu(event: MouseEvent) {
       @pointerup="endPointerDrag"
     >
       <span class="layer-drag-handle" aria-hidden="true">⠿</span>
-      <span class="layer-thumb" :class="{ 'layer-thumb--transparent': !layer.image }">
+      <span
+        class="layer-thumb"
+        :class="{ 'layer-thumb--transparent': !layer.image }"
+        :style="thumbnailStyle"
+        title="Abrir opções de mesclagem"
+        @dblclick.stop="emit('openLayerStyles', layer.id)"
+      >
         <template v-if="layer.image">
           <img
             v-for="(source, slot) in thumbnailSources"
@@ -227,7 +253,10 @@ function openContextMenu(event: MouseEvent) {
             :key="slot"
             alt=""
             class="layer-thumb-buffer"
-            :class="{ 'layer-thumb-buffer--active': activeThumbnailSlot === slot }"
+            :class="{
+              'layer-thumb-buffer--active': activeThumbnailSlot === slot,
+              'layer-thumb-buffer--styled': Boolean(geometryForSource(source))
+            }"
             decoding="async"
             fetchpriority="low"
             loading="lazy"
@@ -252,7 +281,10 @@ function openContextMenu(event: MouseEvent) {
           @keydown.enter.prevent="commitRename"
           @keydown.esc.prevent="cancelRename"
         />
-        <strong v-else>{{ layer.name }}</strong>
+        <span v-else class="layer-name-line">
+          <strong>{{ layer.name }}</strong>
+          <span v-if="hasLayerStyle" class="layer-style-indicator" title="Estilo de camada ativo">fx</span>
+        </span>
         <small>
           {{ kindLabels[layer.kind] }} · {{ layer.opacity }}%
           <template v-if="layer.blendMode !== 'normal'"> · {{ blendModeLabel(layer.blendMode) }}</template>

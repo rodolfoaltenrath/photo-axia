@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { boundsIntersect, layerIntersectsBounds, layerIntersectsDocument } from '../src/editor/renderBounds.ts'
+import {
+  boundsIntersect,
+  layerIntersectsBounds,
+  layerIntersectsDocument,
+  layerStyledDocumentBounds,
+  styledLayerIntersectsBounds
+} from '../src/editor/renderBounds.ts'
+import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { layerRasterDrawRect } from '../src/services/renderDocument.ts'
 
 const document = { width: 1000, height: 800 }
 const layer = (transform) => ({ transform })
@@ -31,4 +39,31 @@ test('bounds que apenas encostam não produzem pixels na mesma viewport', () => 
     { x: 0, y: 0, width: 10.1, height: 10 },
     { x: 10, y: 0, width: 1, height: 1 }
   ), true)
+})
+
+test('geometria do raster composto preserva escala e offsets do conteúdo original', () => {
+  assert.deepEqual(layerRasterDrawRect(
+    { x: 30, y: 40, width: 200, height: 100, rotation: 15 },
+    {
+      sourceWidth: 100,
+      sourceHeight: 50,
+      renderedWidth: 120,
+      renderedHeight: 70,
+      offsetX: -10,
+      offsetY: -5
+    }
+  ), { x: -120, y: -60, width: 240, height: 140 })
+})
+
+test('bounds estilizados incluem o brilho que alcança uma viewport externa à camada', () => {
+  const glow = createDefaultLayerEffect('outer-glow', 'bounds-glow')
+  glow.size = 20
+  const styledLayer = {
+    transform: { x: 100, y: 100, width: 50, height: 40, rotation: 0 },
+    styles: { ...createLayerStyleConfig(), effects: [glow] }
+  }
+  const light = { angle: 120, altitude: 30 }
+  assert.deepEqual(layerStyledDocumentBounds(styledLayer, light), { x: 80, y: 80, width: 90, height: 80 })
+  assert.equal(layerIntersectsBounds(styledLayer, { x: 75, y: 100, width: 10, height: 10 }), false)
+  assert.equal(styledLayerIntersectsBounds(styledLayer, { x: 75, y: 100, width: 10, height: 10 }, light), true)
 })

@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { LayerItem, LayerTransform } from '../types/editor'
+import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../types/editor'
 import { layerCompositingStyle } from '../editor/blendModes'
+import { layerStyleFillOpacity } from '../editor/layerStyles'
 import { useLayerImageBuffer } from './canvas/composables/useLayerImageHandoff'
+import { useLayerStyleRaster } from './canvas/composables/useLayerStyleRaster'
 
 const props = defineProps<{
   active: boolean
   contentHidden: boolean
   grouped: boolean
   layer: LayerItem
+  layerStyleGlobalLight: LayerStyleGlobalLight
   transform: LayerTransform
 }>()
 
@@ -19,6 +22,17 @@ const emit = defineEmits<{
 }>()
 
 const layerRoot = ref<HTMLElement | null>(null)
+const {
+  desiredImageSource,
+  geometryForSource,
+  releaseSource,
+  reportedSource
+} = useLayerStyleRaster({
+  consumer: 'canvas',
+  globalLight: () => props.layerStyleGlobalLight,
+  layer: () => props.layer,
+  transform: () => props.transform
+})
 const {
   activeImageSlot,
   activeImageTransform,
@@ -31,9 +45,25 @@ const {
   layer: () => props.layer,
   transform: () => props.transform,
   layerRoot,
+  imageSource: () => desiredImageSource.value,
+  reportedSource,
+  sourceReleased: releaseSource,
   imageLoaded: (layerId, source) => emit('imageLoaded', layerId, source),
   imageError: (layerId, source) => emit('imageError', layerId, source)
 })
+
+const activeImageIsStyled = computed(() => Boolean(geometryForSource(imageSources.value[activeImageSlot.value])))
+
+function imageBufferStyle(source: string | null) {
+  const geometry = geometryForSource(source)
+  if (!geometry) return undefined
+  return {
+    left: `${geometry.offsetX / geometry.sourceWidth * 100}%`,
+    top: `${geometry.offsetY / geometry.sourceHeight * 100}%`,
+    width: `${geometry.renderedWidth / geometry.sourceWidth * 100}%`,
+    height: `${geometry.renderedHeight / geometry.sourceHeight * 100}%`
+  }
+}
 
 const layerStyle = computed(() => {
   const transform = props.layer.image ? activeImageTransform.value : props.transform
@@ -41,6 +71,7 @@ const layerStyle = computed(() => {
     ? { mixBlendMode: undefined, opacity: undefined }
     : layerCompositingStyle(props.layer.blendMode, props.layer.opacity)
   return {
+    '--layer-fill-opacity': String(layerStyleFillOpacity(props.layer.styles)),
     left: '0',
     top: '0',
     width: `${transform.width}px`,
@@ -72,7 +103,11 @@ const textStyle = computed(() => {
   <div
     ref="layerRoot"
     class="document-layer"
-    :class="{ 'document-layer--active': active, 'document-layer--content-hidden': contentHidden }"
+    :class="{
+      'document-layer--active': active,
+      'document-layer--content-hidden': contentHidden,
+      'document-layer--styled': activeImageIsStyled
+    }"
     :data-layer-id="layer.id"
     :data-layer-kind="layer.kind"
     :style="layerStyle"
@@ -86,11 +121,15 @@ const textStyle = computed(() => {
         :key="slot"
         :alt="activeImageSlot === slot ? layer.name : ''"
         class="layer-image-buffer"
-        :class="{ 'layer-image-buffer--active': activeImageSlot === slot }"
+        :class="{
+          'layer-image-buffer--active': activeImageSlot === slot,
+          'layer-image-buffer--styled': Boolean(geometryForSource(source))
+        }"
         decoding="async"
         :fetchpriority="active ? 'high' : 'auto'"
         draggable="false"
         :src="source ?? undefined"
+        :style="imageBufferStyle(source)"
         @error="handleImageError(slot as 0 | 1)"
         @load="handleImageLoad(slot as 0 | 1, $event)"
       />

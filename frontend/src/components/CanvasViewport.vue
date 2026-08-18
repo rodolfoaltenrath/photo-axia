@@ -35,6 +35,7 @@ import {
 import {
   selectionIsEmpty
 } from '../editor/selection'
+import { layerStyleFillOpacity } from '../editor/layerStyles'
 import {
   colorSampleButtonIsPressed,
   colorSampleTarget,
@@ -219,7 +220,7 @@ const backgroundStyle = computed(() => {
 
   return {
     background: props.document.background === 'black' ? '#000000' : '#ffffff',
-    opacity: background.opacity / 100
+    opacity: (background.opacity / 100) * layerStyleFillOpacity(background.styles)
   }
 })
 const activeLayer = computed(() => props.layers.find((layer) => layer.id === props.activeLayerId))
@@ -384,6 +385,7 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
   guidesInteractive: props.activeTool === 'move' && !props.guidesLocked,
   guidesVisible: props.guidesVisible,
   layers: renderedLayers.value,
+  layerStyleGlobalLight: props.document.layerStyleGlobalLight,
   origin: displayedRulerOrigin.value,
   paintableLayerId: paintableLayer.value?.id,
   pasteboardStyle: pasteboardStyle.value,
