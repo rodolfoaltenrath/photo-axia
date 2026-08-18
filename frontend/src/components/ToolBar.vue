@@ -3,12 +3,15 @@ import type { EditorTool } from '../types/editor'
 import brushIcon from '../assets/icons/brush.svg'
 import cropIcon from '../assets/icons/crop.svg'
 import eraserIcon from '../assets/icons/eraser.svg'
+import eyedropperIcon from '../assets/icons/eyedropper.svg'
 import handIcon from '../assets/icons/hand.svg'
 import moveIcon from '../assets/icons/move.svg'
 import textIcon from '../assets/icons/text.svg'
 import zoomIcon from '../assets/icons/zoom.svg'
 
 const activeTool = defineModel<EditorTool>('activeTool', { required: true })
+const foregroundColor = defineModel<string>('foregroundColor', { required: true })
+const backgroundColor = defineModel<string>('backgroundColor', { required: true })
 const emit = defineEmits<{
   (event: 'toolDoubleClick', tool: EditorTool): void
 }>()
@@ -17,11 +20,23 @@ const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boole
   { id: 'move', icon: moveIcon, label: 'Mover (V)', enabled: true },
   { id: 'brush', icon: brushIcon, label: 'Pincel (B)', enabled: true },
   { id: 'eraser', icon: eraserIcon, label: 'Borracha (E)', enabled: true },
+  { id: 'eyedropper', icon: eyedropperIcon, label: 'Conta-gotas (I)', enabled: true },
   { id: 'crop', icon: cropIcon, label: 'Recorte e seleção (C)', enabled: true },
   { id: 'text', icon: textIcon, label: 'Texto (T)', enabled: true },
   { id: 'hand', icon: handIcon, label: 'Mão (H)', enabled: true },
   { id: 'zoom', icon: zoomIcon, label: 'Zoom (Z)', enabled: true }
 ]
+
+function swapColors() {
+  const previousForeground = foregroundColor.value
+  foregroundColor.value = backgroundColor.value
+  backgroundColor.value = previousForeground
+}
+
+function resetColors() {
+  foregroundColor.value = '#000000'
+  backgroundColor.value = '#ffffff'
+}
 </script>
 
 <template>
@@ -39,5 +54,42 @@ const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boole
     >
       <img alt="" :src="tool.icon" />
     </button>
+
+    <div class="toolbar-colors" aria-label="Cores do editor">
+      <button
+        class="toolbar-color-swap"
+        type="button"
+        title="Trocar cores principal e secundária"
+        aria-label="Trocar cores principal e secundária"
+        @click="swapColors"
+      >
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M3 5h9m0 0L9.5 2.5M12 5 9.5 7.5M13 11H4m0 0 2.5-2.5M4 11l2.5 2.5" />
+        </svg>
+      </button>
+      <input
+        v-model="backgroundColor"
+        class="toolbar-color-swatch toolbar-color-swatch--background"
+        type="color"
+        title="Cor secundária"
+        aria-label="Cor secundária"
+      />
+      <input
+        v-model="foregroundColor"
+        class="toolbar-color-swatch toolbar-color-swatch--foreground"
+        type="color"
+        title="Cor principal"
+        aria-label="Cor principal"
+      />
+      <button
+        class="toolbar-color-reset"
+        type="button"
+        title="Restaurar preto e branco"
+        aria-label="Restaurar cores para preto e branco"
+        @click="resetColors"
+      >
+        <span></span><span></span>
+      </button>
+    </div>
   </aside>
 </template>

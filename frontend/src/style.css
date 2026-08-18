@@ -323,6 +323,102 @@ select:focus-visible {
   padding: 10px 8px;
 }
 
+.toolbar-colors {
+  position: relative;
+  width: 40px;
+  height: 56px;
+  margin-top: 4px;
+}
+
+.tool-bar .toolbar-color-swatch {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border: 2px solid #d8d9dd;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.toolbar-color-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.toolbar-color-swatch::-webkit-color-swatch {
+  border: 0;
+}
+
+.toolbar-color-swatch::-moz-color-swatch {
+  border: 0;
+}
+
+.tool-bar .toolbar-color-swatch--background {
+  right: 0;
+  bottom: 5px;
+  z-index: 1;
+}
+
+.tool-bar .toolbar-color-swatch--foreground {
+  top: 5px;
+  left: 0;
+  z-index: 2;
+}
+
+.tool-bar .toolbar-color-swap,
+.tool-bar .toolbar-color-reset {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  place-items: center;
+}
+
+.tool-bar .toolbar-color-swap {
+  top: -2px;
+  right: -2px;
+}
+
+.toolbar-color-swap svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.tool-bar .toolbar-color-reset {
+  bottom: -1px;
+  left: -2px;
+}
+
+.toolbar-color-reset span {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1px solid #c8c9ce;
+  background: #fff;
+}
+
+.toolbar-color-reset span:first-child {
+  top: 2px;
+  left: 2px;
+  z-index: 1;
+  background: #000;
+}
+
+.toolbar-color-reset span:last-child {
+  right: 2px;
+  bottom: 2px;
+}
+
 .tool-bar button {
   width: 40px;
   height: 40px;
@@ -511,6 +607,11 @@ select:focus-visible {
 
 .canvas-scroll--selection:not(.canvas-scroll--panning),
 .canvas-scroll--selection:not(.canvas-scroll--panning) .document-layer {
+  cursor: crosshair;
+}
+
+.canvas-scroll--eyedropper:not(.canvas-scroll--panning),
+.canvas-scroll--eyedropper:not(.canvas-scroll--panning) .document-layer {
   cursor: crosshair;
 }
 

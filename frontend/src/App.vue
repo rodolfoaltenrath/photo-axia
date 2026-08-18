@@ -37,7 +37,12 @@ import {
   releasePreparedImage,
   releaseLayerAssets
 } from './services/imageImport'
-import { renderDocumentPNG, renderDocumentThumbnail, renderMergedLayers } from './services/renderDocument'
+import {
+  renderDocumentPNG,
+  renderDocumentThumbnail,
+  renderMergedLayers,
+  sampleDocumentColor
+} from './services/renderDocument'
 import {
   createAxiaProjectManifest,
   restoreAxiaProject,
@@ -127,6 +132,7 @@ const autoSelectLayer = ref(true)
 const zoom = ref(100)
 const brushSize = ref(24)
 const brushColor = ref('#000000')
+const backgroundColor = ref('#ffffff')
 const guides = ref<EditorGuide[]>([])
 const rulersVisible = ref(initialRulersVisibility())
 const guidesVisible = ref(true)
@@ -567,6 +573,64 @@ function setZoom(value: number) {
 function handleToolDoubleClick(tool: EditorTool) {
   if (tool === 'hand') canvasViewport.value?.fitDocument()
   if (tool === 'zoom') canvasViewport.value?.zoomToActualSize()
+}
+
+let colorSampleGeneration = 0
+let pendingColorSample: {
+  documentId: string
+  generation: number
+  point: SelectionPoint
+  target: 'foreground' | 'background'
+} | undefined
+let colorSampleRunning = false
+
+async function processColorSamples() {
+  if (colorSampleRunning) return
+  colorSampleRunning = true
+  try {
+    while (pendingColorSample) {
+      const request = pendingColorSample
+      pendingColorSample = undefined
+      if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição antes de coletar a cor…'
+      if (!await rasterMutationBarrier.wait()) continue
+      if (request.documentId !== activeDocument.value.id) continue
+      const color = await sampleDocumentColor(
+        activeDocument.value,
+        layers.value,
+        request.point.x,
+        request.point.y
+      )
+      if (
+        request.generation !== colorSampleGeneration ||
+        request.documentId !== activeDocument.value.id
+      ) continue
+      if (!color) {
+        statusText.value = 'Área transparente: nenhuma cor coletada'
+        continue
+      }
+      if (request.target === 'background') backgroundColor.value = color
+      else brushColor.value = color
+      statusText.value = `${request.target === 'background' ? 'Cor secundária' : 'Cor principal'}: ${color.toUpperCase()}`
+      errorText.value = ''
+    }
+  } catch (error) {
+    showError(error, 'Não foi possível coletar a cor.')
+  } finally {
+    colorSampleRunning = false
+    if (pendingColorSample) void processColorSamples()
+  }
+}
+
+function sampleColor(point: SelectionPoint, target: 'foreground' | 'background') {
+  const generation = ++colorSampleGeneration
+  pendingColorSample = {
+    documentId: activeDocument.value.id,
+    generation,
+    point: { ...point },
+    target
+  }
+  canvasViewport.value?.commitPendingTransform()
+  void processColorSamples()
 }
 
 function addLayer() {
@@ -2193,6 +2257,7 @@ function handleShortcut(event: KeyboardEvent) {
     v: 'move',
     b: 'brush',
     e: 'eraser',
+    i: 'eyedropper',
     c: 'crop',
     t: 'text',
     h: 'hand',
@@ -2292,7 +2357,12 @@ onBeforeUnmount(() => {
     />
 
     <section v-if="hasOpenDocument" v-show="appScreen === 'editor'" class="workspace" :inert="modalOpen || undefined">
-      <ToolBar v-model:active-tool="activeTool" @tool-double-click="handleToolDoubleClick" />
+      <ToolBar
+        v-model:active-tool="activeTool"
+        v-model:background-color="backgroundColor"
+        v-model:foreground-color="brushColor"
+        @tool-double-click="handleToolDoubleClick"
+      />
 
       <CanvasViewport
         ref="canvasViewport"
@@ -2324,6 +2394,7 @@ onBeforeUnmount(() => {
         @magic-wand-select="selectWithMagicWand"
         @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"
+        @sample-color="sampleColor"
         @update-guide="updateGuide"
         @create-text="addTextLayer"
         @select-layer="selectSingleLayer"

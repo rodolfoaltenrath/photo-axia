@@ -2,6 +2,7 @@ import type { DocumentSpec, LayerItem } from '../types/editor'
 import { textFont, textLines } from '../editor/text'
 import { layerDocumentBounds, layerIntersectsDocument, type DocumentBounds } from '../editor/renderBounds'
 import { canvasBlendOperation } from '../editor/blendModes'
+import { sampledPixelToHex } from '../editor/colorSampler'
 
 function loadImage(source: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -108,6 +109,18 @@ async function renderDocumentCanvas(
 export async function renderDocumentPNG(document: DocumentSpec, layers: LayerItem[]) {
   const canvas = await renderDocumentCanvas(document, layers, document.width, document.height, false)
   return canvas.toDataURL('image/png')
+}
+
+export async function sampleDocumentColor(document: DocumentSpec, layers: LayerItem[], x: number, y: number) {
+  const pixelX = Math.floor(x)
+  const pixelY = Math.floor(y)
+  if (pixelX < 0 || pixelY < 0 || pixelX >= document.width || pixelY >= document.height) return null
+
+  const viewport = { x: pixelX, y: pixelY, width: 1, height: 1 }
+  const canvas = await renderDocumentCanvas(document, layers, 1, 1, false, viewport)
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) throw new Error('O sistema não disponibilizou a leitura de cores.')
+  return sampledPixelToHex(context.getImageData(0, 0, 1, 1).data)
 }
 
 function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {

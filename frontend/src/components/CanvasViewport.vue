@@ -35,6 +35,11 @@ import {
 import {
   selectionIsEmpty
 } from '../editor/selection'
+import {
+  colorSampleButtonIsPressed,
+  colorSampleTarget,
+  type ColorSampleTarget
+} from '../editor/colorSampler'
 
 const props = defineProps<CanvasViewportProps>()
 const emit = defineEmits<CanvasViewportEmits>()
@@ -47,6 +52,9 @@ const isPanning = ref(false)
 const panStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0, pointerId: -1 })
 let interactionFrame = 0
 let pendingInteractionFrame: (() => void) | undefined
+let colorSampleFrame = 0
+let pendingColorSample: { point: DocumentPoint; target: ColorSampleTarget } | undefined
+let colorSamplePointer: { pointerId: number; target: ColorSampleTarget } | undefined
 const {
   documentViewportOffset,
   fitDocument,
@@ -341,6 +349,7 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--selection':
     props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser',
+  'canvas-scroll--eyedropper': props.activeTool === 'eyedropper',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
   'canvas-scroll--zoom-in':
@@ -509,6 +518,37 @@ function pointerToDocument(event: PointerEvent): DocumentPoint | undefined {
   return documentPointFromClient(event.clientX, event.clientY)
 }
 
+function colorSamplePoint(event: PointerEvent) {
+  const point = pointerToDocument(event)
+  if (
+    !point ||
+    point.x < 0 ||
+    point.y < 0 ||
+    point.x >= props.document.width ||
+    point.y >= props.document.height
+  ) return undefined
+  return point
+}
+
+function scheduleColorSample(point: DocumentPoint, target: ColorSampleTarget) {
+  pendingColorSample = { point, target }
+  if (colorSampleFrame) return
+  colorSampleFrame = requestAnimationFrame(() => {
+    colorSampleFrame = 0
+    const pending = pendingColorSample
+    pendingColorSample = undefined
+    if (pending) emit('sampleColor', pending.point, pending.target)
+  })
+}
+
+function flushColorSample() {
+  if (colorSampleFrame) cancelAnimationFrame(colorSampleFrame)
+  colorSampleFrame = 0
+  const pending = pendingColorSample
+  pendingColorSample = undefined
+  if (pending) emit('sampleColor', pending.point, pending.target)
+}
+
 function snappingActive(event: Pick<PointerEvent, 'ctrlKey' | 'metaKey'>) {
   return props.guideSnappingEnabled && props.guidesVisible && props.guides.length > 0 && !event.ctrlKey && !event.metaKey
 }
@@ -542,6 +582,23 @@ function startViewportPointer(event: PointerEvent) {
   const target = event.target as HTMLElement | null
   const isMiddleButton = event.button === 1 || (event.buttons & 4) === 4
   const temporaryZoom = isSpacePressed.value && (event.ctrlKey || event.metaKey || event.altKey)
+  const sampleTarget = colorSampleTarget(event.button)
+  if (
+    props.activeTool === 'eyedropper' &&
+    !props.isBusy &&
+    !isSpacePressed.value &&
+    sampleTarget
+  ) {
+    const point = colorSamplePoint(event)
+    if (point) {
+      event.preventDefault()
+      event.stopPropagation()
+      scroll.setPointerCapture(event.pointerId)
+      colorSamplePointer = { pointerId: event.pointerId, target: sampleTarget }
+      emit('sampleColor', point, sampleTarget)
+    }
+    return
+  }
   if (
     event.button === 0 &&
     isTransforming.value &&
@@ -651,6 +708,15 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
 }
 
 function updatePointer(event: PointerEvent) {
+  if (colorSamplePointer?.pointerId === event.pointerId) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (colorSampleButtonIsPressed(colorSamplePointer.target, event.buttons)) {
+      const point = colorSamplePoint(event)
+      if (point) scheduleColorSample(point, colorSamplePointer.target)
+    }
+    return
+  }
   if (isPanning.value && scrollArea.value && panStart.value.pointerId === event.pointerId) {
     event.preventDefault()
     const scrollLeft = panStart.value.scrollLeft - (event.clientX - panStart.value.x)
@@ -687,6 +753,10 @@ function updatePointer(event: PointerEvent) {
 
 function stopPointer(event: PointerEvent) {
   flushInteractionFrame()
+  if (colorSamplePointer?.pointerId === event.pointerId) {
+    flushColorSample()
+    colorSamplePointer = undefined
+  }
   stopSelectionPointer(event.pointerId)
   stopBrushPointer(event)
   stopSelectionMovePointer(event)
@@ -705,6 +775,7 @@ function handleLostPointerCapture(event: PointerEvent) {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(interactionFrame)
+  cancelAnimationFrame(colorSampleFrame)
 })
 
 defineExpose({

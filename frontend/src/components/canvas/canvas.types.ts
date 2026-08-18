@@ -50,6 +50,7 @@ export interface CanvasViewportEmits {
   (event: 'createGuide', guide: EditorGuide): void
   (event: 'deleteGuide', guideId: string): void
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
+  (event: 'sampleColor', point: DocumentPoint, target: 'foreground' | 'background'): void
   (event: 'deleteSelection'): void
   (event: 'magicWandSelect', point: SelectionPoint): void
   (
