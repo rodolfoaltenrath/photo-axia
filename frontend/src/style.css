@@ -41,6 +41,11 @@ body {
   user-select: none;
 }
 
+img,
+a {
+  -webkit-user-drag: none;
+}
+
 input,
 textarea,
 [contenteditable="true"] {
