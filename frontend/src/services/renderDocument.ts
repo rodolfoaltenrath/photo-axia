@@ -1,4 +1,4 @@
-import type { DocumentSpec, LayerItem, LayerTransform } from '../types/editor.ts'
+import type { DocumentSpec, LayerItem, LayerTransform, SmartLayerContent } from '../types/editor.ts'
 import { canvasBlendOperation } from '../editor/blendModes.ts'
 import { sampledDocumentPixel, sampledPixelToHex } from '../editor/colorSampler.ts'
 import {
@@ -41,6 +41,17 @@ export interface LayerRasterGeometry {
   offsetY: number
 }
 
+export type LayerAppearanceMode = 'local' | 'isolated-export'
+
+export interface LayerAppearanceRenderPlan {
+  layer: LayerItem
+  viewport: DocumentBounds
+}
+
+export interface RenderedLayerAppearance extends DocumentBounds {
+  blob: Blob
+}
+
 let renderSessionId = 0
 
 export function layerRasterDrawRect(transform: LayerTransform, raster: LayerRasterGeometry) {
@@ -51,6 +62,36 @@ export function layerRasterDrawRect(transform: LayerTransform, raster: LayerRast
     y: -transform.height / 2 + raster.offsetY * scaleY,
     width: raster.renderedWidth * scaleX,
     height: raster.renderedHeight * scaleY
+  }
+}
+
+export function layerAppearanceRenderPlan(
+  document: Pick<DocumentSpec, 'width' | 'height' | 'background' | 'layerStyleGlobalLight'>,
+  layer: LayerItem,
+  mode: LayerAppearanceMode
+): LayerAppearanceRenderPlan | null {
+  const syntheticBackground = layer.kind === 'background' && !layer.image && document.background !== 'transparent'
+  if (!syntheticBackground && (!layer.transform || (!layer.image && !layer.text))) return null
+
+  const bounds = syntheticBackground
+    ? { x: 0, y: 0, width: document.width, height: document.height }
+    : layerStyledDocumentBounds(layer, document.layerStyleGlobalLight)
+  if (!bounds) return null
+
+  const left = Math.floor(bounds.x)
+  const top = Math.floor(bounds.y)
+  const right = Math.ceil(bounds.x + bounds.width)
+  const bottom = Math.ceil(bounds.y + bounds.height)
+  if (right <= left || bottom <= top) return null
+
+  return {
+    layer: {
+      ...layer,
+      visible: true,
+      opacity: mode === 'local' ? 100 : layer.opacity,
+      blendMode: 'normal'
+    },
+    viewport: { x: left, y: top, width: right - left, height: bottom - top }
   }
 }
 
@@ -128,7 +169,7 @@ async function renderDocumentCanvas(
   width: number,
   height: number,
   usePreviewSources: boolean,
-  purpose: 'export' | 'merge' | 'sample' | 'thumbnail',
+  purpose: 'export' | 'layer' | 'merge' | 'sample' | 'smart' | 'thumbnail',
   viewport: DocumentBounds = { x: 0, y: 0, width: document.width, height: document.height }
 ) {
   const canvas = window.document.createElement('canvas')
@@ -161,7 +202,7 @@ async function renderDocumentCanvas(
   const consumers: string[] = []
 
   try {
-    await Promise.all(orderedLayers.map(async (layer) => {
+    const prepared = await Promise.allSettled(orderedLayers.map(async (layer) => {
       if (!layer.image) return
       const consumerId = `${session}:${layer.id}`
       consumers.push(consumerId)
@@ -173,6 +214,8 @@ async function renderDocumentCanvas(
         usePreviewSources ? 'interactive' : 'final'
       ))
     }))
+    const failed = prepared.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failed) throw failed.reason
 
     for (const layer of orderedLayers) {
       if (!layer.transform) continue
@@ -228,6 +271,52 @@ export async function renderDocumentPNG(document: DocumentSpec, layers: LayerIte
   return canvas.toDataURL('image/png')
 }
 
+export async function renderDocumentBlob(document: DocumentSpec, layers: LayerItem[]) {
+  const canvas = await renderDocumentCanvas(document, layers, document.width, document.height, false, 'export')
+  const blob = await canvasBlob(canvas, 'image/png')
+  if (!blob) throw new Error('Não foi possível gerar os pixels do documento.')
+  return blob
+}
+
+export async function renderSmartLayerContentBlob(
+  content: SmartLayerContent,
+  layers: LayerItem[],
+  width: number,
+  height: number,
+  interactive = false
+) {
+  if (
+    !Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 ||
+    width > 16_384 || height > 16_384 || width * height > 64_000_000
+  ) throw new Error('A resolução solicitada para a camada inteligente é inválida.')
+  const document: DocumentSpec = {
+    id: content.id,
+    name: 'Conteúdo inteligente',
+    width: content.width,
+    height: content.height,
+    unit: 'px',
+    physicalWidth: content.width,
+    physicalHeight: content.height,
+    resolutionDpi: content.resolutionDpi,
+    colorSpace: content.colorSpace,
+    background: content.background,
+    createdAt: '',
+    layerStyleGlobalLight: content.layerStyleGlobalLight
+  }
+  const canvas = await renderDocumentCanvas(
+    document,
+    layers,
+    width,
+    height,
+    interactive,
+    'smart',
+    { x: 0, y: 0, width: content.width, height: content.height }
+  )
+  const blob = await canvasBlob(canvas, 'image/png')
+  if (!blob) throw new Error('Não foi possível renderizar o conteúdo inteligente.')
+  return blob
+}
+
 export async function sampleDocumentColor(document: DocumentSpec, layers: LayerItem[], x: number, y: number) {
   const pixel = sampledDocumentPixel(x, y, document.width, document.height)
   if (!pixel) return null
@@ -241,6 +330,31 @@ export async function sampleDocumentColor(document: DocumentSpec, layers: LayerI
 
 function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
   return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality))
+}
+
+export async function renderLayerAppearance(
+  document: DocumentSpec,
+  layer: LayerItem,
+  mode: LayerAppearanceMode = 'local'
+): Promise<RenderedLayerAppearance> {
+  const plan = layerAppearanceRenderPlan(document, layer, mode)
+  if (!plan) throw new Error('A camada não possui conteúdo visual para rasterizar.')
+  const { viewport } = plan
+  if (viewport.width > 16_384 || viewport.height > 16_384 || viewport.width * viewport.height > 64_000_000) {
+    throw new Error('A aparência da camada excede o limite seguro de rasterização.')
+  }
+  const canvas = await renderDocumentCanvas(
+    document,
+    [plan.layer],
+    viewport.width,
+    viewport.height,
+    false,
+    'layer',
+    viewport
+  )
+  const blob = await canvasBlob(canvas, 'image/png')
+  if (!blob) throw new Error('Não foi possível gerar a aparência da camada.')
+  return { blob, ...viewport }
 }
 
 export async function renderDocumentThumbnail(

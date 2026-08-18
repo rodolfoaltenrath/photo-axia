@@ -92,6 +92,17 @@ func TestAxiaProjectRoundTripWithNativeAsset(t *testing.T) {
 	app.shutdown(nil)
 }
 
+func TestValidateManifestAcceptsCurrentAndPreviousVersions(t *testing.T) {
+	for _, version := range []int{axiaMinimumReadVersion, axiaFormatVersion} {
+		if _, err := validateManifest(projectManifest("assets/asset-0001.png", version)); err != nil {
+			t.Fatalf("version %d should be supported: %v", version, err)
+		}
+	}
+	if _, err := validateManifest(projectManifest("assets/asset-0001.png", axiaFormatVersion+1)); err == nil {
+		t.Fatal("future project version should be rejected")
+	}
+}
+
 func TestAxiaProjectStoresUploadedEditedAsset(t *testing.T) {
 	directory := t.TempDir()
 	imagePath := filepath.Join(directory, "edited.png")

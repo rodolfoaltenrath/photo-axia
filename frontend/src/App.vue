@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasViewport from './components/CanvasViewport.vue'
+import FlattenImageDialog from './components/FlattenImageDialog.vue'
 import LayerStyleDialog from './components/LayerStyleDialog.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
@@ -10,7 +11,6 @@ import ToolBar from './components/ToolBar.vue'
 import TopMenu from './components/TopMenu.vue'
 import UnsavedChangesDialog from './components/UnsavedChangesDialog.vue'
 import {
-  applyPreviewFilter,
   createEditorDocument,
   finalizeAxiaProjectOpen,
   clearRecentProjects,
@@ -22,7 +22,7 @@ import {
   listRecentProjects,
   recordRecentProject,
   releaseAxiaProjectAssets,
-  saveExportedPNG,
+  saveExportedPNGBlob,
   removeRecentProject,
   setNativeDocumentDirty,
   uploadRecentThumbnail,
@@ -40,8 +40,9 @@ import {
   releaseLayerAssets
 } from './services/imageImport'
 import {
-  renderDocumentPNG,
+  renderDocumentBlob,
   renderDocumentThumbnail,
+  renderLayerAppearance,
   renderMergedLayers,
   sampleDocumentColor
 } from './services/renderDocument'
@@ -52,6 +53,7 @@ import {
 } from './services/project'
 import {
   applyEditorHistoryDelta,
+  cloneLayerHistoryState,
   cloneLayerPatch,
   cloneLayerState,
   estimateEditorHistoryBytes,
@@ -61,13 +63,22 @@ import {
   mergeEditorHistoryDelta,
   type EditorHistoryDelta
 } from './editor/editorHistory'
-import { useHistory, type HistoryRecordOptions, type HistoryStep } from './editor/history'
+import { useHistory, type HistoryRecordOptions, type HistorySnapshot, type HistoryStep } from './editor/history'
 import { MutationBarrier } from './editor/mutationBarrier'
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
 import { moveLayerBy, moveLayerRelativeTo } from './editor/layerOrder'
+import { layerCanRasterize, rasterizedLayerPatch } from './editor/layerRasterization'
+import { layerCanExportPNG, quickLayerExportName } from './editor/layerExport'
+import { createFlattenedLayer, documentCanFlatten } from './editor/flattenImage'
 import { updateLayerSelection, type LayerSelectionMode } from './editor/layerSelection'
+import { createSmartLayer, layersCanConvertToSmart, smartLayerObjectLayers } from './editor/smartLayers'
+import {
+  createEditedSmartLayerContent,
+  createSmartLayerEditDocument,
+  smartLayerEditHasChanges
+} from './editor/smartLayerEditing'
 import { LatestPathTaskQueue, LatestRequestGate } from './editor/recentTasks'
 import type { EditorGuide, RulerOrigin, RulerUnit } from './editor/guides'
 import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
@@ -96,6 +107,12 @@ import {
 } from './services/selectionEngine'
 import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
 import { clearLayerStyleRenderCache, disposeLayerStyleCompositor } from './services/layerStyleCompositor'
+import {
+  clearSmartLayerRenderCache,
+  invalidateSmartLayerContent,
+  renderSmartLayer,
+  seedSmartLayerRender
+} from './services/smartLayerRenderer'
 import type { BrushOperation } from './editor/brush'
 import {
   disposeSelectionMoveEngine,
@@ -160,6 +177,7 @@ const hasOpenDocument = ref(false)
 const recentProjects = ref<RecentProject[]>([])
 const recentProjectsLoading = ref(true)
 const showUnsavedChangesDialog = ref(false)
+const showFlattenImageDialog = ref(false)
 const layerStyleDialog = shallowRef<{ layerId: string; before: LayerStyleConfig }>()
 const fileInput = ref<HTMLInputElement | null>(null)
 const canvasViewport = ref<InstanceType<typeof CanvasViewport> | null>(null)
@@ -207,7 +225,32 @@ interface FloatingSelectionSession {
   deltaY: number
 }
 
+interface SmartLayerEditSession {
+  targetLayerId: string
+  targetLayerName: string
+  parentActiveLayerId: string
+  parentActiveTool: EditorTool
+  parentAutoSelectLayer: boolean
+  parentDocument: DocumentSpec
+  parentDirty: boolean
+  parentGuideSnappingEnabled: boolean
+  parentGuides: EditorGuide[]
+  parentGuidesLocked: boolean
+  parentGuidesVisible: boolean
+  parentHistory: HistorySnapshot<EditorHistoryDelta>
+  parentLayerSelectionAnchorId: string
+  parentLayers: LayerItem[]
+  parentRulerOrigin: RulerOrigin
+  parentRulerUnit: RulerUnit
+  parentRulersVisible: boolean
+  parentSelectedLayerIds: string[]
+  parentSelection: SelectionRegion | null
+  parentZoom: number
+  retainedObjectUrls: Set<string>
+}
+
 const floatingSelectionSession = shallowRef<FloatingSelectionSession | null>(null)
+const smartLayerEditSessions = shallowRef<SmartLayerEditSession[]>([])
 
 const history = useHistory<EditorHistoryDelta>(
   {
@@ -227,13 +270,18 @@ const historyPosition = history.currentPosition
 const historyRevision = history.currentRevision
 const redoLabel = history.redoLabel
 const undoLabel = history.undoLabel
-const documentDirty = computed(() =>
-  hasOpenDocument.value && (savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value)
-)
+const activeSmartLayerEditSession = computed(() => smartLayerEditSessions.value.at(-1))
+const smartLayerEditBreadcrumb = computed(() => smartLayerEditSessions.value.map((session) => session.targetLayerName))
+const documentDirty = computed(() => {
+  if (!hasOpenDocument.value) return false
+  const session = activeSmartLayerEditSession.value
+  if (session) return session.parentDirty || history.currentPosition.value > 0
+  return savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value
+})
 const modalOpen = computed(() => editorIsBlockedByModal(
   showNewDocumentDialog.value,
   showUnsavedChangesDialog.value,
-  Boolean(layerStyleDialog.value)
+  Boolean(layerStyleDialog.value) || showFlattenImageDialog.value
 ))
 const layerStyleDialogLayer = computed(() => {
   const session = layerStyleDialog.value
@@ -247,6 +295,15 @@ watch(documentDirty, (dirty) => {
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
 })
+const selectedLayerItems = computed(() => {
+  const selected = new Set(selectedLayerIds.value)
+  return layers.value
+    .map((layer, index) => ({ index, layer }))
+    .filter((item) => selected.has(item.layer.id))
+})
+const canConvertSelectedLayersToSmart = computed(() => layersCanConvertToSmart(selectedLayerItems.value))
+const canFlattenImage = computed(() => documentCanFlatten(activeDocument.value, layers.value))
+const hiddenLayerCount = computed(() => layers.value.reduce((count, layer) => count + Number(!layer.visible), 0))
 
 function selectSingleLayer(layerId: string) {
   if (!layers.value.some((layer) => layer.id === layerId)) return
@@ -441,11 +498,11 @@ function recordHistory(label: string, delta: EditorHistoryDelta, options?: Histo
 }
 
 function layerObjectUrls(layer: LayerItem) {
-  return [
-    layer.image?.sourceUrl,
-    layer.image?.previewUrl,
-    ...layerStylePatternAssets(layer.styles).map((asset) => asset.sourceUrl)
-  ].filter(
+  return smartLayerObjectLayers(layer).flatMap((item) => [
+    item.image?.sourceUrl,
+    item.image?.previewUrl,
+    ...layerStylePatternAssets(item.styles).map((asset) => asset.sourceUrl)
+  ]).filter(
     (source): source is string => Boolean(source?.startsWith('blob:'))
   )
 }
@@ -469,6 +526,9 @@ function collectUnusedObjectUrls() {
     for (const source of historyDeltaObjectUrls(entry.delta)) retainedUrls.add(source)
   }
   for (const source of transientObjectUrls) retainedUrls.add(source)
+  for (const session of smartLayerEditSessions.value) {
+    for (const source of session.retainedObjectUrls) retainedUrls.add(source)
+  }
   const floatingAnchor = floatingSelectionSession.value?.anchorImage
   for (const source of [floatingAnchor?.sourceUrl, floatingAnchor?.previewUrl]) {
     if (source?.startsWith('blob:')) retainedUrls.add(source)
@@ -481,18 +541,19 @@ function collectUnusedObjectUrls() {
   }
 }
 
-function releaseAllEditorAssets() {
+function releaseAllEditorAssets(preserveSmartCache = false) {
   for (const controller of previewControllers.values()) controller.abort()
   previewControllers.clear()
   floatingSelectionSession.value = null
   clearPreparedImageCache()
   clearLayerStyleRenderCache()
+  if (!preserveSmartCache) clearSmartLayerRenderCache()
   releaseLayerAssets([...layers.value, ...retainedHistoryLayers()])
   for (const source of trackedObjectUrls) URL.revokeObjectURL(source)
   trackedObjectUrls.clear()
 }
 
-function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
+async function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
   const refreshIds = new Set<string>()
   let resourcesMayBeUnused = false
   let restoredSelection: SelectionRegion | null | undefined
@@ -507,8 +568,9 @@ function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
       )
       continue
     }
-    const result = applyEditorHistoryDelta(layers.value, activeLayerId.value, delta, direction)
+    const result = applyEditorHistoryDelta(layers.value, activeLayerId.value, delta, direction, selectedLayerIds.value)
     activeLayerId.value = result.activeLayerId
+    selectedLayerIds.value = result.selectedLayerIds
     trackLayerAssets(result.insertedLayers)
     for (const layerId of result.removedLayerIds) {
       previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
@@ -526,6 +588,9 @@ function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
       trackLayerAssets([layer])
       void refreshLayerPreview(layer)
     }
+  }
+  for (const layer of layers.value) {
+    if (layer.kind === 'smart' && layer.smart && !layer.image) await refreshSmartLayerSource(layer)
   }
   if (resourcesMayBeUnused) collectUnusedObjectUrls()
   if (restoredSelection !== undefined) {
@@ -551,7 +616,7 @@ async function undoHistory() {
   selection.value = null
   const transition = history.undo()
   if (!transition) return
-  applyHistorySteps(transition.steps)
+  await applyHistorySteps(transition.steps)
   statusText.value = `Desfeito: ${transition.label}`
   errorText.value = ''
 }
@@ -563,7 +628,7 @@ async function redoHistory() {
   selection.value = null
   const transition = history.redo()
   if (!transition) return
-  applyHistorySteps(transition.steps)
+  await applyHistorySteps(transition.steps)
   statusText.value = `Refeito: ${transition.label}`
   errorText.value = ''
 }
@@ -575,7 +640,7 @@ async function jumpHistory(position: number) {
   selection.value = null
   const transition = history.jump(position)
   if (!transition) return
-  applyHistorySteps(transition.steps)
+  await applyHistorySteps(transition.steps)
   statusText.value = `Histórico: ${transition.label}`
   errorText.value = ''
 }
@@ -666,7 +731,7 @@ function addLayer() {
   activeLayerId.value = id
   recordHistory('Criar camada', {
     type: 'layers:add',
-    items: [{ index: insertionIndex, layer: cloneLayerState(layer) }],
+    items: [{ index: insertionIndex, layer: cloneLayerHistoryState(layer) }],
     activeBefore,
     activeAfter: id
   })
@@ -704,7 +769,7 @@ function addTextLayer(point: { x: number; y: number }) {
   activeLayerId.value = id
   recordHistory('Criar texto', {
     type: 'layers:add',
-    items: [{ index: insertionIndex, layer: cloneLayerState(layer) }],
+    items: [{ index: insertionIndex, layer: cloneLayerHistoryState(layer) }],
     activeBefore,
     activeAfter: id
   })
@@ -790,13 +855,10 @@ function duplicateLayer(layerId = activeLayerId.value) {
   if (!source) return
 
   const duplicate: LayerItem = {
-    ...source,
+    ...cloneLayerState(source),
     id: crypto.randomUUID(),
     name: `${source.name} cópia`,
     kind: source.kind === 'background' ? 'image' : source.kind,
-    styles: cloneLayerStyleConfig(source.styles),
-    image: source.image ? { ...source.image } : undefined,
-    text: source.text ? { ...source.text } : undefined,
     transform: source.transform
       ? {
           ...source.transform,
@@ -811,11 +873,118 @@ function duplicateLayer(layerId = activeLayerId.value) {
   activeLayerId.value = duplicate.id
   recordHistory('Duplicar camada', {
     type: 'layers:add',
-    items: [{ index, layer: cloneLayerState(duplicate) }],
+    items: [{ index, layer: cloneLayerHistoryState(duplicate) }],
     activeBefore,
     activeAfter: duplicate.id
   })
   statusText.value = 'Camada duplicada'
+}
+
+async function settleRasterMutation(status: string) {
+  canvasViewport.value?.commitPendingTransform()
+  if (rasterMutationBarrier.isPending) statusText.value = status
+  return rasterMutationBarrier.wait()
+}
+
+async function convertSelectedLayersToSmart() {
+  if (isBusy.value) return
+  const selectedItems = selectedLayerItems.value
+  if (!layersCanConvertToSmart(selectedItems)) {
+    showError(new Error('A seleção não possui conteúdo visual compatível.'), 'Não foi possível criar a camada inteligente.')
+    return
+  }
+
+  const documentId = activeDocument.value.id
+  const activeBefore = activeLayerId.value
+  const selectedIds = new Set(selectedItems.map(({ layer }) => layer.id))
+
+  let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = selectedItems.length === 1
+    ? 'Convertendo em camada inteligente…'
+    : `Convertendo ${selectedItems.length} camadas…`
+  try {
+    if (!await settleRasterMutation('Finalizando edição antes de criar a camada inteligente…')) return
+    clearFloatingSelectionSession()
+    selection.value = null
+    selectionGeneration++
+    for (const { layer } of selectedItems) {
+      for (const source of layerObjectUrls(layer)) transientObjectUrls.add(source)
+    }
+    const selectedLayers = selectedItems.map(({ layer }) => layer)
+    const appearance = selectedLayers.length === 1
+      ? await renderLayerAppearance(activeDocument.value, selectedLayers[0]!, 'local')
+      : await renderMergedLayers(activeDocument.value, selectedLayers)
+    createdSource = URL.createObjectURL(appearance.blob)
+    trackedObjectUrls.add(createdSource)
+    const cache: ImageAsset = {
+      width: appearance.width,
+      height: appearance.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: appearance.blob.size
+    }
+    const smartLayer = createSmartLayer(
+      activeDocument.value,
+      selectedItems,
+      appearance,
+      cache,
+      crypto.randomUUID()
+    )
+    cache.editToken = seedSmartLayerRender(smartLayer.smart!, appearance.blob, cache.width, cache.height)
+    const previewTarget = workingPreviewSize(cache, smartLayer.transform!)
+    const preview = await createImagePreview(cache, previewTarget.width, previewTarget.height)
+    createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+    await Promise.all([preloadImage(createdSource), preview ? preloadImage(preview.url) : Promise.resolve()])
+
+    if (activeDocument.value.id !== documentId || selectedItems.some(({ layer }) => !layers.value.includes(layer))) {
+      throw new Error('As camadas originais não estão mais disponíveis.')
+    }
+
+    smartLayer.image = {
+      ...cache,
+      previewUrl: preview?.url,
+      previewWidth: preview?.width ?? cache.width,
+      previewHeight: preview?.height ?? cache.height
+    }
+    const insertionIndex = layers.value
+      .slice(0, selectedItems[0]!.index)
+      .filter((layer) => !selectedIds.has(layer.id)).length
+    const remaining = layers.value.filter((layer) => !selectedIds.has(layer.id))
+    remaining.splice(insertionIndex, 0, smartLayer)
+    layers.value = remaining
+    trackLayerAssets([smartLayer])
+    selectSingleLayer(smartLayer.id)
+
+    recordHistory(selectedItems.length === 1 ? 'Converter em camada inteligente' : 'Criar camada inteligente', {
+      type: 'layers:replace',
+      before: selectedItems.map(({ index, layer }) => ({ index, layer: cloneLayerHistoryState(layer) })),
+      after: [{ index: insertionIndex, layer: cloneLayerHistoryState(smartLayer) }],
+      activeBefore,
+      activeAfter: smartLayer.id
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = selectedItems.length === 1
+      ? 'Camada inteligente criada'
+      : `${selectedItems.length} camadas convertidas em uma camada inteligente`
+  } catch (error) {
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    if (createdPreviewUrl) {
+      URL.revokeObjectURL(createdPreviewUrl)
+      trackedObjectUrls.delete(createdPreviewUrl)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível criar a camada inteligente.')
+  } finally {
+    isBusy.value = false
+  }
 }
 
 function commitGuides(label: string, nextGuides: EditorGuide[]) {
@@ -928,7 +1097,7 @@ async function duplicateSelectionOrLayer() {
     activeLayerId.value = duplicate.id
     recordHistory('Camada via cópia', {
       type: 'layers:add',
-      items: [{ index: sourceIndex, layer: cloneLayerState(duplicate) }],
+      items: [{ index: sourceIndex, layer: cloneLayerHistoryState(duplicate) }],
       activeBefore,
       activeAfter: duplicate.id
     })
@@ -951,6 +1120,90 @@ async function duplicateSelectionOrLayer() {
   }
 }
 
+async function rasterizeLayer(layerId = activeLayerId.value) {
+  if (isBusy.value) return
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (!layer || !layerCanRasterize(layer)) {
+    showError(new Error('A camada não possui conteúdo visual compatível.'), 'Não foi possível rasterizar a camada.')
+    return
+  }
+
+  const documentId = activeDocument.value.id
+  let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Rasterizando camada…'
+  try {
+    if (!await settleRasterMutation('Finalizando edição antes de rasterizar…')) return
+    clearFloatingSelectionSession()
+    const before = cloneLayerPatch({
+      kind: layer.kind,
+      image: layer.image,
+      smart: layer.smart,
+      text: layer.text,
+      transform: layer.transform,
+      styles: layer.styles
+    })
+    const appearance = await renderLayerAppearance(activeDocument.value, layer, 'local')
+    createdSource = URL.createObjectURL(appearance.blob)
+    trackedObjectUrls.add(createdSource)
+
+    const sourceImage: ImageAsset = {
+      width: appearance.width,
+      height: appearance.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: appearance.blob.size
+    }
+    const patch = rasterizedLayerPatch(appearance, sourceImage)
+    const previewTarget = workingPreviewSize(sourceImage, patch.transform)
+    const preview = await createImagePreview(sourceImage, previewTarget.width, previewTarget.height)
+    createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+    await Promise.all([preloadImage(createdSource), preview ? preloadImage(preview.url) : Promise.resolve()])
+
+    if (activeDocument.value.id !== documentId || !layers.value.includes(layer)) {
+      throw new Error('A camada original não está mais disponível.')
+    }
+
+    for (const source of layerObjectUrls(layer)) transientObjectUrls.add(source)
+    previewControllers.get(layer.id)?.abort()
+    previewControllers.delete(layer.id)
+    previewGenerations.set(layer.id, (previewGenerations.get(layer.id) ?? 0) + 1)
+    const image: ImageAsset = {
+      ...sourceImage,
+      previewUrl: preview?.url,
+      previewWidth: preview?.width ?? sourceImage.width,
+      previewHeight: preview?.height ?? sourceImage.height
+    }
+    const after = cloneLayerPatch({ ...patch, image })
+    Object.assign(layer, after)
+    recordHistory('Rasterizar camada', {
+      type: 'layer:patch',
+      layerId: layer.id,
+      before,
+      after
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = 'Camada rasterizada'
+  } catch (error) {
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    if (createdPreviewUrl) {
+      URL.revokeObjectURL(createdPreviewUrl)
+      trackedObjectUrls.delete(createdPreviewUrl)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível rasterizar a camada.')
+  } finally {
+    isBusy.value = false
+  }
+}
+
 async function mergeSelectedLayers() {
   if (isBusy.value) return
   const selected = new Set(selectedLayerIds.value)
@@ -968,20 +1221,20 @@ async function mergeSelectedLayers() {
     return
   }
 
-  canvasViewport.value?.commitPendingTransform()
-  clearFloatingSelectionSession()
-  selection.value = null
-  selectionGeneration++
   const activeBefore = activeLayerId.value
   const selectedLayers = selectedItems.map((item) => item.layer)
-  for (const layer of selectedLayers) {
-    for (const source of layerObjectUrls(layer)) transientObjectUrls.add(source)
-  }
   let createdSource: string | undefined
   isBusy.value = true
   errorText.value = ''
   statusText.value = 'Mesclando camadas…'
   try {
+    if (!await settleRasterMutation('Finalizando edição antes de mesclar…')) return
+    clearFloatingSelectionSession()
+    selection.value = null
+    selectionGeneration++
+    for (const layer of selectedLayers) {
+      for (const source of layerObjectUrls(layer)) transientObjectUrls.add(source)
+    }
     const result = await renderMergedLayers(activeDocument.value, selectedLayers)
     createdSource = URL.createObjectURL(result.blob)
     trackedObjectUrls.add(createdSource)
@@ -1024,8 +1277,8 @@ async function mergeSelectedLayers() {
 
     recordHistory('Mesclar camadas', {
       type: 'layers:replace',
-      before: selectedItems.map((item) => ({ index: item.index, layer: cloneLayerState(item.layer) })),
-      after: [{ index: insertionIndex, layer: cloneLayerState(merged) }],
+      before: selectedItems.map((item) => ({ index: item.index, layer: cloneLayerHistoryState(item.layer) })),
+      after: [{ index: insertionIndex, layer: cloneLayerHistoryState(merged) }],
       activeBefore,
       activeAfter: merged.id
     })
@@ -1044,6 +1297,102 @@ async function mergeSelectedLayers() {
   }
 }
 
+function requestFlattenImage() {
+  if (isBusy.value) return
+  if (!canFlattenImage.value) {
+    showError(new Error('O documento não possui camadas que precisem ser achatadas.'), 'Não foi possível achatar a imagem.')
+    return
+  }
+  if (hiddenLayerCount.value) {
+    showFlattenImageDialog.value = true
+    return
+  }
+  void flattenImage()
+}
+
+function cancelFlattenImage() {
+  if (!isBusy.value) showFlattenImageDialog.value = false
+}
+
+async function confirmFlattenImage() {
+  showFlattenImageDialog.value = false
+  await flattenImage()
+}
+
+async function flattenImage() {
+  if (isBusy.value || !documentCanFlatten(activeDocument.value, layers.value)) return false
+  let createdSource: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Achatando imagem…'
+  try {
+    if (!await settleRasterMutation('Finalizando edição antes de achatar…')) return false
+    clearFloatingSelectionSession()
+    selection.value = null
+    selectionGeneration++
+    const documentId = activeDocument.value.id
+    const originalLayers = layers.value.slice()
+    const activeBefore = activeLayerId.value
+    const selectedBefore = selectedLayerIds.value.slice()
+    for (const layer of originalLayers) {
+      for (const source of layerObjectUrls(layer)) transientObjectUrls.add(source)
+    }
+    for (const layer of originalLayers) {
+      if (layer.visible && layer.kind === 'smart') await refreshSmartLayerSource(layer)
+    }
+    const blob = await renderDocumentBlob(activeDocument.value, originalLayers)
+    createdSource = URL.createObjectURL(blob)
+    trackedObjectUrls.add(createdSource)
+    const image: ImageAsset = {
+      width: activeDocument.value.width,
+      height: activeDocument.value.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: blob.size
+    }
+    const flattened = createFlattenedLayer(activeDocument.value, image, crypto.randomUUID())
+    await preloadImage(createdSource)
+
+    if (
+      activeDocument.value.id !== documentId || layers.value.length !== originalLayers.length ||
+      originalLayers.some((layer, index) => layers.value[index] !== layer)
+    ) throw new Error('As camadas originais não estão mais disponíveis.')
+
+    for (const layer of originalLayers) {
+      for (const source of layerObjectUrls(layer)) transientObjectUrls.add(source)
+    }
+    layers.value = [flattened]
+    trackLayerAssets([flattened])
+    selectSingleLayer(flattened.id)
+    await refreshLayerPreview(flattened, true, false, true)
+    recordHistory('Achatar imagem', {
+      type: 'layers:replace',
+      before: originalLayers.map((layer, index) => ({ index, layer: cloneLayerHistoryState(layer) })),
+      after: [{ index: 0, layer: cloneLayerHistoryState(flattened) }],
+      activeBefore,
+      activeAfter: flattened.id,
+      selectedBefore,
+      selectedAfter: [flattened.id]
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = originalLayers.some((layer) => !layer.visible)
+      ? 'Imagem achatada; camadas ocultas removidas'
+      : 'Imagem achatada'
+    return true
+  } catch (error) {
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível achatar a imagem.')
+    return false
+  } finally {
+    isBusy.value = false
+  }
+}
+
 function deleteLayer(layerId: string) {
   const index = layers.value.findIndex((layer) => layer.id === layerId)
   const layer = layers.value[index]
@@ -1057,7 +1406,7 @@ function deleteLayer(layerId: string) {
   previewControllers.delete(layerId)
 
   const activeBefore = activeLayerId.value
-  const removed = cloneLayerState(layer)
+  const removed = cloneLayerHistoryState(layer)
   layers.value.splice(index, 1)
   previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
   if (activeLayerId.value === layerId) {
@@ -1332,6 +1681,280 @@ async function refreshLayerPreview(
   }
 }
 
+async function refreshSmartLayerSource(layer: LayerItem, allowDetached = false) {
+  const content = layer.smart
+  const transform = layer.transform
+  if (layer.kind !== 'smart' || !content || !transform) return
+  const result = await renderSmartLayer({
+    consumerId: `smart:${layer.id}`,
+    content,
+    quality: 'final'
+  })
+  const sourceUrl = URL.createObjectURL(result.blob)
+  trackedObjectUrls.add(sourceUrl)
+  let previewUrl: string | undefined
+  try {
+    const asset: ImageAsset = {
+      width: result.width,
+      height: result.height,
+      mimeType: 'image/png',
+      sourceUrl,
+      byteSize: result.blob.size,
+      editToken: result.cacheKey
+    }
+    const target = workingPreviewSize(asset, transform, layer.id === activeLayerId.value)
+    const preview = await createImagePreview(asset, target.width, target.height)
+    previewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
+    if (previewUrl) trackedObjectUrls.add(previewUrl)
+    await Promise.all([preloadImage(sourceUrl), preview ? preloadImage(preview.url) : Promise.resolve()])
+    if (!allowDetached && !layers.value.includes(layer)) throw new Error('A camada inteligente não está mais disponível.')
+
+    for (const source of [layer.image?.sourceUrl, layer.image?.previewUrl]) {
+      if (source?.startsWith('blob:')) transientObjectUrls.add(source)
+    }
+    layer.image = {
+      ...asset,
+      previewUrl: preview?.url,
+      previewWidth: preview?.width ?? asset.width,
+      previewHeight: preview?.height ?? asset.height
+    }
+    transientObjectUrls.clear()
+    if (!allowDetached) collectUnusedObjectUrls()
+  } catch (error) {
+    URL.revokeObjectURL(sourceUrl)
+    trackedObjectUrls.delete(sourceUrl)
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl)
+      trackedObjectUrls.delete(previewUrl)
+    }
+    throw error
+  }
+}
+
+function editorScopeObjectUrls() {
+  const sources = new Set<string>()
+  for (const layer of layers.value) {
+    for (const source of layerObjectUrls(layer)) sources.add(source)
+  }
+  for (const entry of history.entries()) {
+    for (const source of historyDeltaObjectUrls(entry.delta)) sources.add(source)
+  }
+  return sources
+}
+
+function resetEditorScopeRuntime() {
+  if (previewRefreshTimer) {
+    clearTimeout(previewRefreshTimer)
+    previewRefreshTimer = undefined
+  }
+  for (const controller of previewControllers.values()) controller.abort()
+  previewControllers.clear()
+  previewGenerations.clear()
+  clearFloatingSelectionSession()
+  selection.value = null
+  selectionGeneration++
+  layerStyleDialog.value = undefined
+}
+
+function restoreSmartLayerParent(session: SmartLayerEditSession) {
+  resetEditorScopeRuntime()
+  smartLayerEditSessions.value = smartLayerEditSessions.value.slice(0, -1)
+  history.restore(session.parentHistory)
+  activeDocument.value = session.parentDocument
+  layers.value = session.parentLayers
+  guides.value = session.parentGuides
+  guidesVisible.value = session.parentGuidesVisible
+  guidesLocked.value = session.parentGuidesLocked
+  guideSnappingEnabled.value = session.parentGuideSnappingEnabled
+  rulerOrigin.value = session.parentRulerOrigin
+  rulerUnit.value = session.parentRulerUnit
+  rulersVisible.value = session.parentRulersVisible
+  zoom.value = session.parentZoom
+  activeTool.value = session.parentActiveTool
+  autoSelectLayer.value = session.parentAutoSelectLayer
+  activeLayerId.value = session.parentActiveLayerId
+  selectedLayerIds.value = session.parentSelectedLayerIds
+  layerSelectionAnchorId.value = session.parentLayerSelectionAnchorId
+  selection.value = cloneSelection(session.parentSelection)
+  selectionGeneration++
+  trackLayerAssets(session.parentLayers)
+}
+
+async function settleRestoredSmartLayerParent(session: SmartLayerEditSession) {
+  await nextTick()
+  await nextTick()
+  await nextTick()
+  setZoom(session.parentZoom)
+}
+
+function releaseSmartLayerEditSession(session: SmartLayerEditSession) {
+  session.retainedObjectUrls.clear()
+  collectUnusedObjectUrls()
+}
+
+async function editSmartLayerContent(layerId = activeLayerId.value) {
+  if (isBusy.value || modalOpen.value) return
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (layer?.kind !== 'smart' || !layer.smart || !layer.smart.layers.length) {
+    showError(new Error('A camada não possui conteúdo inteligente editável.'), 'Não foi possível editar a camada inteligente.')
+    return
+  }
+
+  canvasViewport.value?.commitPendingTransform()
+  if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição atual…'
+  if (!await rasterMutationBarrier.wait()) return
+
+  const editDocument = createSmartLayerEditDocument(layer)
+  const editLayers = layer.smart.layers.map(cloneLayerState)
+  const session: SmartLayerEditSession = {
+    targetLayerId: layer.id,
+    targetLayerName: layer.name,
+    parentActiveLayerId: activeLayerId.value,
+    parentActiveTool: activeTool.value,
+    parentAutoSelectLayer: autoSelectLayer.value,
+    parentDocument: activeDocument.value,
+    parentDirty: documentDirty.value,
+    parentGuideSnappingEnabled: guideSnappingEnabled.value,
+    parentGuides: guides.value,
+    parentGuidesLocked: guidesLocked.value,
+    parentGuidesVisible: guidesVisible.value,
+    parentHistory: history.snapshot(),
+    parentLayerSelectionAnchorId: layerSelectionAnchorId.value,
+    parentLayers: layers.value,
+    parentRulerOrigin: rulerOrigin.value,
+    parentRulerUnit: rulerUnit.value,
+    parentRulersVisible: rulersVisible.value,
+    parentSelectedLayerIds: selectedLayerIds.value,
+    parentSelection: cloneSelection(selection.value),
+    parentZoom: zoom.value,
+    retainedObjectUrls: editorScopeObjectUrls()
+  }
+
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = `Abrindo conteúdo de ${layer.name}…`
+  try {
+    resetEditorScopeRuntime()
+    smartLayerEditSessions.value = [...smartLayerEditSessions.value, session]
+    activeDocument.value = editDocument
+    layers.value = editLayers
+    guides.value = []
+    guidesVisible.value = true
+    guidesLocked.value = false
+    guideSnappingEnabled.value = true
+    rulerOrigin.value = { x: 0, y: 0 }
+    rulerUnit.value = 'px'
+    history.clear('Conteúdo inteligente aberto')
+    activeTool.value = 'move'
+    autoSelectLayer.value = true
+    activeLayerId.value = editLayers[0]!.id
+    selectedLayerIds.value = [editLayers[0]!.id]
+    layerSelectionAnchorId.value = editLayers[0]!.id
+    trackLayerAssets(editLayers)
+
+    for (const nested of editLayers) {
+      if (nested.kind === 'smart' && nested.smart && !nested.image) await refreshSmartLayerSource(nested)
+    }
+    await nextTick()
+    canvasViewport.value?.fitDocument()
+    statusText.value = `Editando conteúdo inteligente: ${layer.name}`
+  } catch (error) {
+    restoreSmartLayerParent(session)
+    releaseSmartLayerEditSession(session)
+    await settleRestoredSmartLayerParent(session)
+    showError(error, 'Não foi possível editar a camada inteligente.')
+  } finally {
+    isBusy.value = false
+  }
+}
+
+async function cancelSmartLayerEdit() {
+  const session = activeSmartLayerEditSession.value
+  if (!session || isBusy.value) return false
+  canvasViewport.value?.commitPendingTransform()
+  if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição antes de cancelar…'
+  if (!await rasterMutationBarrier.wait()) return false
+  restoreSmartLayerParent(session)
+  releaseSmartLayerEditSession(session)
+  await settleRestoredSmartLayerParent(session)
+  statusText.value = `Edição de ${session.targetLayerName} cancelada`
+  errorText.value = ''
+  return true
+}
+
+async function finishSmartLayerEdit() {
+  const session = activeSmartLayerEditSession.value
+  if (!session || isBusy.value) return false
+  const target = session.parentLayers.find((layer) => layer.id === session.targetLayerId)
+  if (target?.kind !== 'smart' || !target.smart) {
+    showError(new Error('A camada inteligente original não está mais disponível.'), 'Não foi possível concluir a edição.')
+    return false
+  }
+
+  canvasViewport.value?.commitPendingTransform()
+  if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição do conteúdo…'
+  if (!await rasterMutationBarrier.wait()) return false
+
+  const beforeContent = target.smart
+  const afterContent = createEditedSmartLayerContent(beforeContent, activeDocument.value, layers.value)
+  const changed = smartLayerEditHasChanges(beforeContent, afterContent)
+  const previousImage = target.image ? { ...target.image } : undefined
+  let restored = false
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = changed ? 'Atualizando camada inteligente…' : 'Fechando conteúdo inteligente…'
+  try {
+    if (changed) {
+      invalidateSmartLayerContent(afterContent.id)
+      await renderSmartLayer({
+        consumerId: `smart-edit:${afterContent.id}`,
+        content: afterContent,
+        quality: 'final'
+      })
+    }
+
+    restoreSmartLayerParent(session)
+    restored = true
+    if (!changed) {
+      releaseSmartLayerEditSession(session)
+      await settleRestoredSmartLayerParent(session)
+      statusText.value = `Conteúdo de ${session.targetLayerName} fechado sem alterações`
+      return true
+    }
+
+    const before = cloneLayerPatch({ smart: beforeContent })
+    target.smart = afterContent
+    target.image = undefined
+    try {
+      await refreshSmartLayerSource(target)
+    } catch (error) {
+      target.smart = beforeContent
+      target.image = previousImage
+      throw error
+    }
+    const after = cloneLayerPatch({ smart: afterContent })
+    recordHistory('Editar conteúdo inteligente', {
+      type: 'layer:patch',
+      layerId: target.id,
+      before,
+      after
+    })
+    releaseSmartLayerEditSession(session)
+    await settleRestoredSmartLayerParent(session)
+    statusText.value = `Conteúdo de ${session.targetLayerName} atualizado`
+    return true
+  } catch (error) {
+    if (restored) {
+      releaseSmartLayerEditSession(session)
+      await settleRestoredSmartLayerParent(session)
+    }
+    showError(error, 'Não foi possível concluir a edição da camada inteligente.')
+    return false
+  } finally {
+    isBusy.value = false
+  }
+}
+
 async function addImportedImages(images: ImportedImage[], errors: string[] = []) {
   if (images.length) {
     const imageLayers: LayerItem[] = images.map((image) => ({
@@ -1376,7 +1999,7 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
     })))
     recordHistory(images.length === 1 ? 'Importar imagem' : 'Importar imagens', {
       type: 'layers:add',
-      items: imageLayers.map((layer, index) => ({ index, layer: cloneLayerState(layer) })),
+      items: imageLayers.map((layer, index) => ({ index, layer: cloneLayerHistoryState(layer) })),
       activeBefore,
       activeAfter: activeLayerId.value
     })
@@ -1963,6 +2586,10 @@ async function registerRecentProject(
 
 function showProjectHome() {
   if (isBusy.value) return
+  if (activeSmartLayerEditSession.value) {
+    statusText.value = 'Conclua ou cancele a edição da camada inteligente antes de sair.'
+    return
+  }
   appScreen.value = 'home'
   void refreshRecentProjects()
 }
@@ -1996,6 +2623,10 @@ async function clearProjectRecents() {
 }
 
 async function requestNewDocument() {
+  if (activeSmartLayerEditSession.value) {
+    statusText.value = 'Conclua ou cancele a edição da camada inteligente antes de criar outro documento.'
+    return
+  }
   if (isBusy.value || !await confirmDiscardChanges()) return
   showNewDocumentDialog.value = true
 }
@@ -2006,6 +2637,7 @@ function projectNameFromPath(path: string, fallback: string) {
 }
 
 async function saveProject(saveAs = false) {
+  if (activeSmartLayerEditSession.value) return finishSmartLayerEdit()
   if (isBusy.value || !hasOpenDocument.value) return false
   canvasViewport.value?.commitPendingTransform()
   isBusy.value = true
@@ -2057,6 +2689,10 @@ async function saveProject(saveAs = false) {
 }
 
 async function openProject(recentPath = '') {
+  if (activeSmartLayerEditSession.value) {
+    statusText.value = 'Conclua ou cancele a edição da camada inteligente antes de abrir outro projeto.'
+    return
+  }
   if (isBusy.value || !await confirmDiscardChanges()) return
   isBusy.value = true
   errorText.value = ''
@@ -2071,6 +2707,14 @@ async function openProject(recentPath = '') {
     }
     openedSessionID = opened.sessionId
     const restored = restoreAxiaProject(opened.manifest, opened.assetUrls)
+    clearSmartLayerRenderCache()
+    const smartLayers = restored.layers.filter((layer) => layer.kind === 'smart')
+    for (const [index, layer] of smartLayers.entries()) {
+      statusText.value = smartLayers.length === 1
+        ? 'Renderizando camada inteligente…'
+        : `Renderizando camada inteligente ${index + 1} de ${smartLayers.length}…`
+      await refreshSmartLayerSource(layer, true)
+    }
     const imageLayers = restored.layers.filter((layer) => layer.visible && layer.image && layer.transform)
     previewLayerCountHint = imageLayers.length
     zoom.value = restored.view.zoom
@@ -2086,7 +2730,9 @@ async function openProject(recentPath = '') {
       await refreshLayerPreview(layer, true, true, layer.id === restored.view.activeLayerId)
     }
 
-    releaseAllEditorAssets()
+    const restoredObjectUrls = new Set(restored.layers.flatMap(layerObjectUrls))
+    for (const source of restoredObjectUrls) trackedObjectUrls.delete(source)
+    releaseAllEditorAssets(true)
     history.clear('Projeto aberto')
     previewGenerations.clear()
     selection.value = null
@@ -2127,6 +2773,7 @@ async function openProject(recentPath = '') {
     }
   } catch (error) {
     if (openedSessionID) await finalizeAxiaProjectOpen(openedSessionID, false).catch(() => undefined)
+    collectUnusedObjectUrls()
     showError(error, 'Não foi possível abrir o projeto Axia.')
     if (recentPath) void refreshRecentProjects(false)
   } finally {
@@ -2169,26 +2816,57 @@ async function readLocalFiles(input: HTMLInputElement) {
   }
 }
 
-async function previewFilter(filterName: string) {
-  try {
-    statusText.value = await applyPreviewFilter(filterName)
-  } catch (error) {
-    showError(error, 'Não foi possível aplicar o filtro.')
-  }
-}
-
 async function exportDocument() {
-  canvasViewport.value?.commitPendingTransform()
+  if (isBusy.value) return
   errorText.value = ''
   isBusy.value = true
   statusText.value = 'Preparando PNG…'
   try {
-    const dataURL = await renderDocumentPNG(activeDocument.value, layers.value)
+    if (!await settleRasterMutation('Finalizando edição antes de exportar…')) return
+    const documentId = activeDocument.value.id
+    const exportLayers = layers.value.slice()
+    for (const layer of exportLayers) {
+      if (layer.visible && layer.kind === 'smart') await refreshSmartLayerSource(layer)
+    }
+    if (
+      activeDocument.value.id !== documentId || layers.value.length !== exportLayers.length ||
+      exportLayers.some((layer, index) => layers.value[index] !== layer)
+    ) throw new Error('O documento foi alterado durante a exportação.')
+    const blob = await renderDocumentBlob(activeDocument.value, exportLayers)
     const cleanName = activeDocument.value.name.replace(/\.[^.]+$/, '').trim() || 'imagem'
-    const path = await saveExportedPNG(cleanName, dataURL)
+    const path = await saveExportedPNGBlob(cleanName, blob)
     statusText.value = path ? `PNG exportado: ${path}` : 'Exportação cancelada'
   } catch (error) {
     showError(error, 'Não foi possível exportar o documento.')
+  } finally {
+    isBusy.value = false
+  }
+}
+
+async function exportLayerPNG(layerId = activeLayerId.value) {
+  if (isBusy.value) return
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (!layer || !layerCanExportPNG(layer, activeDocument.value.background)) {
+    showError(new Error('A camada não possui conteúdo visual exportável.'), 'Não foi possível exportar a camada.')
+    return
+  }
+
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = `Preparando PNG de ${layer.name}…`
+  try {
+    if (!await settleRasterMutation('Finalizando edição antes de exportar…')) return
+    const documentId = activeDocument.value.id
+    if (layer.kind === 'smart') await refreshSmartLayerSource(layer)
+    if (activeDocument.value.id !== documentId || !layers.value.includes(layer)) {
+      throw new Error('A camada original não está mais disponível.')
+    }
+    const appearance = await renderLayerAppearance(activeDocument.value, layer, 'isolated-export')
+    const filename = quickLayerExportName(activeDocument.value.name, layer.name)
+    const path = await saveExportedPNGBlob(filename, appearance.blob)
+    statusText.value = path ? `Camada exportada: ${path}` : 'Exportação cancelada'
+  } catch (error) {
+    showError(error, 'Não foi possível exportar a camada como PNG.')
   } finally {
     isBusy.value = false
   }
@@ -2238,6 +2916,11 @@ function handleShortcut(event: KeyboardEvent) {
       event.preventDefault()
       returnToEditor()
     }
+    return
+  }
+  if (event.key === 'Escape' && activeSmartLayerEditSession.value) {
+    event.preventDefault()
+    void cancelSmartLayerEdit()
     return
   }
   if (command && event.code === 'KeyS' && !event.altKey) {
@@ -2359,23 +3042,42 @@ onBeforeUnmount(() => {
     <TopMenu
       v-else-if="hasOpenDocument"
       :inert="modalOpen || undefined"
+      :can-delete-layer="layers.length > 1"
+      :can-convert-to-smart-layer="canConvertSelectedLayersToSmart"
+      :can-duplicate-layer="Boolean(activeLayer.image || activeLayer.text)"
+      :can-edit-smart-layer="activeLayer.kind === 'smart'"
+      :can-flatten-image="canFlattenImage"
+      :can-merge-layers="selectedLayerIds.length > 1"
+      :can-rasterize-layer="layerCanRasterize(activeLayer)"
       :can-redo="canRedo"
       :can-undo="canUndo"
       :document-dirty="documentDirty"
       :document-name="activeDocument.name"
+      :has-selection="Boolean(selection)"
       :history-bytes="historyBytes"
       :history-items="historyItems"
       :history-position="historyPosition"
+      :is-busy="isBusy"
       :redo-label="redoLabel"
       :status-text="statusText"
       :undo-label="undoLabel"
+      @add-layer="addLayer"
+      @clear-selection="updateSelection(null)"
+      @convert-to-smart-layer="convertSelectedLayersToSmart"
+      @delete-layer="deleteLayer(activeLayerId)"
+      @delete-selection="deleteSelectedPixels"
+      @duplicate-layer="duplicateLayer()"
+      @edit-smart-layer="editSmartLayerContent()"
       @export-document="exportDocument"
+      @flatten-image="requestFlattenImage"
       @history-jump="jumpHistory"
       @home="showProjectHome"
       @import-images="importImages"
+      @merge-layers="mergeSelectedLayers"
       @new-document="requestNewDocument"
+      @open-layer-styles="openLayerStyles(activeLayerId)"
       @open-project="openProject"
-      @preview-filter="previewFilter"
+      @rasterize-layer="rasterizeLayer()"
       @redo="redoHistory"
       @save-project="saveProject()"
       @undo="undoHistory"
@@ -2395,7 +3097,28 @@ onBeforeUnmount(() => {
       @change="readLocalFiles($event.target as HTMLInputElement)"
     />
 
-    <section v-if="hasOpenDocument" v-show="appScreen === 'editor'" class="workspace" :inert="modalOpen || undefined">
+    <section
+      v-if="hasOpenDocument"
+      v-show="appScreen === 'editor'"
+      class="workspace"
+      :class="{ 'workspace--smart-edit': activeSmartLayerEditSession }"
+      :inert="modalOpen || undefined"
+    >
+      <header v-if="activeSmartLayerEditSession" class="smart-edit-bar">
+        <div class="smart-edit-context">
+          <strong>Conteúdo inteligente</strong>
+          <span aria-hidden="true">/</span>
+          <span v-for="(name, index) in smartLayerEditBreadcrumb" :key="`${index}:${name}`">
+            <span v-if="index" aria-hidden="true">/</span>
+            {{ name }}
+          </span>
+        </div>
+        <div class="smart-edit-actions">
+          <button type="button" :disabled="isBusy" @click="cancelSmartLayerEdit">Cancelar</button>
+          <button class="primary-button" type="button" :disabled="isBusy" @click="finishSmartLayerEdit">Concluir</button>
+        </div>
+      </header>
+
       <ToolBar
         v-model:active-tool="activeTool"
         v-model:background-color="backgroundColor"
@@ -2468,15 +3191,20 @@ onBeforeUnmount(() => {
 
         <LayersPanel
           :active-layer-id="activeLayerId"
+          :document-background="activeDocument.background"
           :layers="layers"
           :layer-style-global-light="activeDocument.layerStyleGlobalLight"
           :selected-layer-ids="selectedLayerIds"
           @add-layer="addLayer"
+          @convert-to-smart-layer="convertSelectedLayersToSmart"
           @delete-layer="deleteLayer"
           @duplicate-layer="duplicateLayer"
+          @edit-smart-layer="editSmartLayerContent"
+          @export-layer="exportLayerPNG"
           @move-layer="moveLayer"
           @merge-layers="mergeSelectedLayers"
           @open-layer-styles="openLayerStyles"
+          @rasterize-layer="rasterizeLayer"
           @rename-layer="renameLayer"
           @reorder-layer="reorderLayer"
           @select-layer="selectLayerFromPanel"
@@ -2501,6 +3229,13 @@ onBeforeUnmount(() => {
       @apply="applyLayerStyles"
       @cancel="cancelLayerStyles"
       @preview="previewLayerStyles"
+    />
+    <FlattenImageDialog
+      :busy="isBusy"
+      :hidden-count="hiddenLayerCount"
+      :open="showFlattenImageDialog"
+      @cancel="cancelFlattenImage"
+      @confirm="confirmFlattenImage"
     />
     <UnsavedChangesDialog
       :busy="isBusy"

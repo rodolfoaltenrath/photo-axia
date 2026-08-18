@@ -1,1 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="#fff" transform="translate(0 -290.65)"><path d="M4 292.65h16v2H4z" style="paint-order:stroke fill markers"/><path d="M294.65-4h16v2h-16z" style="paint-order:stroke fill markers" transform="rotate(90)"/><rect width="4" height="4" x="1" y="291.65" rx="1.228" ry="1.228" style="paint-order:markers stroke fill"/><rect width="4" height="4" x="19" y="291.65" rx="1.228" ry="1.228" style="paint-order:markers stroke fill"/><path d="M4 310.65h16v2H4z" style="paint-order:stroke fill markers"/><path d="M294.65-22h16v2h-16z" style="paint-order:stroke fill markers" transform="rotate(90)"/><rect width="4" height="4" x="1" y="309.65" rx="1.228" ry="1.228" style="paint-order:markers stroke fill"/><rect width="4" height="4" x="19" y="309.65" rx="1.228" ry="1.228" style="paint-order:markers stroke fill"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 2v20M2 12h20"/>
+  <path d="m9 5 3-3 3 3m0 14-3 3-3-3M5 9l-3 3 3 3m14 0 3-3-3-3"/>
+</svg>

@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	axiaFormatVersion       = 1
+	axiaFormatVersion       = 2
+	axiaMinimumReadVersion  = 1
 	maxProjectManifestBytes = 8 * 1024 * 1024
 	maxProjectAssetBytes    = int64(1024 * 1024 * 1024)
 	maxProjectBytes         = int64(4 * 1024 * 1024 * 1024)
@@ -192,7 +193,7 @@ func validateManifest(data []byte) (axiaArchiveManifest, error) {
 	if manifest.Format != "axia" {
 		return manifest, fmt.Errorf("o arquivo nao e um projeto Axia")
 	}
-	if manifest.Version != axiaFormatVersion {
+	if manifest.Version < axiaMinimumReadVersion || manifest.Version > axiaFormatVersion {
 		return manifest, fmt.Errorf("versao de projeto nao suportada: %d", manifest.Version)
 	}
 	if len(manifest.Assets) > maxProjectAssets {

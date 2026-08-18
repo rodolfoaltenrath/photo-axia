@@ -1,5 +1,5 @@
 import type { EditorGuide, RulerOrigin, RulerUnit } from '../editor/guides'
-import type { DocumentSpec, ImageAsset, LayerItem, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, TextLayerContent } from '../types/editor'
+import type { DocumentSpec, ImageAsset, LayerItem, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, SmartLayerContent, TextLayerContent } from '../types/editor'
 import { normalizeLayerBlendMode } from '../editor/blendModes.ts'
 import {
   cloneLayerStyleConfig,
@@ -7,8 +7,10 @@ import {
   normalizeLayerStyleConfig,
   normalizeLayerStyleGlobalLight
 } from '../editor/layerStyles.ts'
+import { SMART_LAYER_MAX_DEPTH } from '../editor/smartLayers.ts'
 
-export const AXIA_PROJECT_VERSION = 1
+export const AXIA_PROJECT_VERSION = 2
+export const AXIA_PROJECT_MAX_LAYERS = 10_000
 
 export interface AxiaProjectViewState {
   activeLayerId: string
@@ -41,8 +43,13 @@ interface AxiaStoredImage extends Omit<ImageAsset, 'sourceUrl' | 'previewUrl' | 
   assetId: string
 }
 
-interface AxiaStoredLayer extends Omit<LayerItem, 'image' | 'styles'> {
+interface AxiaStoredSmartContent extends Omit<SmartLayerContent, 'layers'> {
+  layers: AxiaStoredLayer[]
+}
+
+interface AxiaStoredLayer extends Omit<LayerItem, 'image' | 'smart' | 'styles'> {
   image?: AxiaStoredImage
+  smart?: AxiaStoredSmartContent
   styles?: unknown
 }
 
@@ -100,6 +107,8 @@ function replaceStoredPatternReferences(
 export function createAxiaProjectManifest(state: AxiaProjectState) {
   const sourceAssets = new Map<string, AxiaArchiveAsset>()
   const assetSources: AxiaProjectAssetSource[] = []
+  const activeLayers = new WeakSet<LayerItem>()
+  let layerCount = 0
   const registerAsset = (sourceUrl: string, asset: Omit<AxiaArchiveAsset, 'id' | 'path'>) => {
     let stored = sourceAssets.get(sourceUrl)
     if (!stored) {
@@ -110,51 +119,85 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
     }
     return stored
   }
-  const layers: AxiaStoredLayer[] = state.layers.map((layer) => {
-    const image = layer.image
-    let storedImage: AxiaStoredImage | undefined
-    if (image) {
-      const asset = registerAsset(image.sourceUrl, {
-        mimeType: image.mimeType,
-        width: image.width,
-        height: image.height,
-        byteSize: image.byteSize,
-        name: layer.name
-      })
-      storedImage = {
-        assetId: asset.id,
-        width: image.width,
-        height: image.height,
-        mimeType: image.mimeType,
-        byteSize: image.byteSize
+  const storeLayer = (layer: LayerItem, depth: number): AxiaStoredLayer => {
+    if (depth > SMART_LAYER_MAX_DEPTH) throw new Error('A camada inteligente excede o limite de aninhamento.')
+    layerCount += 1
+    if (layerCount > AXIA_PROJECT_MAX_LAYERS) throw new Error('O projeto excede o limite total de camadas.')
+    if (activeLayers.has(layer)) throw new Error('O projeto contém uma estrutura cíclica de camadas.')
+    activeLayers.add(layer)
+    try {
+      const image = layer.kind === 'smart' ? undefined : layer.image
+      let storedImage: AxiaStoredImage | undefined
+      if (image) {
+        const asset = registerAsset(image.sourceUrl, {
+          mimeType: image.mimeType,
+          width: image.width,
+          height: image.height,
+          byteSize: image.byteSize,
+          name: layer.name
+        })
+        storedImage = {
+          assetId: asset.id,
+          width: image.width,
+          height: image.height,
+          mimeType: image.mimeType,
+          byteSize: image.byteSize
+        }
       }
-    }
-    const styles = normalizeLayerStyleConfig(layer.styles)
-    const storedStyles = replaceStoredPatternReferences(styles, (value) => {
-      const pattern = value as LayerStylePatternAsset
-      const asset = registerAsset(pattern.sourceUrl, {
-        mimeType: pattern.mimeType,
-        width: pattern.width,
-        height: pattern.height,
-        byteSize: pattern.byteSize,
-        name: pattern.name
+      const styles = normalizeLayerStyleConfig(layer.styles)
+      const storedStyles = replaceStoredPatternReferences(styles, (value) => {
+        const pattern = value as LayerStylePatternAsset
+        const asset = registerAsset(pattern.sourceUrl, {
+          mimeType: pattern.mimeType,
+          width: pattern.width,
+          height: pattern.height,
+          byteSize: pattern.byteSize,
+          name: pattern.name
+        })
+        const { sourceUrl: _sourceUrl, ...storedPattern } = pattern
+        return { ...storedPattern, assetId: asset.id }
       })
-      const { sourceUrl: _sourceUrl, ...storedPattern } = pattern
-      return { ...storedPattern, assetId: asset.id }
-    })
-    return {
-      id: layer.id,
-      name: layer.name,
-      visible: layer.visible,
-      opacity: layer.opacity,
-      blendMode: normalizeLayerBlendMode(layer.blendMode),
-      kind: layer.kind,
-      image: storedImage,
-      styles: storedStyles,
-      text: cloneText(layer.text),
-      transform: cloneTransform(layer.transform)
+      let smart: AxiaStoredSmartContent | undefined
+      if (layer.kind === 'smart') {
+        if (!layer.smart || !layer.smart.layers.length) throw new Error('Camada inteligente incompleta.')
+        smart = {
+          id: layer.smart.id,
+          width: layer.smart.width,
+          height: layer.smart.height,
+          resolutionDpi: layer.smart.resolutionDpi,
+          colorSpace: layer.smart.colorSpace,
+          background: layer.smart.background,
+          layerStyleGlobalLight: normalizeLayerStyleGlobalLight(layer.smart.layerStyleGlobalLight),
+          layers: storeLayers(layer.smart.layers, depth + 1),
+          revision: layer.smart.revision
+        }
+      }
+      return {
+        id: layer.id,
+        name: layer.name,
+        visible: layer.visible,
+        opacity: layer.opacity,
+        blendMode: normalizeLayerBlendMode(layer.blendMode),
+        kind: layer.kind,
+        image: storedImage,
+        smart,
+        styles: storedStyles,
+        text: cloneText(layer.text),
+        transform: cloneTransform(layer.transform)
+      }
+    } finally {
+      activeLayers.delete(layer)
     }
-  })
+  }
+  const storeLayers = (layers: readonly LayerItem[], depth: number): AxiaStoredLayer[] => {
+    const layerIDs = new Set<string>()
+    return layers.map((layer) => {
+      if (layerIDs.has(layer.id)) throw new Error(`Camada duplicada: ${layer.id}.`)
+      layerIDs.add(layer.id)
+      return storeLayer(layer, depth)
+    })
+  }
+  const layers = storeLayers(state.layers, 0)
 
   const manifest: AxiaProjectManifest = {
     format: 'axia',
@@ -273,9 +316,10 @@ function restoreLayerStyles(
 
 export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<string, string>): AxiaProjectState {
   const parsed = JSON.parse(manifestJSON) as Partial<AxiaProjectManifest>
-  if (parsed.format !== 'axia' || parsed.version !== AXIA_PROJECT_VERSION) {
+  if (parsed.format !== 'axia' || (parsed.version !== 1 && parsed.version !== AXIA_PROJECT_VERSION)) {
     throw new Error(`Versão de projeto .axia não suportada: ${String(parsed.version ?? 'desconhecida')}.`)
   }
+  const projectVersion = parsed.version
   const document = parsed.document
   if (
     !document || !Number.isFinite(document.width) || !Number.isFinite(document.height) ||
@@ -295,9 +339,15 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
     throw new Error('Estrutura de camadas inválida.')
   }
   const assets = new Map(parsed.assets.map((asset) => [asset.id, asset]))
-  const layerKinds = new Set(['pixel', 'image', 'text', 'adjustment', 'background'])
-  const layerIDs = new Set<string>()
-  const layers: LayerItem[] = parsed.layers.map((stored) => {
+  const layerKinds = new Set(['pixel', 'image', 'text', 'smart', 'adjustment', 'background'])
+  let layerCount = 0
+  const restoreStoredLayers = (storedLayers: AxiaStoredLayer[], depth: number): LayerItem[] => {
+    if (depth > SMART_LAYER_MAX_DEPTH) throw new Error('A camada inteligente excede o limite de aninhamento.')
+    const layerIDs = new Set<string>()
+    return storedLayers.map((stored) => {
+    layerCount += 1
+    if (layerCount > AXIA_PROJECT_MAX_LAYERS) throw new Error('O projeto excede o limite total de camadas.')
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) throw new Error('Camada inválida no projeto.')
     if (!layerKinds.has(stored.kind) || !Number.isFinite(stored.opacity)) throw new Error('Camada inválida no projeto.')
     let image: ImageAsset | undefined
     if (stored.image) {
@@ -317,6 +367,34 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
     const styles = restoreLayerStyles(stored.styles, assets, assetUrls)
     if (stored.kind === 'image' && (!image || !transform)) throw new Error('Camada de imagem incompleta.')
     if (stored.kind === 'text' && (!text || !transform)) throw new Error('Camada de texto incompleta.')
+    let smart: SmartLayerContent | undefined
+    if (stored.kind === 'smart') {
+      const source = stored.smart
+      if (
+        projectVersion < 2 || !source || !Array.isArray(source.layers) || !source.layers.length ||
+        typeof source.id !== 'string' || !source.id ||
+        !Number.isFinite(source.width) || !Number.isFinite(source.height) ||
+        source.width <= 0 || source.height <= 0 || source.width > 16_384 || source.height > 16_384 ||
+        source.width * source.height > 64_000_000 ||
+        !Number.isFinite(source.resolutionDpi) || source.resolutionDpi <= 0 ||
+        !Number.isFinite(source.revision) || source.revision < 1 ||
+        !['transparent', 'white', 'black'].includes(source.background)
+      ) throw new Error('Conteúdo de camada inteligente inválido.')
+      smart = {
+        id: source.id,
+        width: source.width,
+        height: source.height,
+        resolutionDpi: source.resolutionDpi,
+        colorSpace: requireString(source.colorSpace, 'Espaço de cor da camada inteligente'),
+        background: source.background,
+        layerStyleGlobalLight: normalizeLayerStyleGlobalLight(source.layerStyleGlobalLight),
+        layers: restoreStoredLayers(source.layers, depth + 1),
+        revision: Math.floor(source.revision)
+      }
+      if (!transform) throw new Error('Camada inteligente incompleta.')
+    } else if (stored.smart) {
+      throw new Error('Conteúdo inteligente associado a um tipo de camada inválido.')
+    }
     const id = requireString(stored.id, 'ID da camada')
     if (layerIDs.has(id)) throw new Error(`Camada duplicada: ${id}.`)
     layerIDs.add(id)
@@ -329,10 +407,13 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
       kind: stored.kind,
       styles,
       image,
+      smart,
       text,
       transform
     }
-  })
+    })
+  }
+  const layers = restoreStoredLayers(parsed.layers, 0)
   const view = parsed.view
   const activeLayerId = view?.activeLayerId && layers.some((layer) => layer.id === view.activeLayerId)
     ? view.activeLayerId

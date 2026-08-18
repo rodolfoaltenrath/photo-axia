@@ -24,6 +24,7 @@ const emit = defineEmits<{
   (event: 'dragEnd'): void
   (event: 'dragMove', clientX: number, clientY: number): void
   (event: 'dragStart', layerId: string): void
+  (event: 'editSmartLayer', layerId: string): void
   (event: 'openContextMenu', layerId: string, clientX: number, clientY: number): void
   (event: 'openLayerStyles', layerId: string): void
   (event: 'rename', layerId: string, name: string): void
@@ -110,6 +111,7 @@ const kindLabels: Record<LayerItem['kind'], string> = {
   pixel: 'Pixels',
   image: 'Imagem',
   text: 'Texto',
+  smart: 'Inteligente',
   adjustment: 'Ajuste',
   background: 'Fundo'
 }
@@ -196,6 +198,11 @@ function openContextMenu(event: MouseEvent) {
   event.preventDefault()
   emit('openContextMenu', props.layer.id, event.clientX, event.clientY)
 }
+
+function openThumbnailAction() {
+  if (props.layer.kind === 'smart') emit('editSmartLayer', props.layer.id)
+  else emit('openLayerStyles', props.layer.id)
+}
 </script>
 
 <template>
@@ -243,8 +250,8 @@ function openContextMenu(event: MouseEvent) {
         class="layer-thumb"
         :class="{ 'layer-thumb--transparent': !layer.image }"
         :style="thumbnailStyle"
-        title="Abrir opções de mesclagem"
-        @dblclick.stop="emit('openLayerStyles', layer.id)"
+        :title="layer.kind === 'smart' ? 'Editar conteúdo inteligente' : 'Abrir opções de mesclagem'"
+        @dblclick.stop="openThumbnailAction"
       >
         <template v-if="layer.image">
           <img
@@ -266,6 +273,9 @@ function openContextMenu(event: MouseEvent) {
           />
         </template>
         <span v-else-if="layer.kind === 'text'" class="layer-thumb-text" aria-hidden="true">T</span>
+        <span v-if="layer.kind === 'smart'" class="layer-thumb-smart" aria-label="Camada inteligente" title="Camada inteligente">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 2.5h6l3 3v8h-9zM9.5 2.5v3h3M5.5 10.5h5M8 8v5" /></svg>
+        </span>
       </span>
       <span class="layer-copy">
         <input

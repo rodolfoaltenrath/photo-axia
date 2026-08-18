@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   applyEditorHistoryDelta,
+  cloneLayerHistoryState,
   cloneLayerState,
   estimateEditorHistoryBytes,
   historyDeltaObjectUrls,
@@ -73,6 +74,25 @@ test('descarta ações futuras ao criar uma nova ramificação', () => {
   history.record('C', { before: 1, after: 3 })
 
   assert.equal(history.canRedo.value, false)
+  assert.deepEqual(history.timeline.value.map((item) => item.label), ['Documento criado', 'A', 'C'])
+})
+
+test('isola e restaura uma linha do tempo temporária', () => {
+  const history = useHistory(deltaOptions)
+  history.record('A', { before: 0, after: 1 })
+  history.record('B', { before: 1, after: 2 })
+  history.undo()
+  const parent = history.snapshot()
+
+  history.clear('Conteúdo inteligente aberto')
+  history.record('Editar conteúdo', { before: 10, after: 20 })
+  assert.deepEqual(history.timeline.value.map((item) => item.label), ['Conteúdo inteligente aberto', 'Editar conteúdo'])
+
+  history.restore(parent)
+  assert.deepEqual(history.timeline.value.map((item) => item.label), ['Documento criado', 'A', 'B'])
+  assert.equal(history.currentPosition.value, 1)
+  assert.equal(history.canRedo.value, true)
+  history.record('C', { before: 1, after: 3 })
   assert.deepEqual(history.timeline.value.map((item) => item.label), ['Documento criado', 'A', 'C'])
 })
 
@@ -351,6 +371,52 @@ test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização v
   assert.deepEqual(result.refreshLayerIds, ['image'])
 })
 
+test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada', () => {
+  const text = { content: 'Axia', fontFamily: 'Inter', fontSize: 48, color: '#ffffff' }
+  const styles = {
+    enabled: true,
+    fillOpacity: 80,
+    effects: [{
+      type: 'color-overlay', id: 'color-1', enabled: true, opacity: 75,
+      blendMode: 'normal', color: '#ff0000'
+    }]
+  }
+  const originalTransform = { x: 20, y: 30, width: 180, height: 60, rotation: 12 }
+  const rasterTransform = { x: 8, y: 14, width: 204, height: 94, rotation: 0 }
+  const rasterImage = {
+    width: 204, height: 94, mimeType: 'image/png', sourceUrl: 'blob:rasterized', byteSize: 4096
+  }
+  const layers = [{
+    id: 'text', name: 'Axia', visible: true, opacity: 65, blendMode: 'multiply', kind: 'text',
+    text, transform: originalTransform, styles
+  }]
+  const delta = {
+    type: 'layer:patch',
+    layerId: 'text',
+    before: { kind: 'text', image: undefined, text, transform: originalTransform, styles },
+    after: {
+      kind: 'pixel', image: rasterImage, text: undefined, transform: rasterTransform,
+      styles: { enabled: true, fillOpacity: 100, effects: [] }
+    }
+  }
+
+  let result = applyEditorHistoryDelta(layers, 'text', delta, 'redo')
+  assert.equal(layers[0].kind, 'pixel')
+  assert.equal(layers[0].image.sourceUrl, 'blob:rasterized')
+  assert.equal(layers[0].text, undefined)
+  assert.equal(layers[0].opacity, 65)
+  assert.equal(layers[0].blendMode, 'multiply')
+  assert.deepEqual(result.refreshLayerIds, ['text'])
+
+  result = applyEditorHistoryDelta(layers, 'text', delta, 'undo')
+  assert.equal(layers[0].kind, 'text')
+  assert.deepEqual(layers[0].text, text)
+  assert.equal(layers[0].image, undefined)
+  assert.deepEqual(layers[0].styles, styles)
+  assert.deepEqual(layers[0].transform, originalTransform)
+  assert.deepEqual(result.refreshLayerIds, [])
+})
+
 test('desfaz e refaz a substituição de várias camadas por uma mesclagem', () => {
   const base = { id: 'base', name: 'Base', visible: true, opacity: 100, blendMode: 'normal', kind: 'background' }
   const first = { id: 'first', name: 'Primeira', visible: true, opacity: 100, blendMode: 'normal', kind: 'image' }
@@ -362,16 +428,62 @@ test('desfaz e refaz a substituição de várias camadas por uma mesclagem', () 
     before: [{ index: 0, layer: first }, { index: 1, layer: second }],
     after: [{ index: 0, layer: merged }],
     activeBefore: 'second',
-    activeAfter: 'merged'
+    activeAfter: 'merged',
+    selectedBefore: ['first', 'second'],
+    selectedAfter: ['merged']
   }
 
-  let result = applyEditorHistoryDelta(layers, 'second', delta, 'redo')
+  let result = applyEditorHistoryDelta(layers, 'second', delta, 'redo', ['first', 'second'])
   assert.deepEqual(layers.map((layer) => layer.id), ['merged', 'base'])
   assert.equal(result.activeLayerId, 'merged')
+  assert.deepEqual(result.selectedLayerIds, ['merged'])
 
-  result = applyEditorHistoryDelta(layers, 'merged', delta, 'undo')
+  result = applyEditorHistoryDelta(layers, 'merged', delta, 'undo', ['merged'])
   assert.deepEqual(layers.map((layer) => layer.id), ['first', 'second', 'base'])
   assert.equal(result.activeLayerId, 'second')
+  assert.deepEqual(result.selectedLayerIds, ['first', 'second'])
+})
+
+test('histórico de camada inteligente clona e retém assets internos recursivamente', () => {
+  const inner = {
+    id: 'inner', name: 'Interna', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    image: { width: 20, height: 20, mimeType: 'image/png', sourceUrl: 'blob:inner', byteSize: 256 },
+    transform: { x: 0, y: 0, width: 20, height: 20, rotation: 0 }
+  }
+  const smart = {
+    id: 'smart', name: 'Inteligente', visible: true, opacity: 100, blendMode: 'normal', kind: 'smart',
+    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    image: { width: 20, height: 20, mimeType: 'image/png', sourceUrl: 'blob:cache', byteSize: 128 },
+    transform: { x: 10, y: 10, width: 20, height: 20, rotation: 0 },
+    smart: {
+      id: 'content-smart', width: 20, height: 20, resolutionDpi: 72, colorSpace: 'sRGB', background: 'transparent',
+      layerStyleGlobalLight: { angle: 120, altitude: 30 }, layers: [inner], revision: 1
+    }
+  }
+  const delta = {
+    type: 'layers:replace',
+    before: [{ index: 0, layer: inner }],
+    after: [{ index: 0, layer: cloneLayerHistoryState(smart) }],
+    activeBefore: 'inner',
+    activeAfter: 'smart'
+  }
+
+  assert.deepEqual(new Set(historyDeltaObjectUrls(delta)), new Set(['blob:inner']))
+  assert.ok(estimateEditorHistoryBytes(delta) >= 256)
+  assert.equal(delta.after[0].layer.image, undefined)
+  const cloned = cloneLayerState(smart)
+  cloned.smart.layers[0].name = 'Alterada'
+  assert.equal(smart.smart.layers[0].name, 'Interna')
+
+  const layers = [inner]
+  let result = applyEditorHistoryDelta(layers, 'inner', delta, 'redo')
+  assert.equal(layers[0].kind, 'smart')
+  assert.equal(layers[0].image, undefined)
+  assert.equal(result.activeLayerId, 'smart')
+  result = applyEditorHistoryDelta(layers, 'smart', delta, 'undo')
+  assert.equal(layers[0].id, 'inner')
+  assert.equal(result.activeLayerId, 'inner')
 })
 
 test('mantém dez mil ações dentro dos limites configurados', () => {

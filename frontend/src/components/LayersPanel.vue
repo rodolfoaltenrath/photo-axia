@@ -2,13 +2,17 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import LayerCompositionControls from './LayerCompositionControls.vue'
 import LayerRow from './LayerRow.vue'
-import type { LayerBlendMode, LayerItem, LayerStyleGlobalLight } from '../types/editor'
+import type { DocumentBackground, LayerBlendMode, LayerItem, LayerStyleGlobalLight } from '../types/editor'
 import addLayerIcon from '../assets/icons/add-layer.svg'
+import { layerCanRasterize } from '../editor/layerRasterization'
+import { layerCanExportPNG } from '../editor/layerExport'
+import { layersCanConvertToSmart } from '../editor/smartLayers'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
 import type { LayerSelectionMode } from '../editor/layerSelection'
 
 const props = defineProps<{
   activeLayerId: string
+  documentBackground: DocumentBackground
   selectedLayerIds: string[]
   layers: LayerItem[]
   layerStyleGlobalLight: LayerStyleGlobalLight
@@ -16,13 +20,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'addLayer'): void
+  (event: 'convertToSmartLayer'): void
   (event: 'deleteLayer', layerId: string): void
   (event: 'duplicateLayer', layerId: string): void
+  (event: 'editSmartLayer', layerId: string): void
+  (event: 'exportLayer', layerId: string): void
   (event: 'moveLayer', layerId: string, direction: -1 | 1): void
   (event: 'renameLayer', layerId: string, name: string): void
   (event: 'reorderLayer', layerId: string, targetId: string, position: 'before' | 'after'): void
   (event: 'mergeLayers'): void
   (event: 'openLayerStyles', layerId: string): void
+  (event: 'rasterizeLayer', layerId: string): void
   (event: 'selectLayer', layerId: string, mode: LayerSelectionMode): void
   (event: 'toggleLayer', layerId: string): void
   (event: 'update:layerBlendMode', value: LayerBlendMode): void
@@ -41,11 +49,25 @@ let pendingDragPoint: { clientX: number; clientY: number } | undefined
 
 const activeIndex = computed(() => props.layers.findIndex((layer) => layer.id === props.activeLayerId))
 const activeLayer = computed(() => props.layers[activeIndex.value])
+const contextLayer = computed(() => props.layers.find((layer) => layer.id === contextMenu.value?.layerId))
 const selectedIdSet = computed(() => new Set(props.selectedLayerIds))
 const selectedCount = computed(() => props.layers.reduce(
   (count, layer) => count + Number(selectedIdSet.value.has(layer.id)),
   0
 ))
+const selectedItems = computed(() => props.layers
+  .map((layer, index) => ({ index, layer }))
+  .filter(({ layer }) => selectedIdSet.value.has(layer.id)))
+const contextSelectedItems = computed(() => {
+  const layer = contextLayer.value
+  if (!layer) return []
+  if (selectedIdSet.value.has(layer.id)) return selectedItems.value
+  return [{ index: props.layers.indexOf(layer), layer }]
+})
+const contextCanConvertToSmart = computed(() => layersCanConvertToSmart(contextSelectedItems.value))
+const contextCanEditSmart = computed(() => contextLayer.value?.kind === 'smart' && Boolean(contextLayer.value.smart))
+const contextCanExport = computed(() => layerCanExportPNG(contextLayer.value, props.documentBackground))
+const contextCanRasterize = computed(() => layerCanRasterize(contextLayer.value))
 const draggedLayer = computed(() => props.layers.find((layer) => layer.id === draggedLayerId.value))
 const draggedLayerFillStyle = computed(() => ({
   '--layer-fill-opacity': String(layerStyleFillOpacity(draggedLayer.value?.styles))
@@ -91,9 +113,18 @@ function handleContextMenuKeydown(event: KeyboardEvent) {
 
 async function openContextMenu(layerId: string, clientX: number, clientY: number) {
   closeContextMenu()
+  const layer = props.layers.find((item) => item.id === layerId)
+  if (!layer) return
+  const contextualItems = selectedIdSet.value.has(layerId)
+    ? selectedItems.value
+    : [{ index: props.layers.indexOf(layer), layer }]
   if (!selectedIdSet.value.has(layerId)) emit('selectLayer', layerId, 'replace')
   const menuWidth = 224
-  const menuHeight = 88
+  const menuHeight = 120 + 32 * (
+    Number(layersCanConvertToSmart(contextualItems)) +
+    Number(layer.kind === 'smart' && Boolean(layer.smart)) +
+    Number(layerCanRasterize(layer))
+  )
   contextMenu.value = {
     layerId,
     x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
@@ -119,6 +150,33 @@ function openStylesFromContextMenu() {
   if (!layerId) return
   closeContextMenu()
   emit('openLayerStyles', layerId)
+}
+
+function rasterizeFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId || !layerCanRasterize(contextLayer.value)) return
+  closeContextMenu()
+  emit('rasterizeLayer', layerId)
+}
+
+function convertToSmartFromContextMenu() {
+  if (!contextCanConvertToSmart.value) return
+  closeContextMenu()
+  emit('convertToSmartLayer')
+}
+
+function editSmartFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId || !contextCanEditSmart.value) return
+  closeContextMenu()
+  emit('editSmartLayer', layerId)
+}
+
+function exportFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId || !contextCanExport.value) return
+  closeContextMenu()
+  emit('exportLayer', layerId)
 }
 
 function setDropTarget(target?: { layerId: string; position: 'before' | 'after' }) {
@@ -250,6 +308,7 @@ onBeforeUnmount(() => {
         @drag-end="finishDrag"
         @drag-move="moveDrag"
         @drag-start="startDrag"
+        @edit-smart-layer="emit('editSmartLayer', $event)"
         @rename="renameLayer"
         @open-context-menu="openContextMenu"
         @open-layer-styles="emit('openLayerStyles', $event)"
@@ -303,6 +362,38 @@ onBeforeUnmount(() => {
           @click="openStylesFromContextMenu"
         >
           <span>Opções de mesclagem…</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          :disabled="!contextCanExport"
+          @click="exportFromContextMenu"
+        >
+          <span>Exportar rapidamente como PNG</span>
+        </button>
+        <button
+          v-if="contextCanConvertToSmart"
+          type="button"
+          role="menuitem"
+          @click="convertToSmartFromContextMenu"
+        >
+          <span>Converter em camada inteligente</span>
+        </button>
+        <button
+          v-if="contextCanEditSmart"
+          type="button"
+          role="menuitem"
+          @click="editSmartFromContextMenu"
+        >
+          <span>Editar conteúdo</span>
+        </button>
+        <button
+          v-if="contextCanRasterize"
+          type="button"
+          role="menuitem"
+          @click="rasterizeFromContextMenu"
+        >
+          <span>Rasterizar camada</span>
         </button>
         <button
           type="button"

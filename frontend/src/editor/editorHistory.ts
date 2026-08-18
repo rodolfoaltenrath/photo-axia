@@ -3,10 +3,13 @@ import type { HistoryDirection } from './history'
 import type { SelectionRegion } from './selection'
 import type { EditorGuide } from './guides'
 import { cloneLayerStyleConfig, createLayerStyleConfig, layerStylePatternAssets } from './layerStyles.ts'
+import { cloneSmartLayerContent } from './smartLayers.ts'
 
 interface SelectionDelta {
   activeBefore?: string
   activeAfter?: string
+  selectedBefore?: string[]
+  selectedAfter?: string[]
 }
 
 export interface LayerHistoryItem {
@@ -71,15 +74,27 @@ export function cloneLayerState(layer: LayerItem): LayerItem {
   return {
     ...layer,
     image: layer.image ? { ...layer.image } : undefined,
+    smart: cloneSmartLayerContent(layer.smart),
     text: layer.text ? { ...layer.text } : undefined,
     transform: layer.transform ? { ...layer.transform } : undefined,
     styles: layer.styles ? cloneLayerStyleConfig(layer.styles) : createLayerStyleConfig()
   }
 }
 
+export function cloneLayerHistoryState(layer: LayerItem): LayerItem {
+  const cloned = cloneLayerState(layer)
+  if (cloned.kind === 'smart' && cloned.smart) {
+    cloned.image = undefined
+    cloned.smart.layers = cloned.smart.layers.map(cloneLayerHistoryState)
+  }
+  return cloned
+}
+
 export function cloneLayerPatch(patch: Partial<LayerItem>): Partial<LayerItem> {
   const cloned = { ...patch }
   if ('image' in patch) cloned.image = patch.image ? { ...patch.image } : patch.image
+  if ('smart' in patch) cloned.smart = cloneSmartLayerContent(patch.smart)
+  if (patch.smart) cloned.image = undefined
   if ('text' in patch) cloned.text = patch.text ? { ...patch.text } : patch.text
   if ('transform' in patch) cloned.transform = patch.transform ? { ...patch.transform } : patch.transform
   if ('styles' in patch) cloned.styles = patch.styles ? cloneLayerStyleConfig(patch.styles) : patch.styles
@@ -101,17 +116,22 @@ export function mergeEditorHistoryDelta(previous: EditorHistoryDelta, next: Edit
     ...next,
     before: previous.before,
     activeBefore: previous.activeBefore,
+    selectedBefore: previous.selectedBefore,
     selectionBefore: previous.selectionBefore
   } satisfies PatchLayerDelta
 }
 
+function historyLayerTree(layer: Partial<LayerItem>): Partial<LayerItem>[] {
+  return [layer, ...(layer.smart?.layers.flatMap(historyLayerTree) ?? [])]
+}
+
 export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
-  const referencedImageBytes = delta.type === 'layer:patch'
-    ? [delta.before.image, delta.after.image].reduce((total, image) => total + (image?.byteSize ?? 0), 0)
-    : historyDeltaLayers(delta).reduce((total, layer) => total + (layer.image?.byteSize ?? 0), 0)
-  const styleAssets = delta.type === 'layer:patch'
-    ? [...layerStylePatternAssets(delta.before.styles), ...layerStylePatternAssets(delta.after.styles)]
-    : historyDeltaLayers(delta).flatMap((layer) => layerStylePatternAssets(layer.styles))
+  const referencedLayers = delta.type === 'layer:patch'
+    ? [delta.before, delta.after].flatMap(historyLayerTree)
+    : historyDeltaLayers(delta).flatMap(historyLayerTree)
+  const referencedImageBytes = referencedLayers
+    .reduce((total, layer) => total + (layer.image?.byteSize ?? 0), 0)
+  const styleAssets = referencedLayers.flatMap((layer) => layerStylePatternAssets(layer.styles))
   const referencedStyleBytes = [...new Map(styleAssets.map((asset) => [asset.sourceUrl, asset])).values()]
     .reduce((total, asset) => total + (asset.byteSize ?? 0), 0)
   return JSON.stringify(delta).length * 2 + referencedImageBytes + referencedStyleBytes + 96
@@ -138,11 +158,13 @@ export function historyDeltaLayers(delta: EditorHistoryDelta) {
 export function historyDeltaObjectUrls(delta: EditorHistoryDelta) {
   const urls = new Set<string>()
   const collect = (layer: Partial<LayerItem>) => {
-    for (const source of [layer.image?.sourceUrl, layer.image?.previewUrl]) {
-      if (source?.startsWith('blob:')) urls.add(source)
-    }
-    for (const asset of layerStylePatternAssets(layer.styles)) {
-      if (asset.sourceUrl.startsWith('blob:')) urls.add(asset.sourceUrl)
+    for (const item of historyLayerTree(layer)) {
+      for (const source of [item.image?.sourceUrl, item.image?.previewUrl]) {
+        if (source?.startsWith('blob:')) urls.add(source)
+      }
+      for (const asset of layerStylePatternAssets(item.styles)) {
+        if (asset.sourceUrl.startsWith('blob:')) urls.add(asset.sourceUrl)
+      }
     }
   }
   if (delta.type === 'layers:replace') {
@@ -160,7 +182,8 @@ export function applyEditorHistoryDelta(
   layers: LayerItem[],
   activeLayerId: string,
   delta: EditorHistoryDelta,
-  direction: HistoryDirection
+  direction: HistoryDirection,
+  selectedLayerIds: readonly string[] = [activeLayerId]
 ) {
   const redo = direction === 'redo'
   const insertedLayers: LayerItem[] = []
@@ -168,7 +191,7 @@ export function applyEditorHistoryDelta(
   const refreshLayerIds: string[] = []
 
   if (delta.type === 'guides:change' || delta.type === 'document:global-light') {
-    return { activeLayerId, insertedLayers, refreshLayerIds, removedLayerIds }
+    return { activeLayerId, selectedLayerIds: [...selectedLayerIds], insertedLayers, refreshLayerIds, removedLayerIds }
   }
 
   const insert = (items: LayerHistoryItem[]) => {
@@ -221,5 +244,13 @@ export function applyEditorHistoryDelta(
       ? activeLayerId
       : layers[0]!.id
 
-  return { activeLayerId: nextActiveId, insertedLayers, refreshLayerIds, removedLayerIds }
+  const requestedSelection = redo ? delta.selectedAfter : delta.selectedBefore
+  const availableIds = new Set(layers.map((layer) => layer.id))
+  const retainedSelection = (requestedSelection ?? selectedLayerIds).filter((id) => availableIds.has(id))
+  const nextSelectedLayerIds = retainedSelection.length
+    ? [...new Set(retainedSelection)]
+    : [nextActiveId]
+  if (!nextSelectedLayerIds.includes(nextActiveId)) nextSelectedLayerIds.push(nextActiveId)
+
+  return { activeLayerId: nextActiveId, selectedLayerIds: nextSelectedLayerIds, insertedLayers, refreshLayerIds, removedLayerIds }
 }

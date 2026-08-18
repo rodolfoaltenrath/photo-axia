@@ -41,6 +41,13 @@ export interface HistoryTimelineItem {
   state: 'past' | 'current' | 'future'
 }
 
+export interface HistorySnapshot<T> {
+  baseLabel: string
+  future: HistoryEntry<T>[]
+  nextId: number
+  past: HistoryEntry<T>[]
+}
+
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 const DEFAULT_MAX_ENTRIES = 200
 
@@ -186,6 +193,22 @@ export function useHistory<T>(options: HistoryOptions<T> = {}, initialLabel = 'D
     return [...past.value, ...future.value]
   }
 
+  function snapshot(): HistorySnapshot<T> {
+    return {
+      baseLabel: baseLabel.value,
+      future: future.value.slice(),
+      nextId,
+      past: past.value.slice()
+    }
+  }
+
+  function restore(state: HistorySnapshot<T>) {
+    baseLabel.value = state.baseLabel
+    future.value = state.future.slice()
+    nextId = state.nextId
+    past.value = state.past.slice()
+  }
+
   return {
     canRedo,
     canUndo,
@@ -197,7 +220,9 @@ export function useHistory<T>(options: HistoryOptions<T> = {}, initialLabel = 'D
     record,
     redo,
     redoLabel,
+    restore,
     sizeBytes,
+    snapshot,
     timeline,
     undo,
     undoLabel

@@ -1,6 +1,6 @@
 export type EditorTool = 'move' | 'brush' | 'eraser' | 'eyedropper' | 'crop' | 'text' | 'hand' | 'zoom'
 
-export type LayerKind = 'pixel' | 'image' | 'text' | 'adjustment' | 'background'
+export type LayerKind = 'pixel' | 'image' | 'text' | 'smart' | 'adjustment' | 'background'
 export type LayerBlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
 export type DocumentUnit = 'px' | 'cm' | 'mm' | 'in'
 export type DocumentBackground = 'transparent' | 'white' | 'black'
@@ -222,8 +222,21 @@ export interface LayerItem {
   kind: LayerKind
   styles: LayerStyleConfig
   image?: ImageAsset
+  smart?: SmartLayerContent
   text?: TextLayerContent
   transform?: LayerTransform
+}
+
+export interface SmartLayerContent {
+  id: string
+  width: number
+  height: number
+  resolutionDpi: number
+  colorSpace: string
+  background: DocumentBackground
+  layerStyleGlobalLight: LayerStyleGlobalLight
+  layers: LayerItem[]
+  revision: number
 }
 
 export interface TextLayerContent {

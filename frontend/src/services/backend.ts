@@ -160,3 +160,31 @@ export async function saveExportedPNG(name: string, dataURL: string) {
   link.click()
   return filename
 }
+
+function blobDataURL(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('Não foi possível preparar o PNG.'))
+    reader.onload = () => typeof reader.result === 'string'
+      ? resolve(reader.result)
+      : reject(new Error('Não foi possível preparar o PNG.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+export async function saveExportedPNGBlob(name: string, blob: Blob) {
+  if (blob.type && blob.type !== 'image/png') throw new Error('O conteúdo exportado não é um PNG válido.')
+  const filename = name.toLowerCase().endsWith('.png') ? name : `${name}.png`
+  if (hasDesktopBackend()) return SaveExportedPNG(filename, await blobDataURL(blob))
+
+  const sourceUrl = URL.createObjectURL(blob)
+  try {
+    const link = window.document.createElement('a')
+    link.download = filename
+    link.href = sourceUrl
+    link.click()
+    return filename
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(sourceUrl), 0)
+  }
+}

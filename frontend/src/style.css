@@ -116,57 +116,6 @@ select {
   gap: 6px;
 }
 
-.history-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  border-left: 1px solid #313944;
-  border-right: 1px solid #313944;
-  padding: 0 5px;
-}
-
-.menu-actions .history-icon-button {
-  display: grid;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  padding: 0;
-  background: transparent;
-  color: #cbd4dd;
-  list-style: none;
-}
-
-.history-icon-button::-webkit-details-marker {
-  display: none;
-}
-
-.history-icon-button svg {
-  width: 18px;
-  height: 18px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.menu-actions .history-icon-button:hover:not(:disabled),
-.history-menu[open] > .history-icon-button {
-  border-color: #42505e;
-  background: #28313b;
-}
-
-.menu-actions .history-icon-button:disabled {
-  opacity: 0.3;
-}
-
-.history-menu {
-  position: relative;
-}
-
 .history-popover {
   position: absolute;
   top: 36px;
@@ -314,6 +263,87 @@ textarea:focus-visible,
   grid-template-columns: 56px minmax(0, 1fr) 320px;
   min-height: 0;
   overflow: hidden;
+}
+
+.workspace--smart-edit {
+  grid-template-rows: 34px minmax(0, 1fr);
+}
+
+.workspace--smart-edit > .tool-bar,
+.workspace--smart-edit > .canvas-workspace,
+.workspace--smart-edit > .side-panels {
+  grid-row: 2;
+}
+
+.smart-edit-bar {
+  z-index: 46;
+  display: flex;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  border-bottom: 1px solid var(--ui-border);
+  background: #18181b;
+  padding: 0 8px 0 12px;
+}
+
+.smart-edit-context,
+.smart-edit-actions {
+  display: flex;
+  align-items: center;
+}
+
+.smart-edit-context {
+  min-width: 0;
+  gap: 7px;
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.smart-edit-context strong {
+  flex: none;
+  color: var(--ui-text);
+  font-size: 12px;
+}
+
+.smart-edit-context > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.smart-edit-actions {
+  flex: none;
+  gap: 5px;
+  margin-left: 12px;
+}
+
+.smart-edit-actions button {
+  height: 26px;
+  border: 1px solid var(--ui-border);
+  border-radius: 3px;
+  background: var(--ui-control);
+  padding: 0 10px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+
+.smart-edit-actions button:hover:not(:disabled) {
+  background: var(--ui-control-hover);
+  color: var(--ui-text);
+}
+
+.smart-edit-actions .primary-button {
+  border-color: #b2333d;
+  background: #922b34;
+  color: #fff;
+}
+
+.smart-edit-actions .primary-button:hover:not(:disabled) {
+  background: #aa333d;
 }
 
 .tool-bar {
@@ -1802,6 +1832,29 @@ textarea:focus-visible,
   opacity: var(--layer-fill-opacity, 1);
 }
 
+.layer-thumb-smart {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  display: grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  color: #f4f4f5;
+  background: #202126;
+  border: 1px solid #777982;
+}
+
+.layer-thumb-smart svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .layer-button strong,
 .layer-button small {
   display: block;
@@ -3011,7 +3064,6 @@ textarea:focus-visible,
   background: var(--ui-surface);
 }
 
-.history-actions,
 .properties-panel-title,
 .layers-panel-title,
 .property-summary,
@@ -3073,12 +3125,6 @@ textarea:focus-visible,
   color: var(--ui-text);
 }
 
-.menu-actions .history-icon-button {
-  color: var(--ui-text-muted);
-}
-
-.menu-actions .history-icon-button:hover:not(:disabled),
-.history-menu[open] > .history-icon-button,
 .menu-actions .history-list button:hover {
   border-color: transparent;
   background: var(--ui-control-hover);
@@ -3361,4 +3407,140 @@ input[type='checkbox'] {
 .dialog-actions .primary-button:hover:not(:disabled) {
   border-color: var(--ui-accent-hover);
   background: var(--ui-accent-hover);
+}
+
+/* Desktop application menus */
+.top-menu {
+  grid-template-columns: 132px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.top-menu .brand-logo {
+  max-width: 108px;
+  height: 30px;
+}
+
+.menu-actions {
+  min-width: 0;
+  gap: 1px;
+}
+
+.application-menu {
+  position: relative;
+  flex: none;
+}
+
+.menu-actions .application-menu-trigger {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ui-text-muted);
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+.menu-actions .application-menu-trigger:hover:not(:disabled),
+.menu-actions .application-menu-trigger[aria-expanded='true'] {
+  border-color: transparent;
+  background: var(--ui-control-hover);
+  color: var(--ui-text);
+}
+
+.menu-actions .application-menu-trigger:disabled {
+  background: transparent;
+  color: var(--ui-text-dim);
+  opacity: 0.48;
+}
+
+.application-menu-popover {
+  position: absolute;
+  top: 34px;
+  left: 0;
+  z-index: 120;
+  width: 218px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 4px;
+  background: var(--ui-surface-raised);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 46%);
+  padding: 4px;
+}
+
+.menu-actions .application-menu-popover > button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ui-text-muted);
+  padding: 0 8px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.menu-actions .application-menu-popover > button:hover:not(:disabled),
+.menu-actions .application-menu-popover > button[aria-expanded='true'] {
+  border-color: transparent;
+  background: var(--ui-control-hover);
+  color: var(--ui-text);
+}
+
+.menu-actions .application-menu-popover > button:disabled {
+  background: transparent;
+  color: var(--ui-text-dim);
+  opacity: 0.45;
+}
+
+.menu-actions .application-menu-popover > button span {
+  color: var(--ui-text-dim);
+}
+
+.application-menu-separator {
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--ui-border);
+}
+
+.application-history-popover {
+  top: -4px;
+  left: calc(100% + 5px);
+  z-index: 121;
+  transform: none;
+}
+
+@media (max-width: 1100px) {
+  .top-menu {
+    grid-template-columns: 116px minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 0 8px;
+  }
+
+  .top-menu .brand-logo {
+    max-width: 96px;
+  }
+
+  .menu-actions .application-menu-trigger {
+    padding: 0 5px;
+    font-size: 11px;
+  }
+
+  .document-status span {
+    display: none;
+  }
+}
+
+@media (max-width: 880px) {
+  .top-menu {
+    grid-template-columns: 100px minmax(0, 1fr);
+  }
+
+  .document-status {
+    display: none;
+  }
 }

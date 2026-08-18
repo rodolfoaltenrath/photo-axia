@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createAxiaProjectManifest, restoreAxiaProject } from '../src/services/project.ts'
+import {
+  AXIA_PROJECT_MAX_LAYERS,
+  createAxiaProjectManifest,
+  restoreAxiaProject
+} from '../src/services/project.ts'
 
 function projectState() {
   const sourceUrl = '/__axia_asset/image-1'
@@ -59,7 +63,7 @@ function projectState() {
 test('manifesto .axia deduplica originals e descarta previews derivados', () => {
   const { manifest, assetSources } = createAxiaProjectManifest(projectState())
   assert.equal(manifest.format, 'axia')
-  assert.equal(manifest.version, 1)
+  assert.equal(manifest.version, 2)
   assert.equal(manifest.assets.length, 1)
   assert.equal(assetSources.length, 1)
   assert.equal(manifest.layers[0].image.assetId, manifest.layers[1].image.assetId)
@@ -86,6 +90,7 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
 
 test('projetos antigos sem mesclagem são restaurados em modo normal', () => {
   const { manifest } = createAxiaProjectManifest(projectState())
+  manifest.version = 1
   delete manifest.document.layerStyleGlobalLight
   for (const layer of manifest.layers) {
     delete layer.blendMode
@@ -116,7 +121,7 @@ test('persiste estilos, luz global e padrões sem gravar URLs transitórias no m
   }
 
   const { manifest, assetSources } = createAxiaProjectManifest(state)
-  assert.equal(manifest.version, 1)
+  assert.equal(manifest.version, 2)
   assert.equal(manifest.assets.length, 2)
   assert.equal(assetSources.length, 2)
   assert.equal(JSON.stringify(manifest).includes('blob:pattern'), false)
@@ -168,4 +173,115 @@ test('rejeita versão futura e assets ausentes', () => {
     /não suportada/
   )
   assert.throws(() => restoreAxiaProject(JSON.stringify(manifest), {}), /Asset ausente/)
+})
+
+test('persiste e restaura conteúdo inteligente aninhado com assets deduplicados', () => {
+  const state = projectState()
+  const source = state.layers[0]
+  state.layers = [{
+    id: 'smart', name: 'Objeto inteligente', visible: true, opacity: 90, blendMode: 'screen', kind: 'smart',
+    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    image: { width: 820, height: 620, mimeType: 'image/png', sourceUrl: 'blob:smart-cache', byteSize: 5000 },
+    transform: { x: 4, y: 8, width: 820, height: 620, rotation: 0 },
+    smart: {
+      id: 'content-smart',
+      width: 820,
+      height: 620,
+      resolutionDpi: 144,
+      colorSpace: 'sRGB',
+      background: 'transparent',
+      layerStyleGlobalLight: { angle: 90, altitude: 40 },
+      layers: [{
+        ...source,
+        id: 'nested-image',
+        styles: { enabled: true, fillOpacity: 100, effects: [] },
+        transform: { x: 6, y: 12, width: 800, height: 600, rotation: 15 }
+      }],
+      revision: 3
+    }
+  }]
+  state.view.activeLayerId = 'smart'
+
+  const { manifest, assetSources } = createAxiaProjectManifest(state)
+  assert.equal(manifest.version, 2)
+  assert.equal(manifest.layers[0].kind, 'smart')
+  assert.equal(manifest.layers[0].image, undefined)
+  assert.equal(manifest.layers[0].smart.layers[0].image.assetId, 'asset-0001')
+  assert.equal(assetSources.length, 1)
+  assert.equal(JSON.stringify(manifest).includes('blob:'), false)
+
+  const restored = restoreAxiaProject(JSON.stringify(manifest), Object.fromEntries(
+    manifest.assets.map((asset) => [asset.id, `/__axia_asset/${asset.id}`])
+  ))
+  const smart = restored.layers[0]
+  assert.equal(smart.kind, 'smart')
+  assert.equal(smart.image, undefined)
+  assert.equal(smart.smart.revision, 3)
+  assert.equal(smart.smart.id, 'content-smart')
+  assert.equal(smart.smart.layers[0].id, 'nested-image')
+  assert.equal(smart.smart.layers[0].image.sourceUrl, '/__axia_asset/asset-0001')
+  assert.equal(smart.smart.layers[0].transform.x, 6)
+})
+
+test('rejeita conteúdo inteligente incompleto e aninhamento acima do limite', () => {
+  const state = projectState()
+  const { manifest } = createAxiaProjectManifest(state)
+  manifest.layers[0].kind = 'smart'
+  assert.throws(
+    () => restoreAxiaProject(JSON.stringify(manifest), { [manifest.assets[0].id]: '/__axia_asset/restored' }),
+    /inteligente inválid/
+  )
+
+  const nested = {
+    id: 'nested-content', width: 10, height: 10, resolutionDpi: 72, colorSpace: 'sRGB', background: 'transparent',
+    layerStyleGlobalLight: { angle: 120, altitude: 30 }, revision: 1
+  }
+  let layer = {
+    id: 'leaf', name: 'Folha', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+    styles: { enabled: true, fillOpacity: 100, effects: [] }, image: manifest.layers[0].image,
+    transform: { x: 0, y: 0, width: 10, height: 10, rotation: 0 }
+  }
+  for (let depth = 0; depth < 9; depth++) {
+    layer = { ...layer, id: `smart-${depth}`, kind: 'smart', smart: { ...nested, layers: [layer] } }
+  }
+  manifest.layers = [layer]
+  assert.throws(
+    () => restoreAxiaProject(JSON.stringify(manifest), { [manifest.assets[0].id]: '/__axia_asset/restored' }),
+    /limite de aninhamento/
+  )
+})
+
+test('rejeita IDs duplicados e ciclos antes de salvar o projeto', () => {
+  const duplicateState = projectState()
+  duplicateState.layers = [duplicateState.layers[0], { ...duplicateState.layers[1], id: duplicateState.layers[0].id }]
+  assert.throws(() => createAxiaProjectManifest(duplicateState), /Camada duplicada/)
+
+  const cyclicState = projectState()
+  const cyclicLayer = {
+    id: 'smart-cycle', name: 'Ciclo', visible: true, opacity: 100, blendMode: 'normal', kind: 'smart',
+    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    transform: { x: 0, y: 0, width: 10, height: 10, rotation: 0 },
+    smart: {
+      id: 'content-cycle', width: 10, height: 10, resolutionDpi: 72, colorSpace: 'sRGB',
+      background: 'transparent', layerStyleGlobalLight: { angle: 120, altitude: 30 }, layers: [], revision: 1
+    }
+  }
+  cyclicLayer.smart.layers.push(cyclicLayer)
+  cyclicState.layers = [cyclicLayer]
+  assert.throws(() => createAxiaProjectManifest(cyclicState), /estrutura cíclica/)
+})
+
+test('limita a quantidade total de camadas em toda a árvore do projeto', () => {
+  const state = projectState()
+  const { manifest } = createAxiaProjectManifest(state)
+  manifest.layers = Array.from({ length: AXIA_PROJECT_MAX_LAYERS + 1 }, (_, index) => ({
+    id: `layer-${index}`,
+    name: `Camada ${index}`,
+    visible: true,
+    opacity: 100,
+    blendMode: 'normal',
+    kind: 'background',
+    styles: { enabled: true, fillOpacity: 100, effects: [] }
+  }))
+  assert.throws(() => restoreAxiaProject(JSON.stringify(manifest), {}), /limite total de camadas/)
 })
