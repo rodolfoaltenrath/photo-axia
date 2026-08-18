@@ -23,8 +23,16 @@ export function layerDocumentBounds(layer: LayerItem): DocumentBounds | undefine
 }
 
 export function layerIntersectsDocument(layer: LayerItem, document: Pick<DocumentSpec, 'width' | 'height'>) {
+  return layerIntersectsBounds(layer, { x: 0, y: 0, width: document.width, height: document.height })
+}
+
+export function boundsIntersect(first: DocumentBounds, second: DocumentBounds) {
+  if (first.width <= 0 || first.height <= 0 || second.width <= 0 || second.height <= 0) return false
+  return first.x + first.width > second.x && first.y + first.height > second.y &&
+    first.x < second.x + second.width && first.y < second.y + second.height
+}
+
+export function layerIntersectsBounds(layer: LayerItem, viewport: DocumentBounds) {
   const bounds = layerDocumentBounds(layer)
-  if (!bounds) return false
-  return bounds.x + bounds.width > 0 && bounds.y + bounds.height > 0 &&
-    bounds.x < document.width && bounds.y < document.height
+  return bounds ? boundsIntersect(bounds, viewport) : false
 }

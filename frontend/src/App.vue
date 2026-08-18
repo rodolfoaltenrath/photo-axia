@@ -28,6 +28,7 @@ import {
   selectDesktopImages
 } from './services/backend'
 import {
+  clearPreparedImageCache,
   createImagePreview,
   disposeImagePreviewWorker,
   editorPreviewSize,
@@ -472,6 +473,7 @@ function releaseAllEditorAssets() {
   for (const controller of previewControllers.values()) controller.abort()
   previewControllers.clear()
   floatingSelectionSession.value = null
+  clearPreparedImageCache()
   releaseLayerAssets([...layers.value, ...retainedHistoryLayers()])
   for (const source of trackedObjectUrls) URL.revokeObjectURL(source)
   trackedObjectUrls.clear()

@@ -1,17 +1,9 @@
 import type { DocumentSpec, LayerItem } from '../types/editor'
 import { textFont, textLines } from '../editor/text'
-import { layerDocumentBounds, layerIntersectsDocument, type DocumentBounds } from '../editor/renderBounds'
+import { layerDocumentBounds, layerIntersectsBounds, type DocumentBounds } from '../editor/renderBounds'
 import { canvasBlendOperation } from '../editor/blendModes'
-import { sampledPixelToHex } from '../editor/colorSampler'
-
-function loadImage(source: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error('Não foi possível preparar uma camada para exportação.'))
-    image.src = source
-  })
-}
+import { sampledDocumentPixel, sampledPixelToHex } from '../editor/colorSampler'
+import { prepareImageSource } from './imageImport'
 
 async function renderDocumentCanvas(
   document: DocumentSpec,
@@ -40,7 +32,7 @@ async function renderDocumentCanvas(
   }
 
   const orderedLayers = [...layers].reverse().filter((layer) =>
-    layer.visible && layer.transform && layerIntersectsDocument(layer, document)
+    layer.visible && layer.transform && layerIntersectsBounds(layer, viewport)
   )
   const sourcePromises = new Map<string, Promise<HTMLImageElement>>()
   const images = new Map<string, HTMLImageElement>()
@@ -51,7 +43,7 @@ async function renderDocumentCanvas(
       : layer.image.sourceUrl
     let promise = sourcePromises.get(source)
     if (!promise) {
-      promise = loadImage(source)
+      promise = prepareImageSource(source)
       sourcePromises.set(source, promise)
     }
     images.set(layer.id, await promise)
@@ -112,11 +104,10 @@ export async function renderDocumentPNG(document: DocumentSpec, layers: LayerIte
 }
 
 export async function sampleDocumentColor(document: DocumentSpec, layers: LayerItem[], x: number, y: number) {
-  const pixelX = Math.floor(x)
-  const pixelY = Math.floor(y)
-  if (pixelX < 0 || pixelY < 0 || pixelX >= document.width || pixelY >= document.height) return null
+  const pixel = sampledDocumentPixel(x, y, document.width, document.height)
+  if (!pixel) return null
 
-  const viewport = { x: pixelX, y: pixelY, width: 1, height: 1 }
+  const viewport = { ...pixel, width: 1, height: 1 }
   const canvas = await renderDocumentCanvas(document, layers, 1, 1, false, viewport)
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('O sistema não disponibilizou a leitura de cores.')

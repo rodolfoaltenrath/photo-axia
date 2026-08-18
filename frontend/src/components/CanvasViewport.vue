@@ -38,6 +38,7 @@ import {
 import {
   colorSampleButtonIsPressed,
   colorSampleTarget,
+  sampledDocumentPixel,
   type ColorSampleTarget
 } from '../editor/colorSampler'
 
@@ -54,7 +55,11 @@ let interactionFrame = 0
 let pendingInteractionFrame: (() => void) | undefined
 let colorSampleFrame = 0
 let pendingColorSample: { point: DocumentPoint; target: ColorSampleTarget } | undefined
-let colorSamplePointer: { pointerId: number; target: ColorSampleTarget } | undefined
+let colorSamplePointer: {
+  pointerId: number
+  target: ColorSampleTarget
+  lastPoint: DocumentPoint
+} | undefined
 const {
   documentViewportOffset,
   fitDocument,
@@ -520,14 +525,9 @@ function pointerToDocument(event: PointerEvent): DocumentPoint | undefined {
 
 function colorSamplePoint(event: PointerEvent) {
   const point = pointerToDocument(event)
-  if (
-    !point ||
-    point.x < 0 ||
-    point.y < 0 ||
-    point.x >= props.document.width ||
-    point.y >= props.document.height
-  ) return undefined
   return point
+    ? sampledDocumentPixel(point.x, point.y, props.document.width, props.document.height) ?? undefined
+    : undefined
 }
 
 function scheduleColorSample(point: DocumentPoint, target: ColorSampleTarget) {
@@ -594,7 +594,7 @@ function startViewportPointer(event: PointerEvent) {
       event.preventDefault()
       event.stopPropagation()
       scroll.setPointerCapture(event.pointerId)
-      colorSamplePointer = { pointerId: event.pointerId, target: sampleTarget }
+      colorSamplePointer = { pointerId: event.pointerId, target: sampleTarget, lastPoint: point }
       emit('sampleColor', point, sampleTarget)
     }
     return
@@ -713,7 +713,13 @@ function updatePointer(event: PointerEvent) {
     event.stopPropagation()
     if (colorSampleButtonIsPressed(colorSamplePointer.target, event.buttons)) {
       const point = colorSamplePoint(event)
-      if (point) scheduleColorSample(point, colorSamplePointer.target)
+      if (
+        point &&
+        (point.x !== colorSamplePointer.lastPoint.x || point.y !== colorSamplePointer.lastPoint.y)
+      ) {
+        colorSamplePointer.lastPoint = point
+        scheduleColorSample(point, colorSamplePointer.target)
+      }
     }
     return
   }

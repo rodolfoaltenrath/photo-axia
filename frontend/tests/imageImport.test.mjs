@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { editorPreviewSize, imageDimensionsFromHeader } from '../src/services/imageImport.ts'
+import {
+  clearPreparedImageCache,
+  editorPreviewSize,
+  imageDimensionsFromHeader,
+  prepareImageSource,
+  releasePreparedImage
+} from '../src/services/imageImport.ts'
 
 const asset4k = { width: 3840, height: 2160 }
 
@@ -49,4 +55,64 @@ test('lê dimensões PNG, GIF e JPEG sem decodificar o raster', () => {
   assert.deepEqual(imageDimensionsFromHeader(png.buffer, 'image/png'), { width: 3840, height: 2160 })
   assert.deepEqual(imageDimensionsFromHeader(gif.buffer, 'image/gif'), { width: 800, height: 600 })
   assert.deepEqual(imageDimensionsFromHeader(jpeg.buffer, 'image/jpeg'), { width: 1920, height: 1080 })
+})
+
+test('reutiliza imagens decodificadas e descarta entradas liberadas ou acima do orçamento', async () => {
+  const NativeImage = globalThis.Image
+  let instances = 0
+  let imageWidth = 100
+  let imageHeight = 80
+  class FakeImage {
+    complete = true
+    naturalWidth = imageWidth
+    naturalHeight = imageHeight
+    decoding = 'auto'
+    onerror = null
+    onload = null
+
+    constructor() {
+      instances++
+    }
+
+    decode() {
+      return Promise.resolve()
+    }
+
+    set src(_source) {
+      queueMicrotask(() => this.onload?.())
+    }
+  }
+
+  globalThis.Image = FakeImage
+  clearPreparedImageCache()
+  try {
+    const [first, second] = await Promise.all([
+      prepareImageSource('blob:shared-image'),
+      prepareImageSource('blob:shared-image')
+    ])
+    assert.equal(first, second)
+    assert.equal(instances, 1)
+
+    releasePreparedImage('blob:shared-image')
+    await prepareImageSource('blob:shared-image')
+    assert.equal(instances, 2)
+
+    clearPreparedImageCache()
+    imageWidth = 8192
+    imageHeight = 8192
+    await prepareImageSource('blob:oversized-image')
+    await prepareImageSource('blob:oversized-image')
+    assert.equal(instances, 4)
+
+    const controller = new AbortController()
+    controller.abort()
+    await assert.rejects(
+      prepareImageSource('blob:cancelled-image', controller.signal),
+      (error) => error instanceof DOMException && error.name === 'AbortError'
+    )
+    assert.equal(instances, 4)
+  } finally {
+    clearPreparedImageCache()
+    globalThis.Image = NativeImage
+  }
 })

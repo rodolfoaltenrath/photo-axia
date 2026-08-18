@@ -74,6 +74,14 @@ Consulte [docs/axia-format.md](docs/axia-format.md) para detalhes do formato de 
 - Respeito integral à região selecionada; sem seleção, o traço fica livre dentro do documento.
 - Processamento incremental em worker e uma única entrada de histórico por traço completo.
 
+### Cores e conta-gotas
+
+- Cores principal e secundária editáveis, com troca rápida e restauração para preto e branco.
+- Conta-gotas contínuo sobre a composição visível do documento.
+- Botão esquerdo coleta a cor principal; botão direito coleta a cor secundária.
+- Amostragem sincronizada com commits raster pendentes e limitada ao pixel mais recente.
+- Cache de imagens decodificadas e filtragem espacial das camadas durante a coleta.
+
 ### Texto
 
 - Criação e edição de camadas de texto.
@@ -117,6 +125,7 @@ Consulte [docs/axia-format.md](docs/axia-format.md) para detalhes do formato de 
 - `V`: Mover.
 - `B`: Pincel.
 - `E`: Borracha.
+- `I`: Conta-gotas.
 - `C`: Recorte e seleção.
 - `T`: Texto.
 - `H`: Mão.

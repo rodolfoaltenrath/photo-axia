@@ -5,6 +5,7 @@ const MAX_EDITOR_PREVIEW_PIXELS = 4_194_304
 const PREVIEW_SIZE_QUANTUM = 64
 const IMAGE_HEADER_BYTES = 256 * 1024
 const MAX_PREPARED_IMAGES = 24
+const MAX_PREPARED_IMAGE_BYTES = 128 * 1024 * 1024
 let previewWorker: Worker | undefined
 let previewRequestId = 0
 const previewRequests = new Map<number, {
@@ -13,10 +14,35 @@ const previewRequests = new Map<number, {
   signal?: AbortSignal
   abort?: () => void
 }>()
-const preparedImages = new Map<string, {
+interface PreparedImage {
   image: HTMLImageElement
   ready: Promise<HTMLImageElement>
-}>()
+  byteSize: number
+}
+
+const preparedImages = new Map<string, PreparedImage>()
+let preparedImageBytes = 0
+
+function deletePreparedImage(source: string) {
+  const prepared = preparedImages.get(source)
+  if (!prepared) return false
+  preparedImages.delete(source)
+  preparedImageBytes = Math.max(0, preparedImageBytes - prepared.byteSize)
+  return true
+}
+
+function trimPreparedImages() {
+  while (preparedImages.size > MAX_PREPARED_IMAGES || preparedImageBytes > MAX_PREPARED_IMAGE_BYTES) {
+    const oldest = preparedImages.keys().next().value as string | undefined
+    if (!oldest) break
+    deletePreparedImage(oldest)
+  }
+}
+
+export function clearPreparedImageCache() {
+  preparedImages.clear()
+  preparedImageBytes = 0
+}
 
 function uint16(view: DataView, offset: number, littleEndian = false) {
   return offset + 2 <= view.byteLength ? view.getUint16(offset, littleEndian) : 0
@@ -127,7 +153,7 @@ export function disposeImagePreviewWorker() {
     request.reject(new Error('Processamento de prévias encerrado.'))
   }
   previewRequests.clear()
-  preparedImages.clear()
+  clearPreparedImageCache()
 }
 
 function loadImage(source: string) {
@@ -139,25 +165,28 @@ function loadImage(source: string) {
   })
 }
 
-function abortedLoad(signal: AbortSignal) {
-  return new Promise<never>((_, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Carregamento cancelado.', 'AbortError'))
-      return
+function waitForPreparedImage(ready: Promise<HTMLImageElement>, signal: AbortSignal) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const abort = () => reject(new DOMException('Carregamento cancelado.', 'AbortError'))
+    const settle = (callback: () => void) => {
+      signal.removeEventListener('abort', abort)
+      callback()
     }
-    signal.addEventListener(
-      'abort',
-      () => reject(new DOMException('Carregamento cancelado.', 'AbortError')),
-      { once: true }
+    signal.addEventListener('abort', abort, { once: true })
+    ready.then(
+      (image) => settle(() => resolve(image)),
+      (error) => settle(() => reject(error))
     )
   })
 }
 
 export async function prepareImageSource(source: string, signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException('Carregamento cancelado.', 'AbortError')
   let prepared = preparedImages.get(source)
   if (!prepared) {
     const image = new Image()
     image.decoding = 'async'
+    let entry: PreparedImage
     const ready = new Promise<HTMLImageElement>((resolve, reject) => {
       image.onload = async () => {
         try {
@@ -168,31 +197,33 @@ export async function prepareImageSource(source: string, signal?: AbortSignal) {
             return
           }
         }
+        if (preparedImages.get(source) === entry) {
+          entry.byteSize = Math.max(0, image.naturalWidth * image.naturalHeight * 4)
+          preparedImageBytes += entry.byteSize
+          trimPreparedImages()
+        }
         resolve(image)
       }
       image.onerror = () => reject(new Error('Não foi possível carregar a prévia.'))
       image.src = source
     }).catch((error) => {
-      preparedImages.delete(source)
+      if (preparedImages.get(source) === entry) deletePreparedImage(source)
       throw error
     })
-    prepared = { image, ready }
+    entry = { image, ready, byteSize: 0 }
+    prepared = entry
     preparedImages.set(source, prepared)
-    while (preparedImages.size > MAX_PREPARED_IMAGES) {
-      const oldest = preparedImages.keys().next().value as string | undefined
-      if (!oldest || oldest === source) break
-      preparedImages.delete(oldest)
-    }
+    trimPreparedImages()
   } else {
     preparedImages.delete(source)
     preparedImages.set(source, prepared)
   }
 
-  return signal ? Promise.race([prepared.ready, abortedLoad(signal)]) : prepared.ready
+  return signal ? waitForPreparedImage(prepared.ready, signal) : prepared.ready
 }
 
 export function releasePreparedImage(source: string) {
-  preparedImages.delete(source)
+  deletePreparedImage(source)
 }
 
 function canvasBlob(canvas: HTMLCanvasElement, mimeType: string, quality?: number) {
