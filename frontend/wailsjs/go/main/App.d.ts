@@ -12,6 +12,8 @@ export function FinalizeAxiaProjectOpen(arg1:string,arg2:boolean):Promise<void>;
 
 export function GetEditorStatus():Promise<main.EditorStatus>;
 
+export function ImportDroppedFiles(arg1:Array<string>):Promise<{images:Array<main.ImportedImage>,errors:Array<string>}>;
+
 export function ListRecentProjects():Promise<Array<main.RecentProject>>;
 
 export function OpenAxiaProject():Promise<main.OpenedAxiaProject>;

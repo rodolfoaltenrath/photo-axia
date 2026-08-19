@@ -4,6 +4,7 @@ import {
   CreateDocument,
   FinalizeAxiaProjectOpen,
   GetEditorStatus,
+  ImportDroppedFiles,
   ListRecentProjects,
   OpenAxiaProject,
   OpenRecentProject,
@@ -16,6 +17,7 @@ import {
   SetDocumentDirty,
   SelectImageFiles
 } from '../../wailsjs/go/main/App'
+import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime'
 import type { DocumentSpec, ImportedImage, NewDocumentSettings, RecentProject } from '../types/editor'
 import { DEFAULT_LAYER_STYLE_GLOBAL_LIGHT, normalizeLayerStyleGlobalLight } from '../editor/layerStyles'
 
@@ -79,6 +81,26 @@ export async function createEditorDocument(
 export async function selectDesktopImages(): Promise<ImportedImage[]> {
   if (!hasDesktopBackend()) return []
   return (await SelectImageFiles()) as ImportedImage[]
+}
+
+/**
+ * Registers the OS-native drag-and-drop bridge (Wails' GTK-level DnD, used
+ * because WebKitGTK does not reliably forward an external app's drag into
+ * the webview's own HTML5 DnD DOM events on Linux). No-op outside the
+ * desktop build. Returns an unregister function.
+ */
+export function registerNativeFileDrop(
+  onDrop: (images: ImportedImage[], errors: string[]) => void
+): () => void {
+  if (!hasDesktopBackend()) return () => {}
+
+  OnFileDrop(async (_x, _y, paths) => {
+    if (!paths.length) return
+    const result = await ImportDroppedFiles(paths)
+    onDrop(result.images as ImportedImage[], result.errors)
+  }, true)
+
+  return () => OnFileDropOff()
 }
 
 export async function applyPreviewFilter(filterName: string) {

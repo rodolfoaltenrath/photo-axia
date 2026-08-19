@@ -488,6 +488,8 @@ textarea:focus-visible,
   min-height: 0;
   overflow: hidden;
   background: #101317;
+  /* Marks this element as a valid drop zone for Wails' native (desktop) drag-and-drop bridge. */
+  --wails-drop-target: drop;
 }
 
 .context-bar {

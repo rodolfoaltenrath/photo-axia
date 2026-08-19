@@ -38,6 +38,15 @@ PATH="${NODE_BIN}:${PATH}" npm --prefix frontend ci
 PATH="${NODE_BIN}:${PATH}" npm --prefix frontend run build
 PATH="${GO_BIN}:${PATH}" go mod vendor
 
+# go mod vendor regenera vendor/ do zero a cada build, então qualquer correção
+# aplicada direto nos fontes vendorizados (ex: o diálogo de arquivo nativo do
+# GTK no Linux) precisa ser reaplicada aqui, depois da regeneração.
+for patch in patches/*.patch; do
+  [ -e "${patch}" ] || continue
+  echo "Aplicando ${patch}..."
+  git apply "${patch}"
+done
+
 mkdir -p "dist/flatpak"
 
 flatpak run --command=flathub-build org.flatpak.Builder \

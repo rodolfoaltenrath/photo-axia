@@ -29,6 +29,17 @@ func main() {
 			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
 			ProgramName:      "axia",
 		},
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop: true,
+			// DisableWebViewDrop fica desligado de propósito: o WebKitGTK já
+			// registra um destino de drag-and-drop válido (aceita
+			// text/uri-list do Nautilus). Ligar essa opção chama
+			// gtk_drag_dest_unset() sem registrar nada no lugar, e como o
+			// Wails não chama gtk_drag_dest_set() por conta própria, o
+			// GTK passa a rejeitar o arrasto no nível do SO (cursor de
+			// "não permitido" na janela inteira) antes mesmo do nosso
+			// bridge (EnableFileDrop) entrar em ação.
+		},
 		AssetServer: &assetserver.Options{
 			Assets:     assets,
 			Handler:    app.assetHandler(),

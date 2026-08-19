@@ -1,0 +1,30 @@
+--- a/vendor/github.com/wailsapp/wails/v2/internal/frontend/desktop/linux/frontend.go
++++ b/vendor/github.com/wailsapp/wails/v2/internal/frontend/desktop/linux/frontend.go
+@@ -83,6 +83,19 @@
+     g_idle_add(install_signal_handlers_idle, NULL);
+ }
+ 
++// Axia always renders a dark UI regardless of the host's light/dark
++// preference. GTK3 (unlike GTK4/libadwaita) does not automatically follow
++// the desktop portal's color-scheme setting, so left alone the native
++// window chrome (titlebar) stays on GTK's light default even on a dark
++// desktop. Forcing the dark variant here keeps the chrome consistent with
++// the app's own always-dark content.
++static void force_dark_theme() {
++    GtkSettings *settings = gtk_settings_get_default();
++    if (settings != NULL) {
++        g_object_set(settings, "gtk-application-prefer-dark-theme", TRUE, NULL);
++    }
++}
++
+ */
+ import "C"
+ import (
+@@ -159,6 +172,7 @@
+ 		if ok := C.gtk_init_check(nil, nil); ok != 1 {
+ 			panic(errors.New("failed to init GTK"))
+ 		}
++		C.force_dark_theme()
+ 	})
+ 
+ 	result := &Frontend{

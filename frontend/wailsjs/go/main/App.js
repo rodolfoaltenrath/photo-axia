@@ -22,6 +22,10 @@ export function GetEditorStatus() {
   return window['go']['main']['App']['GetEditorStatus']();
 }
 
+export function ImportDroppedFiles(arg1) {
+  return window['go']['main']['App']['ImportDroppedFiles'](arg1);
+}
+
 export function ListRecentProjects() {
   return window['go']['main']['App']['ListRecentProjects']();
 }

@@ -21,6 +21,7 @@ import {
   prepareAxiaProjectSave,
   listRecentProjects,
   recordRecentProject,
+  registerNativeFileDrop,
   releaseAxiaProjectAssets,
   saveExportedPNGBlob,
   removeRecentProject,
@@ -2992,10 +2993,13 @@ function handleShortcut(event: KeyboardEvent) {
   activeTool.value = tool
 }
 
+let unregisterNativeFileDrop: (() => void) | undefined
+
 onMounted(async () => {
   window.addEventListener('wheel', blockBrowserWheelZoom, zoomEventOptions)
   window.addEventListener('keydown', handleShortcut)
   window.addEventListener('beforeunload', protectUnsavedDocument)
+  unregisterNativeFileDrop = registerNativeFileDrop(addDroppedImages)
 
   try {
     const [status] = await Promise.all([getEditorStatus(), refreshRecentProjects()])
@@ -3006,6 +3010,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  unregisterNativeFileDrop?.()
   if (previewRefreshTimer) clearTimeout(previewRefreshTimer)
   pendingBrushCommit?.controller.abort()
   pendingBrushCommit = undefined

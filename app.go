@@ -301,6 +301,31 @@ func (a *App) SelectImageFiles() ([]ImportedImage, error) {
 	return images, nil
 }
 
+// DroppedFilesResult is the outcome of importing a native OS drag-and-drop.
+type DroppedFilesResult struct {
+	Images []ImportedImage `json:"images"`
+	Errors []string        `json:"errors"`
+}
+
+// ImportDroppedFiles reads the files a user dragged onto the window (native
+// OS drag-and-drop, delivered as absolute paths by the Wails runtime). Unlike
+// SelectImageFiles, a dropped file may be a folder or an unsupported format,
+// so invalid entries are skipped and reported instead of aborting the whole
+// drop.
+func (a *App) ImportDroppedFiles(paths []string) DroppedFilesResult {
+	images := make([]ImportedImage, 0, len(paths))
+	errs := make([]string, 0)
+	for _, path := range paths {
+		imported, err := a.readImageFile(path)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %s", filepath.Base(path), err))
+			continue
+		}
+		images = append(images, imported)
+	}
+	return DroppedFilesResult{Images: images, Errors: errs}
+}
+
 func (a *App) SaveExportedPNG(suggestedName string, dataURL string) (string, error) {
 	if suggestedName == "" {
 		suggestedName = "imagem.png"
