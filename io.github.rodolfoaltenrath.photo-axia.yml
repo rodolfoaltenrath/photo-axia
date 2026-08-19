@@ -13,6 +13,7 @@ finish-args:
   - --socket=fallback-x11
   - --device=dri
   - --env=GTK_USE_PORTAL=1
+  - --filesystem=home
 
 modules:
   - name: axia
