@@ -48,6 +48,31 @@ function uint16(view: DataView, offset: number, littleEndian = false) {
   return offset + 2 <= view.byteLength ? view.getUint16(offset, littleEndian) : 0
 }
 
+function readExifOrientation(view: DataView, segmentStart: number, segmentLength: number): number | undefined {
+  const payloadStart = segmentStart + 2
+  const payloadLength = segmentLength - 2
+  if (payloadLength < 8 || payloadStart + 8 > view.byteLength) return undefined
+  if (view.getUint32(payloadStart) !== 0x45786966 || view.getUint16(payloadStart + 4) !== 0x0000) return undefined
+
+  const tiffStart = payloadStart + 6
+  const byteOrderMark = uint16(view, tiffStart)
+  if (byteOrderMark !== 0x4949 && byteOrderMark !== 0x4d4d) return undefined
+  const littleEndian = byteOrderMark === 0x4949
+  if (uint16(view, tiffStart + 2, littleEndian) !== 0x002a) return undefined
+
+  const ifd0Offset = tiffStart + view.getUint32(tiffStart + 4, littleEndian)
+  if (ifd0Offset + 2 > view.byteLength) return undefined
+  const entryCount = uint16(view, ifd0Offset, littleEndian)
+  for (let index = 0; index < entryCount; index++) {
+    const entryOffset = ifd0Offset + 2 + index * 12
+    if (entryOffset + 12 > view.byteLength) break
+    if (uint16(view, entryOffset, littleEndian) === 0x0112) {
+      return uint16(view, entryOffset + 8, littleEndian)
+    }
+  }
+  return undefined
+}
+
 export function imageDimensionsFromHeader(buffer: ArrayBuffer, mimeType: string) {
   const view = new DataView(buffer)
   if (
@@ -65,6 +90,7 @@ export function imageDimensionsFromHeader(buffer: ArrayBuffer, mimeType: string)
   if (mimeType !== 'image/jpeg' || view.byteLength < 4 || uint16(view, 0) !== 0xffd8) return undefined
 
   const frameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf])
+  let orientation = 1
   let offset = 2
   while (offset + 8 < view.byteLength) {
     while (offset < view.byteLength && view.getUint8(offset) !== 0xff) offset++
@@ -74,8 +100,15 @@ export function imageDimensionsFromHeader(buffer: ArrayBuffer, mimeType: string)
     if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) continue
     const length = uint16(view, offset)
     if (length < 2 || offset + length > view.byteLength) break
-    if (frameMarkers.has(marker)) {
-      return { width: uint16(view, offset + 5), height: uint16(view, offset + 3) }
+    if (marker === 0xe1) {
+      orientation = readExifOrientation(view, offset, length) ?? orientation
+    } else if (frameMarkers.has(marker)) {
+      const width = uint16(view, offset + 5)
+      const height = uint16(view, offset + 3)
+      // EXIF orientations 5-8 apply a 90°/270° rotation, which is what browsers
+      // honor when painting the <img> — the raw SOF dimensions must be swapped
+      // to match, or the fitted layer box ends up with the wrong aspect ratio.
+      return orientation >= 5 && orientation <= 8 ? { width: height, height: width } : { width, height }
     }
     offset += length
   }

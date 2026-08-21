@@ -3,23 +3,29 @@ import {
   layerTransformStyle,
   layerTransformsMatch,
   moveLayerTransform,
+  normalizeRotation,
   resizeLayerTransform,
   rotateLayerTransform,
+  rotateVector,
   transformCenter,
   type DocumentPoint,
   type TransformHandle
 } from '../../../editor/freeTransform'
+import { transformedLayerBounds } from '../../../editor/guides'
 import type { LayerItem, LayerTransform } from '../../../types/editor'
 import type {
   KeyboardLayerMoveSession,
   LayerDragSession,
   TransformInteraction,
-  TransformSession
+  TransformSession,
+  TransformSessionMember
 } from '../canvas.types'
 
 interface FreeTransformOptions {
   activeLayer: () => LayerItem | undefined
   activeLayerId: () => string
+  selectedLayerIds: () => string[]
+  layers: () => LayerItem[]
   activeTool: () => string
   autoSelectLayer: () => boolean
   isBusy: () => boolean
@@ -35,6 +41,75 @@ interface FreeTransformOptions {
   discardInteractionFrame: () => void
   selectLayer: (layerId: string) => void
   updateTransform: (layerId: string, transform: LayerTransform) => void
+}
+
+function groupBoundsFromMembers(members: TransformSessionMember[]): LayerTransform {
+  if (members.length === 1) return { ...members[0]!.original }
+  const boxes = members.map((member) => transformedLayerBounds(member.original))
+  const minX = Math.min(...boxes.map((box) => box.x))
+  const minY = Math.min(...boxes.map((box) => box.y))
+  const maxX = Math.max(...boxes.map((box) => box.x + box.width))
+  const maxY = Math.max(...boxes.map((box) => box.y + box.height))
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY, rotation: 0 }
+}
+
+function applyGroupMove(members: TransformSessionMember[], groupOriginal: LayerTransform, groupDraft: LayerTransform) {
+  const dx = groupDraft.x - groupOriginal.x
+  const dy = groupDraft.y - groupOriginal.y
+  const drafts: Record<string, LayerTransform> = {}
+  for (const member of members) {
+    drafts[member.layerId] = {
+      ...member.original,
+      x: Math.round((member.original.x + dx) * 100) / 100,
+      y: Math.round((member.original.y + dy) * 100) / 100
+    }
+  }
+  return drafts
+}
+
+function applyGroupResize(members: TransformSessionMember[], groupOriginal: LayerTransform, groupDraft: LayerTransform) {
+  if (members.length === 1) return { [members[0]!.layerId]: groupDraft }
+  const scaleX = groupOriginal.width === 0 ? 1 : groupDraft.width / groupOriginal.width
+  const scaleY = groupOriginal.height === 0 ? 1 : groupDraft.height / groupOriginal.height
+  const drafts: Record<string, LayerTransform> = {}
+  for (const member of members) {
+    const relX = (member.original.x - groupOriginal.x) / groupOriginal.width
+    const relY = (member.original.y - groupOriginal.y) / groupOriginal.height
+    drafts[member.layerId] = {
+      x: Math.round((groupDraft.x + relX * groupDraft.width) * 100) / 100,
+      y: Math.round((groupDraft.y + relY * groupDraft.height) * 100) / 100,
+      width: Math.round(member.original.width * scaleX * 100) / 100,
+      height: Math.round(member.original.height * scaleY * 100) / 100,
+      rotation: member.original.rotation ?? 0
+    }
+  }
+  return drafts
+}
+
+function applyGroupRotate(
+  members: TransformSessionMember[],
+  groupOriginal: LayerTransform,
+  groupDraft: LayerTransform
+) {
+  if (members.length === 1) return { [members[0]!.layerId]: groupDraft }
+  const center = transformCenter(groupOriginal)
+  const deltaDeg = (groupDraft.rotation ?? 0) - (groupOriginal.rotation ?? 0)
+  const deltaRad = (deltaDeg * Math.PI) / 180
+  const drafts: Record<string, LayerTransform> = {}
+  for (const member of members) {
+    const memberCenter = transformCenter(member.original)
+    const relative = { x: memberCenter.x - center.x, y: memberCenter.y - center.y }
+    const rotated = rotateVector(relative, deltaRad)
+    const nextCenter = { x: center.x + rotated.x, y: center.y + rotated.y }
+    drafts[member.layerId] = {
+      x: Math.round((nextCenter.x - member.original.width / 2) * 100) / 100,
+      y: Math.round((nextCenter.y - member.original.height / 2) * 100) / 100,
+      width: member.original.width,
+      height: member.original.height,
+      rotation: normalizeRotation((member.original.rotation ?? 0) + deltaDeg)
+    }
+  }
+  return drafts
 }
 
 export function applyElementTransform(target: HTMLElement, transform: LayerTransform) {
@@ -55,7 +130,8 @@ export function useFreeTransform(options: FreeTransformOptions) {
   const isTransforming = computed(() => Boolean(transformSession.value))
 
   function displayTransform(layer: Pick<LayerItem, 'id' | 'transform'>) {
-    if (transformSession.value?.layerId === layer.id) return transformSession.value.draft
+    const session = transformSession.value
+    if (session && layer.id in session.drafts) return session.drafts[layer.id]
     if (keyboardLayerMove.value?.layerId === layer.id) return keyboardLayerMove.value.draft
     return layer.transform
   }
@@ -66,9 +142,9 @@ export function useFreeTransform(options: FreeTransformOptions) {
   })
 
   const freeTransformStyle = computed(() => {
-    const transform = activeDisplayTransform.value
-    if (!transform || !options.activeLayer()?.visible || !isTransforming.value) return undefined
-    return layerTransformStyle(transform)
+    const session = transformSession.value
+    if (!session) return undefined
+    return layerTransformStyle(session.groupDraft)
   })
 
   function findLayerElement(layerId: string) {
@@ -94,15 +170,18 @@ export function useFreeTransform(options: FreeTransformOptions) {
     if (!layer?.visible || !layer.transform) return true
 
     const freeTransform = transformSession.value
-    if (freeTransform?.layerId === layer.id) {
+    const member = freeTransform?.members.find((item) => item.layerId === layer.id)
+    if (freeTransform && member) {
       const draft = {
-        ...freeTransform.draft,
-        x: freeTransform.draft.x + nudge.x,
-        y: freeTransform.draft.y + nudge.y
+        ...freeTransform.drafts[layer.id]!,
+        x: freeTransform.drafts[layer.id]!.x + nudge.x,
+        y: freeTransform.drafts[layer.id]!.y + nudge.y
       }
-      transformSession.value = { ...freeTransform, draft }
-      applyElementTransform(freeTransform.target, draft)
-      if (freeTransformBox.value) applyElementTransform(freeTransformBox.value, draft)
+      freeTransform.drafts = { ...freeTransform.drafts, [layer.id]: draft }
+      applyElementTransform(member.target, draft)
+      if (freeTransform.members.length === 1 && freeTransformBox.value) {
+        applyElementTransform(freeTransformBox.value, draft)
+      }
       return true
     }
 
@@ -131,31 +210,50 @@ export function useFreeTransform(options: FreeTransformOptions) {
   function startFreeTransform() {
     if (transformSession.value || options.isBusy()) return
     commitKeyboardLayerMove()
-    const layer = options.activeLayer()
-    if (!layer?.transform || !layer.visible) return
-    const target = findLayerElement(layer.id)
-    if (!target) return
+    const activeId = options.activeLayerId()
+    const requested = options.selectedLayerIds()
+    const layerIds = requested.includes(activeId) || requested.length === 0 ? requested : [activeId, ...requested]
+    const candidateIds = layerIds.length ? layerIds : [activeId]
+
+    const allLayers = options.layers()
+    const members: TransformSessionMember[] = []
+    for (const layerId of candidateIds) {
+      const layer = allLayers.find((item) => item.id === layerId)
+      const target = findLayerElement(layerId)
+      const transform = layer?.transform
+      if (!layer || !target || !transform || !layer.visible) continue
+      members.push({ layerId, original: { ...transform, rotation: transform.rotation ?? 0 }, target })
+    }
+    if (!members.length) return
 
     cancelPointerInteractions()
-    const original = { ...layer.transform, rotation: layer.transform.rotation ?? 0 }
+    const groupOriginal = groupBoundsFromMembers(members)
+    const drafts: Record<string, LayerTransform> = {}
+    for (const member of members) drafts[member.layerId] = { ...member.original }
+
     transformSession.value = {
-      layerId: layer.id,
-      original,
-      draft: { ...original },
-      target
+      members,
+      groupOriginal,
+      groupDraft: { ...groupOriginal },
+      drafts
     }
-    target.classList.add('document-layer--transforming')
+    for (const member of members) member.target.classList.add('document-layer--transforming')
     options.scrollArea.value?.focus()
   }
 
   function commitFreeTransform() {
     options.flushInteractionFrame()
     const session = transformSession.value
-    if (session && !layerTransformsMatch(session.original, session.draft)) {
-      options.updateTransform(session.layerId, { ...session.draft })
+    if (session) {
+      for (const member of session.members) {
+        const draft = session.drafts[member.layerId]
+        if (draft && !layerTransformsMatch(member.original, draft)) {
+          options.updateTransform(member.layerId, { ...draft })
+        }
+        member.target.classList.remove('document-layer--transforming')
+        member.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: draft ?? member.original }))
+      }
     }
-    session?.target.classList.remove('document-layer--transforming')
-    if (session) session.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: session.draft }))
     transformInteraction.value = null
     transformSession.value = null
   }
@@ -164,16 +262,18 @@ export function useFreeTransform(options: FreeTransformOptions) {
     options.discardInteractionFrame()
     const session = transformSession.value
     if (session) {
-      applyElementTransform(session.target, session.original)
-      session.target.classList.remove('document-layer--transforming')
-      session.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: session.original }))
+      for (const member of session.members) {
+        applyElementTransform(member.target, member.original)
+        member.target.classList.remove('document-layer--transforming')
+        member.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: member.original }))
+      }
     }
     transformInteraction.value = null
     transformSession.value = null
   }
 
   function currentTransformDraft() {
-    return transformSession.value?.draft ?? activeDisplayTransform.value
+    return transformSession.value?.groupDraft ?? activeDisplayTransform.value
   }
 
   function captureTransformPointer(event: PointerEvent) {
@@ -253,12 +353,21 @@ export function useFreeTransform(options: FreeTransformOptions) {
         transform = rotateLayerTransform(interaction.initial, interaction.startAngle, pointer, snapRotation)
       }
 
-      const layerId = session.layerId
+      const interactionType = interaction.type
       options.scheduleInteractionFrame(() => {
         const current = transformSession.value
-        if (!current || current.layerId !== layerId) return
-        current.draft = transform
-        applyElementTransform(current.target, transform)
+        if (current !== session) return
+        current.groupDraft = transform
+        const drafts = interactionType === 'move'
+          ? applyGroupMove(current.members, current.groupOriginal, transform)
+          : interactionType === 'resize'
+            ? applyGroupResize(current.members, current.groupOriginal, transform)
+            : applyGroupRotate(current.members, current.groupOriginal, transform)
+        current.drafts = drafts
+        for (const member of current.members) {
+          const draft = drafts[member.layerId]
+          if (draft) applyElementTransform(member.target, draft)
+        }
         if (freeTransformBox.value) applyElementTransform(freeTransformBox.value, transform)
         if (transformRotationOutput.value) {
           transformRotationOutput.value.textContent = `${transform.rotation ?? 0}°`
@@ -342,7 +451,9 @@ export function useFreeTransform(options: FreeTransformOptions) {
 
   watch(options.activeLayerId, (layerId) => {
     if (keyboardLayerMove.value && keyboardLayerMove.value.layerId !== layerId) commitKeyboardLayerMove()
-    if (transformSession.value && transformSession.value.layerId !== layerId) commitFreeTransform()
+    if (transformSession.value && !transformSession.value.members.some((member) => member.layerId === layerId)) {
+      commitFreeTransform()
+    }
   })
 
   watch(options.activeTool, (tool) => {
@@ -353,7 +464,9 @@ export function useFreeTransform(options: FreeTransformOptions) {
     if (keyboardLayerCommitTimeout) clearTimeout(keyboardLayerCommitTimeout)
     keyboardLayerMove.value?.target.classList.remove('document-layer--dragging')
     dragState.value?.target.classList.remove('document-layer--dragging')
-    transformSession.value?.target.classList.remove('document-layer--transforming')
+    for (const member of transformSession.value?.members ?? []) {
+      member.target.classList.remove('document-layer--transforming')
+    }
   })
 
   return {

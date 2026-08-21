@@ -23,6 +23,7 @@ export interface SelectionMoveAnchor {
 
 export interface CanvasViewportProps {
   activeLayerId: string
+  selectedLayerIds: string[]
   activeTool: EditorTool
   autoSelectLayer: boolean
   brushColor: string
@@ -187,11 +188,17 @@ export interface LayerDragSession {
   target: HTMLElement
 }
 
-export interface TransformSession {
+export interface TransformSessionMember {
   layerId: string
   original: LayerTransform
-  draft: LayerTransform
   target: HTMLElement
+}
+
+export interface TransformSession {
+  members: TransformSessionMember[]
+  groupOriginal: LayerTransform
+  groupDraft: LayerTransform
+  drafts: Record<string, LayerTransform>
 }
 
 export interface KeyboardLayerMoveSession {

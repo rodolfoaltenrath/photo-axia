@@ -114,6 +114,8 @@ const {
 } = useFreeTransform({
   activeLayer: () => activeLayer.value,
   activeLayerId: () => props.activeLayerId,
+  selectedLayerIds: () => props.selectedLayerIds,
+  layers: () => props.layers,
   activeTool: () => props.activeTool,
   isBusy: () => props.isBusy,
   modifierKeys: () => modifierKeys.value,
@@ -787,7 +789,10 @@ onBeforeUnmount(() => {
 })
 
 defineExpose({
-  commitPendingTransform: commitFreeTransform,
+  commitPendingTransform: () => {
+    commitKeyboardLayerMove()
+    commitFreeTransform()
+  },
   discardPendingBrushPreview: clearBrushPreview,
   fitDocument,
   waitForLayerImages,

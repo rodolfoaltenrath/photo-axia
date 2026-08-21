@@ -2731,6 +2731,7 @@ async function openProject(recentPath = '') {
       await refreshLayerPreview(layer, true, true, layer.id === restored.view.activeLayerId)
     }
 
+    canvasViewport.value?.commitPendingTransform()
     const restoredObjectUrls = new Set(restored.layers.flatMap(layerObjectUrls))
     for (const source of restoredObjectUrls) trackedObjectUrls.delete(source)
     releaseAllEditorAssets(true)
@@ -3134,6 +3135,7 @@ onBeforeUnmount(() => {
       <CanvasViewport
         ref="canvasViewport"
         :active-layer-id="activeLayerId"
+        :selected-layer-ids="selectedLayerIds"
         :active-tool="activeTool"
         :auto-select-layer="autoSelectLayer"
         :brush-color="brushColor"

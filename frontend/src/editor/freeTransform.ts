@@ -198,7 +198,7 @@ function freeResize(
   return { width, height, localCenter }
 }
 
-function rotateVector(point: DocumentPoint, angle: number): DocumentPoint {
+export function rotateVector(point: DocumentPoint, angle: number): DocumentPoint {
   const cosine = Math.cos(angle)
   const sine = Math.sin(angle)
   return {
@@ -211,6 +211,6 @@ function dot(first: DocumentPoint, second: DocumentPoint) {
   return first.x * second.x + first.y * second.y
 }
 
-function normalizeRadians(value: number) {
+export function normalizeRadians(value: number) {
   return Math.atan2(Math.sin(value), Math.cos(value))
 }

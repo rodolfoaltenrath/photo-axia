@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"image"
 	_ "image/gif"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -384,8 +386,15 @@ func (a *App) readImageFile(path string) (ImportedImage, error) {
 	}
 
 	mimeType := "image/" + format
+	width, height := config.Width, config.Height
 	if format == "jpeg" {
 		mimeType = "image/jpeg"
+		// EXIF orientations 5-8 apply a 90°/270° rotation, which the frontend
+		// <img> element honors when painting — the raw decoded dimensions must
+		// be swapped to match, or the fitted layer box gets the wrong aspect ratio.
+		if orientation := jpegExifOrientation(path); orientation >= 5 && orientation <= 8 {
+			width, height = height, width
+		}
 	}
 	token, err := projectToken()
 	if err != nil {
@@ -400,11 +409,90 @@ func (a *App) readImageFile(path string) (ImportedImage, error) {
 	return ImportedImage{
 		ID:        id,
 		Name:      filepath.Base(path),
-		Width:     config.Width,
-		Height:    config.Height,
+		Width:     width,
+		Height:    height,
 		MimeType:  mimeType,
 		SourceURL: "/__axia_asset/" + id,
 	}, nil
+}
+
+// jpegExifOrientation reads the EXIF Orientation tag (0x0112) from a JPEG
+// file's APP1 segment, returning 1 (identity) when absent or unparsable.
+func jpegExifOrientation(path string) int {
+	file, err := os.Open(path)
+	if err != nil {
+		return 1
+	}
+	defer file.Close()
+
+	var soi [2]byte
+	if _, err := io.ReadFull(file, soi[:]); err != nil || soi[0] != 0xff || soi[1] != 0xd8 {
+		return 1
+	}
+
+	for {
+		var marker [2]byte
+		if _, err := io.ReadFull(file, marker[:]); err != nil || marker[0] != 0xff {
+			return 1
+		}
+		if marker[1] == 0xd8 || marker[1] == 0xd9 || (marker[1] >= 0xd0 && marker[1] <= 0xd7) {
+			continue
+		}
+		if marker[1] == 0xda {
+			return 1
+		}
+		var lengthBytes [2]byte
+		if _, err := io.ReadFull(file, lengthBytes[:]); err != nil {
+			return 1
+		}
+		segmentLength := int(binary.BigEndian.Uint16(lengthBytes[:]))
+		if segmentLength < 2 {
+			return 1
+		}
+		payload := make([]byte, segmentLength-2)
+		if _, err := io.ReadFull(file, payload); err != nil {
+			return 1
+		}
+		if marker[1] == 0xe1 {
+			if orientation, ok := parseExifOrientation(payload); ok {
+				return orientation
+			}
+		}
+	}
+}
+
+func parseExifOrientation(payload []byte) (int, bool) {
+	if len(payload) < 14 || string(payload[0:4]) != "Exif" || payload[4] != 0 || payload[5] != 0 {
+		return 0, false
+	}
+	tiff := payload[6:]
+	var order binary.ByteOrder
+	switch {
+	case tiff[0] == 'I' && tiff[1] == 'I':
+		order = binary.LittleEndian
+	case tiff[0] == 'M' && tiff[1] == 'M':
+		order = binary.BigEndian
+	default:
+		return 0, false
+	}
+	if order.Uint16(tiff[2:4]) != 0x002a {
+		return 0, false
+	}
+	ifdOffset := int(order.Uint32(tiff[4:8]))
+	if ifdOffset+2 > len(tiff) {
+		return 0, false
+	}
+	entryCount := int(order.Uint16(tiff[ifdOffset : ifdOffset+2]))
+	for i := 0; i < entryCount; i++ {
+		entryOffset := ifdOffset + 2 + i*12
+		if entryOffset+12 > len(tiff) {
+			break
+		}
+		if order.Uint16(tiff[entryOffset:entryOffset+2]) == 0x0112 {
+			return int(order.Uint16(tiff[entryOffset+8 : entryOffset+10])), true
+		}
+	}
+	return 0, false
 }
 
 func (a *App) assetHandler() http.Handler {
