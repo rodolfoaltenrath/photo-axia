@@ -70,7 +70,7 @@ import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
 import { moveLayerBy, moveLayerRelativeTo } from './editor/layerOrder'
-import { layerCanRasterize, rasterizedLayerPatch } from './editor/layerRasterization'
+import { layerCanRasterize, layerSupportsRotationBaking, rasterizedLayerPatch } from './editor/layerRasterization'
 import { layerCanExportPNG, quickLayerExportName } from './editor/layerExport'
 import { createFlattenedLayer, documentCanFlatten } from './editor/flattenImage'
 import { updateLayerSelection, type LayerSelectionMode } from './editor/layerSelection'
@@ -107,6 +107,7 @@ import {
   extractImageSelection
 } from './services/selectionEngine'
 import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
+import { applyGradient, disposeGradientEngine } from './services/gradientEngine'
 import { clearLayerStyleRenderCache, disposeLayerStyleCompositor } from './services/layerStyleCompositor'
 import {
   clearSmartLayerRenderCache,
@@ -115,6 +116,8 @@ import {
   seedSmartLayerRender
 } from './services/smartLayerRenderer'
 import type { BrushOperation } from './editor/brush'
+import type { GradientConfig, GradientGeometry } from './editor/gradient'
+import { gradientResultTransform } from './editor/gradientRaster'
 import {
   disposeSelectionMoveEngine,
   moveImageSelection,
@@ -155,6 +158,7 @@ const zoom = ref(100)
 const brushSize = ref(24)
 const brushColor = ref('#000000')
 const backgroundColor = ref('#ffffff')
+const gradientReversed = ref(false)
 const guides = ref<EditorGuide[]>([])
 const rulersVisible = ref(initialRulersVisibility())
 const guidesVisible = ref(true)
@@ -365,11 +369,14 @@ let pendingBrushCommit: {
   controller: AbortController
   label: string
 } | undefined
+let pendingGradientCommit: AbortController | undefined
 
 watch(
   [activeTool, activeLayerId, () => activeDocument.value.id],
   () => {
-    if (activeTool.value === 'brush' || activeTool.value === 'eraser') void ensureRasterLayerPaintable()
+    if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient') {
+      void ensureRasterLayerPaintable()
+    }
   },
   { flush: 'post' }
 )
@@ -450,7 +457,7 @@ async function ensureRasterLayerPaintable() {
   const layer = activeLayer.value
   if (
     isBusy.value ||
-    (activeTool.value !== 'brush' && activeTool.value !== 'eraser') ||
+    (activeTool.value !== 'brush' && activeTool.value !== 'eraser' && activeTool.value !== 'gradient') ||
     (layer.kind !== 'background' && layer.kind !== 'pixel') ||
     layer.image ||
     layer.transform
@@ -609,6 +616,14 @@ async function undoHistory() {
     rasterMutationBarrier.discard()
     canvasViewport.value?.discardPendingBrushPreview()
     statusText.value = `Desfeito: ${label}`
+    errorText.value = ''
+    return
+  }
+  if (pendingGradientCommit && rasterMutationBarrier.isPending) {
+    pendingGradientCommit.abort()
+    pendingGradientCommit = undefined
+    rasterMutationBarrier.discard()
+    statusText.value = 'Desfeito: Degradê'
     errorText.value = ''
     return
   }
@@ -1031,7 +1046,8 @@ async function duplicateSelectionOrLayer() {
     return
   }
 
-  canvasViewport.value?.commitPendingTransform()
+  if (!await settleRasterMutation('Finalizando edição antes de copiar a seleção…')) return
+  if (!layers.value.includes(source) || !source.image || !source.transform) return
   const sourceImage = { ...source.image }
   const sourceTransform = { ...source.transform }
   for (const assetSource of [sourceImage.sourceUrl, sourceImage.previewUrl]) {
@@ -1540,6 +1556,16 @@ function updateLayerTransform(layerId: string, transform: LayerTransform) {
 
   if (floatingSelectionSession.value?.layerId === layerId) clearFloatingSelectionSession()
 
+  if ((transform.rotation ?? 0) !== 0 && layerSupportsRotationBaking(layer)) {
+    // Apply the committed (still rotated) geometry immediately so nothing
+    // visually reverts to the pre-rotation state while the pixel bake runs
+    // in the background — this matters most for a multi-layer group rotate,
+    // where each member's bake is queued and only runs once earlier ones finish.
+    layer.transform = transform
+    queueLayerRotationBake(layer, previous, transform)
+    return
+  }
+
   const sizeChanged = previous?.width !== transform.width || previous?.height !== transform.height
   const onlyMoved =
     previous &&
@@ -1554,6 +1580,116 @@ function updateLayerTransform(layerId: string, transform: LayerTransform) {
     after: { transform: { ...transform } }
   })
   if (sizeChanged) void refreshLayerPreview(layer)
+}
+
+// Bakes run one at a time: a multi-layer group rotate (Ctrl+T with several
+// layers selected) commits each member synchronously in the same tick, and
+// bakeLayerRotation shares global mutable state (isBusy, transientObjectUrls,
+// preview bookkeeping) that isn't safe for overlapping runs.
+let rotationBakeQueue: Promise<boolean> = Promise.resolve(true)
+
+// Tracked on rasterMutationBarrier so undo/redo/export (which already wait
+// on that barrier before touching layers.value) also wait for an in-flight
+// bake instead of racing history navigation against it. Also chains onto
+// whatever the barrier is already tracking (e.g. a brush stroke still
+// committing) so that unrelated pending work isn't silently dropped from
+// tracking when rasterMutationBarrier.track() below overwrites it.
+function queueLayerRotationBake(layer: LayerItem, previous: LayerTransform | undefined, transform: LayerTransform) {
+  const waitForOtherPendingMutation = rasterMutationBarrier.isPending
+    ? rasterMutationBarrier.wait()
+    : Promise.resolve(true)
+  rotationBakeQueue = Promise.all([rotationBakeQueue, waitForOtherPendingMutation])
+    .then(() => bakeLayerRotation(layer, previous, transform))
+  rasterMutationBarrier.track(rotationBakeQueue)
+}
+
+// Bakes a committed rotation into the layer's pixels, resetting the
+// transform to an axis-aligned box (rotation 0) so the next Ctrl+T session
+// starts straight, the same way Photoshop settles a rotated pixel layer.
+async function bakeLayerRotation(
+  layer: LayerItem,
+  previous: LayerTransform | undefined,
+  transform: LayerTransform
+): Promise<boolean> {
+  const documentId = activeDocument.value.id
+  const previousPatch = cloneLayerPatch({
+    kind: layer.kind,
+    image: layer.image,
+    smart: layer.smart,
+    text: layer.text,
+    transform: previous,
+    styles: layer.styles
+  })
+  let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
+  // Restore (not just clear) isBusy on exit: a bake can be queued while
+  // another isBusy-owning operation (e.g. rasterizeLayer) is already running
+  // and awaiting this same bake via settleRasterMutation — clearing isBusy
+  // unconditionally would re-enable other actions mid-operation.
+  const wasBusy = isBusy.value
+  isBusy.value = true
+  statusText.value = 'Aplicando rotação…'
+  try {
+    const appearance = await renderLayerAppearance(activeDocument.value, layer, 'local')
+    createdSource = URL.createObjectURL(appearance.blob)
+    trackedObjectUrls.add(createdSource)
+
+    const sourceImage: ImageAsset = {
+      width: appearance.width,
+      height: appearance.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: appearance.blob.size
+    }
+    const patch = rasterizedLayerPatch(appearance, sourceImage)
+    const previewTarget = workingPreviewSize(sourceImage, patch.transform)
+    const preview = await createImagePreview(sourceImage, previewTarget.width, previewTarget.height)
+    createdPreviewUrl = preview?.url.startsWith('blob:') ? preview.url : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+    await Promise.all([preloadImage(createdSource), preview ? preloadImage(preview.url) : Promise.resolve()])
+
+    if (activeDocument.value.id !== documentId || !layers.value.includes(layer)) {
+      throw new Error('A camada original não está mais disponível.')
+    }
+
+    for (const source of layerObjectUrls(layer)) transientObjectUrls.add(source)
+    previewControllers.get(layer.id)?.abort()
+    previewControllers.delete(layer.id)
+    previewGenerations.set(layer.id, (previewGenerations.get(layer.id) ?? 0) + 1)
+    const image: ImageAsset = {
+      ...sourceImage,
+      previewUrl: preview?.url,
+      previewWidth: preview?.width ?? sourceImage.width,
+      previewHeight: preview?.height ?? sourceImage.height
+    }
+    const after = cloneLayerPatch({ ...patch, image })
+    Object.assign(layer, after)
+    recordHistory('Girar camada', {
+      type: 'layer:patch',
+      layerId: layer.id,
+      before: previousPatch,
+      after
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = 'Rotação aplicada'
+    return true
+  } catch (error) {
+    layer.transform = previous
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    if (createdPreviewUrl) {
+      URL.revokeObjectURL(createdPreviewUrl)
+      trackedObjectUrls.delete(createdPreviewUrl)
+    }
+    transientObjectUrls.clear()
+    showError(error, 'Não foi possível aplicar a rotação da camada.')
+    return false
+  } finally {
+    isBusy.value = wasBusy
+  }
 }
 
 function toPixelSize(settings: NewDocumentSettings) {
@@ -1594,7 +1730,9 @@ async function createDocument(settings: NewDocumentSettings) {
     showError(error, 'Não foi possível criar o documento.')
   } finally {
     isBusy.value = false
-    if (activeTool.value === 'brush' || activeTool.value === 'eraser') void ensureRasterLayerPaintable()
+    if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient') {
+      void ensureRasterLayerPaintable()
+    }
   }
 }
 
@@ -1970,7 +2108,11 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
         width: image.width,
         height: image.height,
         mimeType: image.mimeType,
-        sourceUrl: image.sourceUrl
+        sourceUrl: image.sourceUrl,
+        byteSize: image.byteSize,
+        resolutionDpiX: image.resolutionDpiX,
+        resolutionDpiY: image.resolutionDpiY,
+        resolutionSource: image.resolutionSource
       },
       transform: imageTransform(image)
     }))
@@ -2078,7 +2220,8 @@ async function deleteSelectedPixels() {
     return
   }
 
-  canvasViewport.value?.commitPendingTransform()
+  if (!await settleRasterMutation('Finalizando edição antes de apagar…')) return
+  if (!layers.value.includes(layer) || !layer.image || !layer.transform) return
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
   for (const source of [beforeImage.sourceUrl, beforeImage.previewUrl]) {
@@ -2186,7 +2329,8 @@ async function commitSelectionMove(
     return
   }
 
-  canvasViewport.value?.commitPendingTransform()
+  if (!await settleRasterMutation('Finalizando edição antes de mover a seleção…')) return
+  if (!layers.value.includes(layer) || !layer.image || !layer.transform) return
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
   const beforeSelection = cloneSelection(originalSelection)!
@@ -2498,6 +2642,121 @@ function commitBrushStroke(
   }).catch(() => undefined)
 }
 
+async function performGradient(
+  geometry: GradientGeometry,
+  config: GradientConfig,
+  gradientSelection: SelectionRegion | null,
+  signal: AbortSignal
+) {
+  if (isBusy.value) return false
+  clearFloatingSelectionSession()
+  const layer = activeLayer.value
+  if (
+    (layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') ||
+    !layer.image ||
+    !layer.transform
+  ) return false
+
+  const documentId = activeDocument.value.id
+  const beforeImage = { ...layer.image }
+  const beforeTransform = { ...layer.transform }
+  for (const source of [beforeImage.sourceUrl, beforeImage.previewUrl]) {
+    if (source?.startsWith('blob:')) transientObjectUrls.add(source)
+  }
+  let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Aplicando degradê…'
+  try {
+    const previewTarget = workingPreviewSize(beforeImage, beforeTransform)
+    const result = await applyGradient(
+      beforeImage,
+      beforeTransform,
+      geometry,
+      config,
+      gradientSelection,
+      previewTarget.width,
+      previewTarget.height,
+      activeDocument.value.width,
+      activeDocument.value.height,
+      signal
+    )
+    signal.throwIfAborted()
+    createdSource = URL.createObjectURL(result.blob)
+    trackedObjectUrls.add(createdSource)
+    createdPreviewUrl = result.previewBlob ? URL.createObjectURL(result.previewBlob) : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+
+    const newAsset: ImageAsset = {
+      width: result.width,
+      height: result.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: result.blob.size,
+      previewUrl: createdPreviewUrl,
+      previewWidth: result.previewWidth,
+      previewHeight: result.previewHeight
+    }
+    await preloadImage(newAsset.previewUrl ?? newAsset.sourceUrl, signal)
+    signal.throwIfAborted()
+    if (activeDocument.value.id !== documentId || !layers.value.includes(layer)) {
+      throw new Error('A camada original não está mais disponível.')
+    }
+
+    const newTransform = gradientResultTransform(beforeTransform, beforeImage.width, beforeImage.height, result)
+    layer.image = newAsset
+    layer.transform = newTransform
+    recordHistory('Degradê', {
+      type: 'layer:patch',
+      layerId: layer.id,
+      before: { image: beforeImage, transform: beforeTransform },
+      after: { image: { ...newAsset }, transform: { ...newTransform } }
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = 'Degradê aplicado'
+    return true
+  } catch (error) {
+    layer.image = beforeImage
+    layer.transform = beforeTransform
+    if (createdSource) {
+      URL.revokeObjectURL(createdSource)
+      trackedObjectUrls.delete(createdSource)
+    }
+    if (createdPreviewUrl) {
+      URL.revokeObjectURL(createdPreviewUrl)
+      trackedObjectUrls.delete(createdPreviewUrl)
+    }
+    transientObjectUrls.clear()
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      showError(error, 'Não foi possível aplicar o degradê.')
+    }
+    return false
+  } finally {
+    isBusy.value = false
+  }
+}
+
+function commitGradient(
+  geometry: GradientGeometry,
+  config: GradientConfig,
+  gradientSelection: SelectionRegion | null
+) {
+  if (rasterMutationBarrier.isPending) return
+  const controller = new AbortController()
+  pendingGradientCommit = controller
+  const commit = rasterMutationBarrier.track(performGradient(
+    geometry,
+    config,
+    cloneSelection(gradientSelection),
+    controller.signal
+  ))
+  void commit.finally(() => {
+    if (pendingGradientCommit === controller) pendingGradientCommit = undefined
+  }).catch(() => undefined)
+}
+
 function preloadImage(url: string, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     const image = new Image()
@@ -2641,6 +2900,8 @@ async function saveProject(saveAs = false) {
   if (activeSmartLayerEditSession.value) return finishSmartLayerEdit()
   if (isBusy.value || !hasOpenDocument.value) return false
   canvasViewport.value?.commitPendingTransform()
+  if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição antes de salvar…'
+  if (!await rasterMutationBarrier.wait()) return false
   isBusy.value = true
   errorText.value = ''
   statusText.value = 'Preparando projeto Axia…'
@@ -2732,6 +2993,8 @@ async function openProject(recentPath = '') {
     }
 
     canvasViewport.value?.commitPendingTransform()
+    if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição atual…'
+    await rasterMutationBarrier.wait()
     const restoredObjectUrls = new Set(restored.layers.flatMap(layerObjectUrls))
     for (const source of restoredObjectUrls) trackedObjectUrls.delete(source)
     releaseAllEditorAssets(true)
@@ -2981,6 +3244,7 @@ function handleShortcut(event: KeyboardEvent) {
     v: 'move',
     b: 'brush',
     e: 'eraser',
+    g: 'gradient',
     i: 'eyedropper',
     c: 'crop',
     t: 'text',
@@ -3015,9 +3279,12 @@ onBeforeUnmount(() => {
   if (previewRefreshTimer) clearTimeout(previewRefreshTimer)
   pendingBrushCommit?.controller.abort()
   pendingBrushCommit = undefined
+  pendingGradientCommit?.abort()
+  pendingGradientCommit = undefined
   rasterMutationBarrier.discard()
   disposeSelectionEngine()
   disposeBrushEngine()
+  disposeGradientEngine()
   disposeSelectionMoveEngine()
   disposeImagePreviewWorker()
   disposeLayerStyleCompositor()
@@ -3140,6 +3407,9 @@ onBeforeUnmount(() => {
         :auto-select-layer="autoSelectLayer"
         :brush-color="brushColor"
         :brush-size="brushSize"
+        :foreground-color="brushColor"
+        :background-color="backgroundColor"
+        :gradient-reversed="gradientReversed"
         :document="activeDocument"
         :guides="guides"
         :guides-locked="guidesLocked"
@@ -3163,6 +3433,8 @@ onBeforeUnmount(() => {
         @magic-wand-select="selectWithMagicWand"
         @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"
+        @gradient-gesture="commitGradient"
+        @update:gradient-reversed="gradientReversed = $event"
         @sample-color="sampleColor"
         @update-guide="updateGuide"
         @create-text="addTextLayer"

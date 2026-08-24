@@ -717,14 +717,47 @@ textarea:focus-visible,
 .document-layer,
 .document-layer img,
 .selection-move-preview,
-.brush-preview {
+.brush-preview,
+.gradient-preview,
+.gradient-controls {
   position: absolute;
 }
 
 .brush-preview,
-.selection-move-preview {
+.selection-move-preview,
+.gradient-preview,
+.gradient-controls {
   inset: 0 auto auto 0;
   pointer-events: none;
+}
+
+.gradient-preview {
+  z-index: 1;
+}
+
+.gradient-controls {
+  z-index: 30;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.gradient-controls-line {
+  stroke: #f7fbff;
+  filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 1px #000);
+}
+
+.gradient-control {
+  stroke: #10151b;
+  filter: drop-shadow(0 0 1px rgb(255 255 255 / 85%));
+}
+
+.gradient-control--start {
+  fill: var(--gradient-start-color, #000);
+}
+
+.gradient-control--end {
+  fill: var(--gradient-end-color, #fff);
 }
 
 .canvas-workspace {
@@ -912,6 +945,38 @@ textarea:focus-visible,
 
 .selection-move-hint {
   color: #d7e0e8;
+}
+
+.gradient-options,
+.gradient-mode-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gradient-mode-control {
+  gap: 0;
+}
+
+.gradient-mode-control button {
+  border-radius: 0;
+}
+
+.gradient-mode-control button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.gradient-mode-control button:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.gradient-mode-control button.active {
+  background: #3b78b4;
+  color: #fff;
+}
+
+.gradient-reverse-button {
+  min-width: 30px;
 }
 
 .document-layers {
@@ -2765,6 +2830,13 @@ textarea:focus-visible,
   gap: 12px;
 }
 
+.document-resolution-help {
+  margin: -2px 0 2px;
+  color: var(--ui-text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .document-advanced dt,
 .document-advanced dd {
   margin: 0;
@@ -2775,13 +2847,23 @@ textarea:focus-visible,
 }
 
 .document-estimate {
+  display: grid;
+  grid-template-columns: auto 1fr;
   color: var(--ui-text-dim);
   font-size: 11px;
 }
 
 .document-estimate strong {
+  justify-self: end;
   color: var(--ui-text-muted);
   font-weight: 600;
+}
+
+.document-estimate small {
+  grid-column: 1 / -1;
+  justify-self: end;
+  color: var(--ui-text-dim);
+  font-size: inherit;
 }
 
 .save-preset-row {

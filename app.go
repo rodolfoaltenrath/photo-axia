@@ -144,12 +144,16 @@ type EditorStatus struct {
 }
 
 type ImportedImage struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	MimeType  string `json:"mimeType"`
-	SourceURL string `json:"sourceUrl"`
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	Width            int     `json:"width"`
+	Height           int     `json:"height"`
+	MimeType         string  `json:"mimeType"`
+	SourceURL        string  `json:"sourceUrl"`
+	ByteSize         int64   `json:"byteSize,omitempty"`
+	ResolutionDPIX   float64 `json:"resolutionDpiX,omitempty"`
+	ResolutionDPIY   float64 `json:"resolutionDpiY,omitempty"`
+	ResolutionSource string  `json:"resolutionSource,omitempty"`
 }
 
 func NewApp() *App {
@@ -392,9 +396,23 @@ func (a *App) readImageFile(path string) (ImportedImage, error) {
 		// EXIF orientations 5-8 apply a 90°/270° rotation, which the frontend
 		// <img> element honors when painting — the raw decoded dimensions must
 		// be swapped to match, or the fitted layer box gets the wrong aspect ratio.
-		if orientation := jpegExifOrientation(path); orientation >= 5 && orientation <= 8 {
-			width, height = height, width
+		// Reuse the already-open handle (seek back to 0) instead of reopening the file.
+		if _, err := file.Seek(0, io.SeekStart); err == nil {
+			if orientation := jpegExifOrientation(file); orientation >= 5 && orientation <= 8 {
+				width, height = height, width
+			}
 		}
+	}
+	resolutionDPIX, resolutionDPIY, resolutionSource := 0.0, 0.0, ""
+	if _, err := file.Seek(0, io.SeekStart); err == nil {
+		header, readErr := io.ReadAll(io.LimitReader(file, 256*1024))
+		if readErr == nil {
+			resolutionDPIX, resolutionDPIY, resolutionSource = imageResolutionFromHeader(header, format)
+		}
+	}
+	byteSize := int64(0)
+	if info, statErr := file.Stat(); statErr == nil {
+		byteSize = info.Size()
 	}
 	token, err := projectToken()
 	if err != nil {
@@ -413,26 +431,169 @@ func (a *App) readImageFile(path string) (ImportedImage, error) {
 		Height:    height,
 		MimeType:  mimeType,
 		SourceURL: "/__axia_asset/" + id,
+		ByteSize:         byteSize,
+		ResolutionDPIX:   resolutionDPIX,
+		ResolutionDPIY:   resolutionDPIY,
+		ResolutionSource: resolutionSource,
 	}, nil
 }
 
-// jpegExifOrientation reads the EXIF Orientation tag (0x0112) from a JPEG
-// file's APP1 segment, returning 1 (identity) when absent or unparsable.
-func jpegExifOrientation(path string) int {
-	file, err := os.Open(path)
-	if err != nil {
-		return 1
+func imageResolutionFromHeader(data []byte, format string) (float64, float64, string) {
+	normalize := func(value float64) float64 {
+		if value < 1 || value > 100000 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0
+		}
+		return math.Round(value*100) / 100
 	}
-	defer file.Close()
+	if format == "png" && len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}) {
+		for offset := 8; offset+12 <= len(data); {
+			length := int(binary.BigEndian.Uint32(data[offset : offset+4]))
+			end := offset + 12 + length
+			if length < 0 || end < offset || end > len(data) {
+				break
+			}
+			if string(data[offset+4:offset+8]) == "pHYs" && length == 9 && data[offset+16] == 1 {
+				x := normalize(float64(binary.BigEndian.Uint32(data[offset+8:offset+12])) * 0.0254)
+				y := normalize(float64(binary.BigEndian.Uint32(data[offset+12:offset+16])) * 0.0254)
+				if x > 0 && y > 0 {
+					return x, y, "png-phys"
+				}
+				break
+			}
+			offset = end
+		}
+	}
+	if format == "jpeg" && len(data) >= 4 && data[0] == 0xff && data[1] == 0xd8 {
+		jfifX, jfifY := 0.0, 0.0
+		for offset := 2; offset+4 <= len(data); {
+			for offset < len(data) && data[offset] == 0xff {
+				offset++
+			}
+			if offset >= len(data) {
+				break
+			}
+			marker := data[offset]
+			offset++
+			if marker == 0xd9 || marker == 0xda {
+				break
+			}
+			if marker == 0x01 || (marker >= 0xd0 && marker <= 0xd7) {
+				continue
+			}
+			if offset+2 > len(data) {
+				break
+			}
+			length := int(binary.BigEndian.Uint16(data[offset : offset+2]))
+			if length < 2 || offset+length > len(data) {
+				break
+			}
+			payload := data[offset+2 : offset+length]
+			if marker == 0xe0 && len(payload) >= 12 && string(payload[:5]) == "JFIF\x00" {
+				factor := 0.0
+				if payload[7] == 1 {
+					factor = 1
+				} else if payload[7] == 2 {
+					factor = 2.54
+				}
+				x := normalize(float64(binary.BigEndian.Uint16(payload[8:10])) * factor)
+				y := normalize(float64(binary.BigEndian.Uint16(payload[10:12])) * factor)
+				if x > 0 && y > 0 {
+					jfifX, jfifY = x, y
+				}
+			} else if marker == 0xe1 {
+				if exifX, exifY, ok := parseExifResolution(payload); ok {
+					x, y := normalize(exifX), normalize(exifY)
+					if x > 0 && y > 0 {
+						return x, y, "jpeg-exif"
+					}
+				}
+			}
+			offset += length
+		}
+		if jfifX > 0 && jfifY > 0 {
+			return jfifX, jfifY, "jpeg-jfif"
+		}
+	}
+	return 0, 0, ""
+}
 
+func parseExifResolution(payload []byte) (float64, float64, bool) {
+	if len(payload) < 14 || string(payload[0:4]) != "Exif" || payload[4] != 0 || payload[5] != 0 {
+		return 0, 0, false
+	}
+	tiff := payload[6:]
+	var order binary.ByteOrder
+	switch {
+	case tiff[0] == 'I' && tiff[1] == 'I':
+		order = binary.LittleEndian
+	case tiff[0] == 'M' && tiff[1] == 'M':
+		order = binary.BigEndian
+	default:
+		return 0, 0, false
+	}
+	if order.Uint16(tiff[2:4]) != 0x002a {
+		return 0, 0, false
+	}
+	ifdOffset := int(order.Uint32(tiff[4:8]))
+	if ifdOffset < 0 || ifdOffset+2 > len(tiff) {
+		return 0, 0, false
+	}
+	entryCount := int(order.Uint16(tiff[ifdOffset : ifdOffset+2]))
+	x, y, unit := 0.0, 0.0, uint16(2)
+	for index := 0; index < entryCount; index++ {
+		entryOffset := ifdOffset + 2 + index*12
+		if entryOffset+12 > len(tiff) {
+			return 0, 0, false
+		}
+		tag := order.Uint16(tiff[entryOffset : entryOffset+2])
+		typeID := order.Uint16(tiff[entryOffset+2 : entryOffset+4])
+		count := order.Uint32(tiff[entryOffset+4 : entryOffset+8])
+		if tag == 0x0128 && typeID == 3 && count == 1 {
+			unit = order.Uint16(tiff[entryOffset+8 : entryOffset+10])
+			continue
+		}
+		if (tag != 0x011a && tag != 0x011b) || typeID != 5 || count != 1 {
+			continue
+		}
+		rationalOffset := int(order.Uint32(tiff[entryOffset+8 : entryOffset+12]))
+		if rationalOffset < 0 || rationalOffset+8 > len(tiff) {
+			return 0, 0, false
+		}
+		denominator := order.Uint32(tiff[rationalOffset+4 : rationalOffset+8])
+		if denominator == 0 {
+			continue
+		}
+		value := float64(order.Uint32(tiff[rationalOffset:rationalOffset+4])) / float64(denominator)
+		if tag == 0x011a {
+			x = value
+		} else {
+			y = value
+		}
+	}
+	factor := 0.0
+	if unit == 2 {
+		factor = 1
+	} else if unit == 3 {
+		factor = 2.54
+	}
+	if x <= 0 || y <= 0 || factor == 0 {
+		return 0, 0, false
+	}
+	return x * factor, y * factor, true
+}
+
+// jpegExifOrientation reads the EXIF Orientation tag (0x0112) from a JPEG
+// stream's APP1 segment, returning 1 (identity) when absent or unparsable.
+// The reader must be positioned at the start of the JPEG (SOI marker).
+func jpegExifOrientation(r io.Reader) int {
 	var soi [2]byte
-	if _, err := io.ReadFull(file, soi[:]); err != nil || soi[0] != 0xff || soi[1] != 0xd8 {
+	if _, err := io.ReadFull(r, soi[:]); err != nil || soi[0] != 0xff || soi[1] != 0xd8 {
 		return 1
 	}
 
 	for {
 		var marker [2]byte
-		if _, err := io.ReadFull(file, marker[:]); err != nil || marker[0] != 0xff {
+		if _, err := io.ReadFull(r, marker[:]); err != nil || marker[0] != 0xff {
 			return 1
 		}
 		if marker[1] == 0xd8 || marker[1] == 0xd9 || (marker[1] >= 0xd0 && marker[1] <= 0xd7) {
@@ -442,7 +603,7 @@ func jpegExifOrientation(path string) int {
 			return 1
 		}
 		var lengthBytes [2]byte
-		if _, err := io.ReadFull(file, lengthBytes[:]); err != nil {
+		if _, err := io.ReadFull(r, lengthBytes[:]); err != nil {
 			return 1
 		}
 		segmentLength := int(binary.BigEndian.Uint16(lengthBytes[:]))
@@ -450,7 +611,7 @@ func jpegExifOrientation(path string) int {
 			return 1
 		}
 		payload := make([]byte, segmentLength-2)
-		if _, err := io.ReadFull(file, payload); err != nil {
+		if _, err := io.ReadFull(r, payload); err != nil {
 			return 1
 		}
 		if marker[1] == 0xe1 {

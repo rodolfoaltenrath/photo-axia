@@ -87,6 +87,14 @@ defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
             :height="view.brushPreviewDimensions.height"
           ></canvas>
           <canvas
+            v-if="view.gradientPreviewStyle && view.gradientInteraction?.layerId === layer.id"
+            :ref="actions.captureGradientPreviewCanvas"
+            class="gradient-preview"
+            :style="view.gradientPreviewStyle"
+            :width="view.gradientPreviewDimensions.width"
+            :height="view.gradientPreviewDimensions.height"
+          ></canvas>
+          <canvas
             v-if="view.selectionMovePreviewStyle && view.selectionMoveInteraction?.layerId === layer.id"
             :ref="actions.captureSelectionMoveCanvas"
             class="selection-move-preview"
@@ -103,6 +111,43 @@ defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
       :document-width="view.documentWidth"
       :selection="view.selection"
     />
+    <svg
+      v-if="view.gradientInteraction"
+      class="gradient-controls"
+      :viewBox="`0 0 ${view.documentWidth} ${view.documentHeight}`"
+      :style="{
+        '--gradient-start-color': view.gradientInteraction.config.reversed
+          ? view.gradientInteraction.config.backgroundColor
+          : view.gradientInteraction.config.foregroundColor,
+        '--gradient-end-color': view.gradientInteraction.config.reversed
+          ? view.gradientInteraction.config.foregroundColor
+          : view.gradientInteraction.config.backgroundColor
+      }"
+      aria-hidden="true"
+    >
+      <line
+        class="gradient-controls-line"
+        :x1="view.gradientInteraction.geometry.start.x"
+        :y1="view.gradientInteraction.geometry.start.y"
+        :x2="view.gradientInteraction.geometry.end.x"
+        :y2="view.gradientInteraction.geometry.end.y"
+        :stroke-width="1.5 / Math.max(0.01, view.scale)"
+      />
+      <circle
+        class="gradient-control gradient-control--start"
+        :cx="view.gradientInteraction.geometry.start.x"
+        :cy="view.gradientInteraction.geometry.start.y"
+        :r="5 / Math.max(0.01, view.scale)"
+        :stroke-width="1.5 / Math.max(0.01, view.scale)"
+      />
+      <circle
+        class="gradient-control gradient-control--end"
+        :cx="view.gradientInteraction.geometry.end.x"
+        :cy="view.gradientInteraction.geometry.end.y"
+        :r="5 / Math.max(0.01, view.scale)"
+        :stroke-width="1.5 / Math.max(0.01, view.scale)"
+      />
+    </svg>
     <div
       v-if="view.freeTransformStyle"
       :ref="actions.captureFreeTransformBox"

@@ -15,6 +15,8 @@ export interface GradientGeometry {
   end: SelectionPoint
 }
 
+export type GradientGestureAction = 'confirm' | 'cancel'
+
 export const MINIMUM_GRADIENT_LENGTH = 0.5
 
 export const DEFAULT_GRADIENT_CONFIG: Readonly<GradientConfig> = Object.freeze({
@@ -69,6 +71,10 @@ export function gradientIsDegenerate(
 ) {
   if (![geometry.start.x, geometry.start.y, geometry.end.x, geometry.end.y].every(Number.isFinite)) return true
   return gradientLength(geometry) < Math.max(0, minimumLength)
+}
+
+export function gradientGestureAction(eventType: string, geometry: GradientGeometry): GradientGestureAction {
+  return eventType === 'pointerup' && !gradientIsDegenerate(geometry) ? 'confirm' : 'cancel'
 }
 
 export function gradientLineBounds(geometry: GradientGeometry): SelectionBounds {

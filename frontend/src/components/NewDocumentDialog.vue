@@ -4,6 +4,7 @@ import {
   BUILTIN_DOCUMENT_PRESETS,
   convertDocumentUnit,
   documentBaseMemoryBytes,
+  documentPhysicalSize,
   documentPixelSize,
   parseCustomDocumentPresets,
   validateDocumentSettings,
@@ -53,6 +54,10 @@ const visiblePresets = computed(() => (
 const pixelSize = computed(() => documentPixelSize(form))
 const validationError = computed(() => validateDocumentSettings(form))
 const megapixels = computed(() => (pixelSize.value.width * pixelSize.value.height / 1_000_000).toFixed(2))
+const physicalSize = computed(() => documentPhysicalSize(form))
+const physicalSizeLabel = computed(() => (
+  `${physicalSize.value.widthCentimeters.toFixed(2)} × ${physicalSize.value.heightCentimeters.toFixed(2)} cm`
+))
 const memoryLabel = computed(() => {
   const bytes = documentBaseMemoryBytes(form)
   return bytes < 1024 * 1024
@@ -267,6 +272,15 @@ watch(() => props.open, async (open) => {
             </span>
           </label>
 
+          <p class="document-resolution-help field-full">
+            <template v-if="form.unit === 'px'">
+              Em pixels, o PPI define apenas o tamanho físico e os metadados: não redimensiona o documento nem reduz o arquivo.
+            </template>
+            <template v-else>
+              Em unidades físicas, o PPI determina quantos pixels serão criados.
+            </template>
+          </p>
+
           <div class="orientation-control field-full">
             <span>Orientação</span>
             <button :disabled="busy" type="button" @click="swapOrientation">↔ Trocar largura e altura</button>
@@ -293,6 +307,7 @@ watch(() => props.open, async (open) => {
           <div class="document-estimate field-full">
             <span>Tamanho base</span>
             <strong>{{ pixelSize.width }} × {{ pixelSize.height }} px · {{ memoryLabel }}</strong>
+            <small>Tamanho físico em {{ form.resolutionDpi || 0 }} ppi: {{ physicalSizeLabel }}</small>
           </div>
 
           <p v-if="validationError" class="form-error field-full" role="alert">{{ validationError }}</p>

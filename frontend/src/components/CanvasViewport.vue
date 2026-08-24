@@ -23,6 +23,7 @@ import { useFreeTransform } from './canvas/composables/useFreeTransform'
 import { useSelectionInteraction } from './canvas/composables/useSelectionInteraction'
 import { useSelectionMove } from './canvas/composables/useSelectionMove'
 import { useBrushInteraction } from './canvas/composables/useBrushInteraction'
+import { useGradientInteraction } from './canvas/composables/useGradientInteraction'
 import { useLayerImageReadiness } from './canvas/composables/useLayerImageHandoff'
 import { readBrowserImages } from '../services/imageImport'
 import type { DocumentPoint } from '../editor/freeTransform'
@@ -272,6 +273,36 @@ const {
 })
 
 const {
+  cancelGradient,
+  captureGradientPreviewCanvas,
+  gradientInteraction,
+  gradientPreviewDimensions,
+  gradientPreviewStyle,
+  hasGradientPointer,
+  startGradientPointer,
+  stopGradientPointer,
+  updateGradientPointer
+} = useGradientInteraction({
+  activeTool: () => props.activeTool,
+  config: () => ({
+    type: 'linear',
+    foregroundColor: props.foregroundColor,
+    backgroundColor: props.backgroundColor,
+    reversed: props.gradientReversed
+  }),
+  document: () => props.document,
+  isBusy: () => props.isBusy,
+  paintableLayer: () => paintableLayer.value,
+  scale: () => scale.value,
+  selection: () => props.selection,
+  scrollArea,
+  documentPointFromPointer: pointerToDocument,
+  scheduleInteractionFrame,
+  discardInteractionFrame,
+  confirm: (geometry, config, selection) => emit('gradientGesture', geometry, config, selection)
+})
+
+const {
   cancelSelectionMove,
   captureSelectionMoveCanvas,
   commitKeyboardSelectionMove,
@@ -337,6 +368,7 @@ const {
   cancelTransform: cancelFreeTransform,
   commitTransform: commitFreeTransform,
   cancelBrush,
+  cancelGradient,
   cancelSelectionMove,
   cancelSelection,
   clearSelection: () => emit('update:selection', null),
@@ -356,7 +388,7 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--scrolling': isNativeScrolling.value,
   'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--selection':
-    props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser',
+    props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser' || props.activeTool === 'gradient',
   'canvas-scroll--eyedropper': props.activeTool === 'eyedropper',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
@@ -374,6 +406,9 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
   backgroundStyle: backgroundStyle.value,
   brushPreviewDimensions: brushPreviewDimensions.value,
   brushPreviewStyle: brushPreviewStyle.value,
+  gradientInteraction: gradientInteraction.value,
+  gradientPreviewDimensions: gradientPreviewDimensions.value,
+  gradientPreviewStyle: gradientPreviewStyle.value,
   defaultLayerTransform: defaultLayerTransform.value,
   documentHeight: props.document.height,
   documentOffsetX: documentViewportOffset.value.x,
@@ -409,6 +444,7 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
 const canvasSurfaceActions: CanvasSurfaceActions = {
   brushPreviewHidesLayer,
   captureBrushPreviewCanvas,
+  captureGradientPreviewCanvas,
   captureCanvasRulers,
   captureFreeTransformBox,
   captureGuideOverlay,
@@ -627,6 +663,11 @@ function startViewportPointer(event: PointerEvent) {
     if (point && startBrushPointer(event, point, props.activeTool === 'eraser' ? 'erase' : 'paint')) return
   }
 
+  if (props.activeTool === 'gradient' && !isSpacePressed.value) {
+    const point = pointerToDocument(event)
+    if (point && startGradientPointer(event, point)) return
+  }
+
   const textLayerTarget = target?.closest('.document-layer[data-layer-kind="text"]')
   if (event.button === 0 && props.activeTool === 'text' && !isSpacePressed.value && !textLayerTarget) {
     const point = pointerToDocument(event)
@@ -660,6 +701,7 @@ function startViewportPointer(event: PointerEvent) {
   event.preventDefault()
   event.stopPropagation()
   discardInteractionFrame()
+  cancelGradient()
   cancelPointerInteractions()
   scroll.setPointerCapture(event.pointerId)
   isPanning.value = true
@@ -752,6 +794,8 @@ function updatePointer(event: PointerEvent) {
 
   if (hasBrushPointer(event.pointerId) && updateBrushPointer(event)) return
 
+  if (hasGradientPointer(event.pointerId) && updateGradientPointer(event)) return
+
   if (hasSelectionMovePointer(event.pointerId)) {
     const point = pointerToDocument(event)
     if (point) updateSelectionMovePointer(event, point)
@@ -769,6 +813,7 @@ function stopPointer(event: PointerEvent) {
   }
   stopSelectionPointer(event.pointerId)
   stopBrushPointer(event)
+  stopGradientPointer(event)
   stopSelectionMovePointer(event)
   stopTransformPointer(event.pointerId)
   if (panStart.value.pointerId === event.pointerId) {
@@ -816,6 +861,7 @@ defineExpose({
       :capture-rotation-output="captureTransformRotationOutput"
       :document="document"
       :guide-count="guides.length"
+      :gradient-reversed="gradientReversed"
       :guide-snapping-enabled="guideSnappingEnabled"
       :guides-locked="guidesLocked"
       :guides-visible="guidesVisible"
@@ -837,6 +883,7 @@ defineExpose({
       @fit-document="fitDocument"
       @update-auto-select-layer="emit('update:autoSelectLayer', $event)"
       @update-guide-snapping-enabled="emit('update:guideSnappingEnabled', $event)"
+      @update-gradient-reversed="emit('update:gradientReversed', $event)"
       @update-guides-locked="emit('update:guidesLocked', $event)"
       @update-guides-visible="emit('update:guidesVisible', $event)"
       @update-magic-wand-contiguous="emit('update:magicWandContiguous', $event)"

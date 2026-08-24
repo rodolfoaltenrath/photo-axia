@@ -1,4 +1,4 @@
-export type EditorTool = 'move' | 'brush' | 'eraser' | 'eyedropper' | 'crop' | 'text' | 'hand' | 'zoom'
+export type EditorTool = 'move' | 'brush' | 'eraser' | 'gradient' | 'eyedropper' | 'crop' | 'text' | 'hand' | 'zoom'
 
 export type LayerKind = 'pixel' | 'image' | 'text' | 'smart' | 'adjustment' | 'background'
 export type LayerBlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
@@ -257,6 +257,9 @@ export interface ImageAsset {
   mimeType: string
   sourceUrl: string
   byteSize?: number
+  resolutionDpiX?: number
+  resolutionDpiY?: number
+  resolutionSource?: 'png-phys' | 'jpeg-jfif' | 'jpeg-exif'
   previewUrl?: string
   previewWidth?: number
   previewHeight?: number
@@ -279,6 +282,10 @@ export interface ImportedImage {
   height: number
   mimeType: string
   sourceUrl: string
+  byteSize?: number
+  resolutionDpiX?: number
+  resolutionDpiY?: number
+  resolutionSource?: 'png-phys' | 'jpeg-jfif' | 'jpeg-exif'
 }
 
 export interface NewDocumentSettings {

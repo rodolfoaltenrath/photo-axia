@@ -1,4 +1,5 @@
 import type { ImageAsset, ImportedImage, LayerItem } from '../types/editor'
+import { imageResolutionFromHeader } from '../editor/imageResolution'
 
 const supportedTypes = new Set(['image/png', 'image/jpeg', 'image/gif'])
 const MAX_EDITOR_PREVIEW_PIXELS = 4_194_304
@@ -399,14 +400,18 @@ export async function readBrowserImages(files: FileList | File[]) {
       }
       const source = URL.createObjectURL(file)
       try {
-        const dimensions = await readImageDimensions(source, file)
+        const header = await file.slice(0, IMAGE_HEADER_BYTES).arrayBuffer()
+        const dimensions = imageDimensionsFromHeader(header, file.type) ?? await readImageDimensions(source)
+        const resolution = imageResolutionFromHeader(header, file.type)
         images[index] = {
           id: crypto.randomUUID(),
           name: file.name,
           width: dimensions.width,
           height: dimensions.height,
           mimeType: file.type,
-          sourceUrl: source
+          sourceUrl: source,
+          byteSize: file.size,
+          ...resolution
         }
       } catch (error) {
         URL.revokeObjectURL(source)

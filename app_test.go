@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -392,4 +393,70 @@ func BenchmarkGenerateImagePreview4K(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(info.Size())/1024, "source-KiB")
+}
+
+func TestImageResolutionFromPNGPhys(t *testing.T) {
+	header := []byte{
+		0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a,
+		0, 0, 0, 9, 'p', 'H', 'Y', 's',
+		0, 0, 0x17, 0x12, 0, 0, 0x17, 0x12, 1,
+		0, 0, 0, 0,
+	}
+	x, y, source := imageResolutionFromHeader(header, "png")
+	if x != 150.01 || y != 150.01 || source != "png-phys" {
+		t.Fatalf("unexpected PNG resolution: %.2f x %.2f (%s)", x, y, source)
+	}
+}
+
+func TestImageResolutionFromJPEGJFIF(t *testing.T) {
+	header := []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0, 16,
+		'J', 'F', 'I', 'F', 0, 1, 2, 1,
+		1, 44, 0, 150, 0, 0,
+	}
+	x, y, source := imageResolutionFromHeader(header, "jpeg")
+	if x != 300 || y != 150 || source != "jpeg-jfif" {
+		t.Fatalf("unexpected JPEG resolution: %.2f x %.2f (%s)", x, y, source)
+	}
+}
+
+func TestImageResolutionFromJPEGExif(t *testing.T) {
+	header := make([]byte, 82)
+	binary.BigEndian.PutUint16(header[0:2], 0xffd8)
+	binary.BigEndian.PutUint16(header[2:4], 0xffe1)
+	binary.BigEndian.PutUint16(header[4:6], 76)
+	copy(header[6:12], []byte{'E', 'x', 'i', 'f', 0, 0})
+	tiff := header[12:]
+	copy(tiff[0:2], []byte{'I', 'I'})
+	binary.LittleEndian.PutUint16(tiff[2:4], 42)
+	binary.LittleEndian.PutUint32(tiff[4:8], 8)
+	binary.LittleEndian.PutUint16(tiff[8:10], 3)
+	entries := []struct {
+		tag, typeID uint16
+		value       uint32
+	}{
+		{0x011a, 5, 50},
+		{0x011b, 5, 58},
+		{0x0128, 3, 2},
+	}
+	for index, entry := range entries {
+		offset := 10 + index*12
+		binary.LittleEndian.PutUint16(tiff[offset:offset+2], entry.tag)
+		binary.LittleEndian.PutUint16(tiff[offset+2:offset+4], entry.typeID)
+		binary.LittleEndian.PutUint32(tiff[offset+4:offset+8], 1)
+		if entry.typeID == 3 {
+			binary.LittleEndian.PutUint16(tiff[offset+8:offset+10], uint16(entry.value))
+		} else {
+			binary.LittleEndian.PutUint32(tiff[offset+8:offset+12], entry.value)
+		}
+	}
+	binary.LittleEndian.PutUint32(tiff[50:54], 300)
+	binary.LittleEndian.PutUint32(tiff[54:58], 1)
+	binary.LittleEndian.PutUint32(tiff[58:62], 150)
+	binary.LittleEndian.PutUint32(tiff[62:66], 1)
+
+	x, y, source := imageResolutionFromHeader(header, "jpeg")
+	if x != 300 || y != 150 || source != "jpeg-exif" {
+		t.Fatalf("unexpected JPEG EXIF resolution: %.2f x %.2f (%s)", x, y, source)
+	}
 }

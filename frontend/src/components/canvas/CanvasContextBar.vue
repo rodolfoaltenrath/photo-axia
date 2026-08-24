@@ -10,6 +10,7 @@ defineProps<{
   brushSize: number
   document: DocumentSpec
   guideCount: number
+  gradientReversed: boolean
   guideSnappingEnabled: boolean
   guidesLocked: boolean
   guidesVisible: boolean
@@ -35,6 +36,7 @@ const emit = defineEmits<{
   (event: 'fitDocument'): void
   (event: 'updateAutoSelectLayer', enabled: boolean): void
   (event: 'updateGuideSnappingEnabled', enabled: boolean): void
+  (event: 'updateGradientReversed', reversed: boolean): void
   (event: 'updateGuidesLocked', enabled: boolean): void
   (event: 'updateGuidesVisible', enabled: boolean): void
   (event: 'updateMagicWandContiguous', enabled: boolean): void
@@ -105,6 +107,22 @@ const emit = defineEmits<{
       <span>Seleção automática</span>
     </label>
     <span v-if="activeTool === 'brush' || activeTool === 'eraser'">{{ brushSize }} px</span>
+    <div v-if="activeTool === 'gradient'" class="gradient-options">
+      <div class="gradient-mode-control" role="group" aria-label="Tipo de degradê">
+        <button class="active" type="button" aria-pressed="true">Linear</button>
+        <button type="button" disabled title="Disponível na próxima fase">Radial</button>
+      </div>
+      <button
+        class="gradient-reverse-button"
+        type="button"
+        :aria-pressed="gradientReversed"
+        title="Inverter sentido das cores"
+        aria-label="Inverter sentido das cores do degradê"
+        @click="emit('updateGradientReversed', !gradientReversed)"
+      >
+        ↔
+      </button>
+    </div>
     <span>{{ document.width }} × {{ document.height }}</span>
     <span>{{ document.unit === 'px' ? 'pixels' : `${document.physicalWidth} × ${document.physicalHeight} ${document.unit}` }}</span>
     <span>{{ isViewportReady ? `${formatZoom(visualZoom)}%` : '—' }}</span>

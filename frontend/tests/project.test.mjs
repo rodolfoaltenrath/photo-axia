@@ -27,6 +27,8 @@ function projectState() {
         id: 'image-a', name: 'Imagem A', visible: true, opacity: 80, blendMode: 'multiply', kind: 'image',
         image: {
           width: 800, height: 600, mimeType: 'image/png', sourceUrl,
+          byteSize: 90_000, resolutionDpiX: 150.01, resolutionDpiY: 150.01,
+          resolutionSource: 'png-phys',
           previewUrl: '/__axia_asset/image-1?previewWidth=400&previewHeight=300',
           previewWidth: 400, previewHeight: 300, editToken: 'temporary'
         },
@@ -81,6 +83,10 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
   assert.equal(restored.layers[0].image.sourceUrl, '/__axia_asset/restored')
   assert.equal(restored.layers[0].blendMode, 'multiply')
   assert.equal(restored.layers[0].image.previewUrl, undefined)
+  assert.equal(restored.layers[0].image.byteSize, 90_000)
+  assert.equal(restored.layers[0].image.resolutionDpiX, 150.01)
+  assert.equal(restored.layers[0].image.resolutionDpiY, 150.01)
+  assert.equal(restored.layers[0].image.resolutionSource, 'png-phys')
   assert.equal(restored.layers[2].text.content, 'Axia')
   assert.equal(restored.layers[2].transform.rotation, -5)
   assert.deepEqual(restored.guides, projectState().guides)

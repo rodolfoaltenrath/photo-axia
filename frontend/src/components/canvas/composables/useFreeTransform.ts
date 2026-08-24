@@ -3,23 +3,21 @@ import {
   layerTransformStyle,
   layerTransformsMatch,
   moveLayerTransform,
-  normalizeRotation,
   resizeLayerTransform,
   rotateLayerTransform,
-  rotateVector,
   transformCenter,
   type DocumentPoint,
   type TransformHandle
-} from '../../../editor/freeTransform'
-import { transformedLayerBounds } from '../../../editor/guides'
-import type { LayerItem, LayerTransform } from '../../../types/editor'
+} from '../../../editor/freeTransform.ts'
+import { applyGroupMove, applyGroupResize, applyGroupRotate, groupBoundsFromRects } from '../../../editor/groupTransform.ts'
+import type { LayerItem, LayerTransform } from '../../../types/editor.ts'
 import type {
   KeyboardLayerMoveSession,
   LayerDragSession,
   TransformInteraction,
   TransformSession,
   TransformSessionMember
-} from '../canvas.types'
+} from '../canvas.types.ts'
 
 interface FreeTransformOptions {
   activeLayer: () => LayerItem | undefined
@@ -43,79 +41,14 @@ interface FreeTransformOptions {
   updateTransform: (layerId: string, transform: LayerTransform) => void
 }
 
-function groupBoundsFromMembers(members: TransformSessionMember[]): LayerTransform {
-  if (members.length === 1) return { ...members[0]!.original }
-  const boxes = members.map((member) => transformedLayerBounds(member.original))
-  const minX = Math.min(...boxes.map((box) => box.x))
-  const minY = Math.min(...boxes.map((box) => box.y))
-  const maxX = Math.max(...boxes.map((box) => box.x + box.width))
-  const maxY = Math.max(...boxes.map((box) => box.y + box.height))
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY, rotation: 0 }
-}
-
-function applyGroupMove(members: TransformSessionMember[], groupOriginal: LayerTransform, groupDraft: LayerTransform) {
-  const dx = groupDraft.x - groupOriginal.x
-  const dy = groupDraft.y - groupOriginal.y
-  const drafts: Record<string, LayerTransform> = {}
-  for (const member of members) {
-    drafts[member.layerId] = {
-      ...member.original,
-      x: Math.round((member.original.x + dx) * 100) / 100,
-      y: Math.round((member.original.y + dy) * 100) / 100
-    }
-  }
-  return drafts
-}
-
-function applyGroupResize(members: TransformSessionMember[], groupOriginal: LayerTransform, groupDraft: LayerTransform) {
-  if (members.length === 1) return { [members[0]!.layerId]: groupDraft }
-  const scaleX = groupOriginal.width === 0 ? 1 : groupDraft.width / groupOriginal.width
-  const scaleY = groupOriginal.height === 0 ? 1 : groupDraft.height / groupOriginal.height
-  const drafts: Record<string, LayerTransform> = {}
-  for (const member of members) {
-    const relX = (member.original.x - groupOriginal.x) / groupOriginal.width
-    const relY = (member.original.y - groupOriginal.y) / groupOriginal.height
-    drafts[member.layerId] = {
-      x: Math.round((groupDraft.x + relX * groupDraft.width) * 100) / 100,
-      y: Math.round((groupDraft.y + relY * groupDraft.height) * 100) / 100,
-      width: Math.round(member.original.width * scaleX * 100) / 100,
-      height: Math.round(member.original.height * scaleY * 100) / 100,
-      rotation: member.original.rotation ?? 0
-    }
-  }
-  return drafts
-}
-
-function applyGroupRotate(
-  members: TransformSessionMember[],
-  groupOriginal: LayerTransform,
-  groupDraft: LayerTransform
-) {
-  if (members.length === 1) return { [members[0]!.layerId]: groupDraft }
-  const center = transformCenter(groupOriginal)
-  const deltaDeg = (groupDraft.rotation ?? 0) - (groupOriginal.rotation ?? 0)
-  const deltaRad = (deltaDeg * Math.PI) / 180
-  const drafts: Record<string, LayerTransform> = {}
-  for (const member of members) {
-    const memberCenter = transformCenter(member.original)
-    const relative = { x: memberCenter.x - center.x, y: memberCenter.y - center.y }
-    const rotated = rotateVector(relative, deltaRad)
-    const nextCenter = { x: center.x + rotated.x, y: center.y + rotated.y }
-    drafts[member.layerId] = {
-      x: Math.round((nextCenter.x - member.original.width / 2) * 100) / 100,
-      y: Math.round((nextCenter.y - member.original.height / 2) * 100) / 100,
-      width: member.original.width,
-      height: member.original.height,
-      rotation: normalizeRotation((member.original.rotation ?? 0) + deltaDeg)
-    }
-  }
-  return drafts
-}
-
 export function applyElementTransform(target: HTMLElement, transform: LayerTransform) {
   target.style.width = `${transform.width}px`
   target.style.height = `${transform.height}px`
   target.style.transform = `translate3d(${transform.x}px, ${transform.y}px, 0) rotate(${transform.rotation ?? 0}deg)`
+}
+
+export function createTransformSessionRef() {
+  return ref<TransformSession | null>(null)
 }
 
 export function useFreeTransform(options: FreeTransformOptions) {
@@ -123,7 +56,11 @@ export function useFreeTransform(options: FreeTransformOptions) {
   const transformRotationOutput = ref<HTMLElement | null>(null)
   const dragState = shallowRef<LayerDragSession | null>(null)
   const keyboardLayerMove = shallowRef<KeyboardLayerMoveSession | null>(null)
-  const transformSession = shallowRef<TransformSession | null>(null)
+  // A sessão precisa ser profundamente reativa: cada gesto substitui
+  // groupDraft/drafts sem encerrar o Ctrl+T. Com shallowRef, o DOM recebia o
+  // draft novo diretamente, mas os computed do Vue continuavam em cache com
+  // a caixa anterior e podiam reaplicá-la ao iniciar o gesto seguinte.
+  const transformSession = createTransformSessionRef()
   const transformInteraction = ref<TransformInteraction | null>(null)
   let keyboardLayerCommitTimeout: ReturnType<typeof setTimeout> | undefined
 
@@ -179,9 +116,10 @@ export function useFreeTransform(options: FreeTransformOptions) {
       }
       freeTransform.drafts = { ...freeTransform.drafts, [layer.id]: draft }
       applyElementTransform(member.target, draft)
-      if (freeTransform.members.length === 1 && freeTransformBox.value) {
-        applyElementTransform(freeTransformBox.value, draft)
-      }
+      freeTransform.groupDraft = groupBoundsFromRects(
+        freeTransform.members.map((item) => freeTransform.drafts[item.layerId]!)
+      )
+      if (freeTransformBox.value) applyElementTransform(freeTransformBox.value, freeTransform.groupDraft)
       return true
     }
 
@@ -227,14 +165,13 @@ export function useFreeTransform(options: FreeTransformOptions) {
     if (!members.length) return
 
     cancelPointerInteractions()
-    const groupOriginal = groupBoundsFromMembers(members)
+    const groupDraft = groupBoundsFromRects(members.map((member) => member.original))
     const drafts: Record<string, LayerTransform> = {}
     for (const member of members) drafts[member.layerId] = { ...member.original }
 
     transformSession.value = {
       members,
-      groupOriginal,
-      groupDraft: { ...groupOriginal },
+      groupDraft,
       drafts
     }
     for (const member of members) member.target.classList.add('document-layer--transforming')
@@ -283,28 +220,44 @@ export function useFreeTransform(options: FreeTransformOptions) {
     target.setPointerCapture(event.pointerId)
   }
 
+  function transformInteractionStart() {
+    const session = transformSession.value
+    return {
+      groupStart: session ? session.groupDraft : undefined,
+      memberStarts: session ? { ...session.drafts } : {}
+    }
+  }
+
   function startTransformMove(event: PointerEvent) {
     const transform = currentTransformDraft()
     const pointer = options.documentPointFromClient(event.clientX, event.clientY)
     if (event.button !== 0 || !transform || !pointer) return
+    const { groupStart, memberStarts } = transformInteractionStart()
+    if (!groupStart) return
     captureTransformPointer(event)
     transformInteraction.value = {
       type: 'move',
       pointerId: event.pointerId,
       start: pointer,
-      initial: { ...transform }
+      initial: { ...transform },
+      groupStart,
+      memberStarts
     }
   }
 
   function startTransformResize(event: PointerEvent, handle: TransformHandle) {
     const transform = currentTransformDraft()
     if (event.button !== 0 || !transform) return
+    const { groupStart, memberStarts } = transformInteractionStart()
+    if (!groupStart) return
     captureTransformPointer(event)
     transformInteraction.value = {
       type: 'resize',
       pointerId: event.pointerId,
       handle,
-      initial: { ...transform }
+      initial: { ...transform },
+      groupStart,
+      memberStarts
     }
   }
 
@@ -312,13 +265,17 @@ export function useFreeTransform(options: FreeTransformOptions) {
     const transform = currentTransformDraft()
     const pointer = options.documentPointFromClient(event.clientX, event.clientY)
     if (event.button !== 0 || !transform || !pointer) return
+    const { groupStart, memberStarts } = transformInteractionStart()
+    if (!groupStart) return
     const center = transformCenter(transform)
     captureTransformPointer(event)
     transformInteraction.value = {
       type: 'rotate',
       pointerId: event.pointerId,
       startAngle: Math.atan2(pointer.y - center.y, pointer.x - center.x),
-      initial: { ...transform }
+      initial: { ...transform },
+      groupStart,
+      memberStarts
     }
   }
 
@@ -354,15 +311,16 @@ export function useFreeTransform(options: FreeTransformOptions) {
       }
 
       const interactionType = interaction.type
+      const ids = session.members.map((member) => member.layerId)
       options.scheduleInteractionFrame(() => {
         const current = transformSession.value
         if (current !== session) return
         current.groupDraft = transform
         const drafts = interactionType === 'move'
-          ? applyGroupMove(current.members, current.groupOriginal, transform)
+          ? applyGroupMove(ids, interaction.memberStarts, interaction.groupStart, transform)
           : interactionType === 'resize'
-            ? applyGroupResize(current.members, current.groupOriginal, transform)
-            : applyGroupRotate(current.members, current.groupOriginal, transform)
+            ? applyGroupResize(ids, interaction.memberStarts, interaction.groupStart, transform)
+            : applyGroupRotate(ids, interaction.memberStarts, interaction.groupStart, transform)
         current.drafts = drafts
         for (const member of current.members) {
           const draft = drafts[member.layerId]

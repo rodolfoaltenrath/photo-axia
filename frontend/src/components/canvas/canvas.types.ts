@@ -1,4 +1,5 @@
 import type { BrushOperation } from '../../editor/brush'
+import type { GradientConfig, GradientGeometry } from '../../editor/gradient'
 import type { DocumentPoint, TransformHandle } from '../../editor/freeTransform'
 import type { EditorGuide, GuideOrientation, RulerOrigin, RulerUnit } from '../../editor/guides'
 import type { SelectionMode, SelectionPoint, SelectionRegion } from '../../editor/selection'
@@ -28,6 +29,9 @@ export interface CanvasViewportProps {
   autoSelectLayer: boolean
   brushColor: string
   brushSize: number
+  foregroundColor: string
+  backgroundColor: string
+  gradientReversed: boolean
   document: DocumentSpec
   guides: EditorGuide[]
   guidesLocked: boolean
@@ -74,12 +78,19 @@ export interface CanvasViewportEmits {
     previewWidth: number,
     previewHeight: number
   ): void
+  (
+    event: 'gradientGesture',
+    geometry: GradientGeometry,
+    config: GradientConfig,
+    selection: SelectionRegion | null
+  ): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateGuide', guide: EditorGuide): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
   (event: 'update:autoSelectLayer', enabled: boolean): void
   (event: 'update:magicWandContiguous', enabled: boolean): void
   (event: 'update:magicWandTolerance', tolerance: number): void
+  (event: 'update:gradientReversed', reversed: boolean): void
   (event: 'update:guidesLocked', enabled: boolean): void
   (event: 'update:guidesVisible', enabled: boolean): void
   (event: 'update:guideSnappingEnabled', enabled: boolean): void
@@ -97,6 +108,9 @@ export interface CanvasSurfaceView {
   backgroundStyle: CSSProperties
   brushPreviewDimensions: { width: number; height: number }
   brushPreviewStyle?: CSSProperties
+  gradientInteraction: GradientInteraction | null
+  gradientPreviewDimensions: { width: number; height: number }
+  gradientPreviewStyle?: CSSProperties
   defaultLayerTransform: LayerTransform
   documentHeight: number
   documentOffsetX: number
@@ -132,6 +146,7 @@ export interface CanvasSurfaceView {
 export interface CanvasSurfaceActions {
   brushPreviewHidesLayer: (layerId: string) => boolean
   captureBrushPreviewCanvas: (element: unknown) => void
+  captureGradientPreviewCanvas: (element: unknown) => void
   captureCanvasRulers: (element: unknown) => void
   captureFreeTransformBox: (element: unknown) => void
   captureGuideOverlay: (element: unknown) => void
@@ -196,7 +211,6 @@ export interface TransformSessionMember {
 
 export interface TransformSession {
   members: TransformSessionMember[]
-  groupOriginal: LayerTransform
   groupDraft: LayerTransform
   drafts: Record<string, LayerTransform>
 }
@@ -208,10 +222,20 @@ export interface KeyboardLayerMoveSession {
   target: HTMLElement
 }
 
+interface TransformInteractionBase {
+  pointerId: number
+  initial: LayerTransform
+  // Snapshot of the group box and each member's transform at the moment this
+  // specific drag started, so applying the drag never discards whatever an
+  // earlier interaction in the same Ctrl+T session already did.
+  groupStart: LayerTransform
+  memberStarts: Record<string, LayerTransform>
+}
+
 export type TransformInteraction =
-  | { type: 'move'; pointerId: number; start: DocumentPoint; initial: LayerTransform }
-  | { type: 'resize'; pointerId: number; handle: TransformHandle; initial: LayerTransform }
-  | { type: 'rotate'; pointerId: number; startAngle: number; initial: LayerTransform }
+  | (TransformInteractionBase & { type: 'move'; start: DocumentPoint })
+  | (TransformInteractionBase & { type: 'resize'; handle: TransformHandle })
+  | (TransformInteractionBase & { type: 'rotate'; startAngle: number })
 
 export interface SelectionInteraction {
   pointerId: number
@@ -231,6 +255,14 @@ export interface BrushInteraction {
   baseImageSource: string
   previewWidth: number
   previewHeight: number
+}
+
+export interface GradientInteraction {
+  pointerId: number
+  layerId: string
+  geometry: GradientGeometry
+  config: GradientConfig
+  selection: SelectionRegion | null
 }
 
 export interface SelectionMoveInteraction {

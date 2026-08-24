@@ -103,3 +103,29 @@ export function documentBaseMemoryBytes(settings: NewDocumentSettings) {
   const pixels = documentPixelSize(settings)
   return pixels.width * pixels.height * 4
 }
+
+export interface DocumentPhysicalSize {
+  widthInches: number
+  heightInches: number
+  widthCentimeters: number
+  heightCentimeters: number
+}
+
+/**
+ * Returns the physical size represented by the final raster at the selected PPI.
+ * Pixel dimensions never change here: PPI only describes their physical density.
+ */
+export function documentPhysicalSize(
+  settings: Pick<NewDocumentSettings, 'unit' | 'width' | 'height' | 'resolutionDpi'>
+): DocumentPhysicalSize {
+  const pixels = documentPixelSize(settings)
+  const dpi = Math.max(1, Number.isFinite(settings.resolutionDpi) ? settings.resolutionDpi : 72)
+  const widthInches = pixels.width / dpi
+  const heightInches = pixels.height / dpi
+  return {
+    widthInches,
+    heightInches,
+    widthCentimeters: widthInches * 2.54,
+    heightCentimeters: heightInches * 2.54
+  }
+}

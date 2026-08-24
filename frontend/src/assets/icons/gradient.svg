@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <defs>
+    <linearGradient id="gradient-tool-fill" x1="4" y1="12" x2="20" y2="12" gradientUnits="userSpaceOnUse">
+      <stop stop-color="currentColor" />
+      <stop offset="1" stop-color="currentColor" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" fill="url(#gradient-tool-fill)" stroke="currentColor" />
+  <circle cx="5" cy="12" r="1.5" fill="currentColor" />
+  <circle cx="19" cy="12" r="1.5" fill="none" stroke="currentColor" />
+  <path d="M6.5 12h11" stroke="currentColor" stroke-linecap="round" />
+</svg>

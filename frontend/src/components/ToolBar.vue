@@ -4,6 +4,7 @@ import brushIcon from '../assets/icons/brush.svg'
 import cropIcon from '../assets/icons/crop.svg'
 import eraserIcon from '../assets/icons/eraser.svg'
 import eyedropperIcon from '../assets/icons/eyedropper.svg'
+import gradientIcon from '../assets/icons/gradient.svg'
 import handIcon from '../assets/icons/hand.svg'
 import moveIcon from '../assets/icons/move.svg'
 import textIcon from '../assets/icons/text.svg'
@@ -20,6 +21,7 @@ const tools: Array<{ id: EditorTool; icon: string; label: string; enabled: boole
   { id: 'move', icon: moveIcon, label: 'Mover (V)', enabled: true },
   { id: 'brush', icon: brushIcon, label: 'Pincel (B)', enabled: true },
   { id: 'eraser', icon: eraserIcon, label: 'Borracha (E)', enabled: true },
+  { id: 'gradient', icon: gradientIcon, label: 'Degradê (G)', enabled: true },
   { id: 'eyedropper', icon: eyedropperIcon, label: 'Conta-gotas (I)', enabled: true },
   { id: 'crop', icon: cropIcon, label: 'Recorte e seleção (C)', enabled: true },
   { id: 'text', icon: textIcon, label: 'Texto (T)', enabled: true },

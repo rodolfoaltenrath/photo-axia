@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DEFAULT_GRADIENT_CONFIG,
+  gradientGestureAction,
   gradientIsDegenerate,
   gradientLength,
   gradientLineBounds,
@@ -10,6 +11,13 @@ import {
   parseGradientColor,
   snapGradientEndpoint
 } from '../src/editor/gradient.ts'
+import {
+  applyGradientRaster,
+  createGradientRasterState,
+  gradientRasterGeometry,
+  gradientResultTransform,
+  renderGradientRasterRows
+} from '../src/editor/gradientRaster.ts'
 
 const closeTo = (actual, expected, tolerance = 1e-9) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} deveria se aproximar de ${expected}`)
@@ -85,4 +93,168 @@ test('Shift encaixa o ângulo em passos de quinze graus preservando comprimento'
 
   assert.deepEqual(snapGradientEndpoint(start, start), start)
   assert.deepEqual(snapGradientEndpoint(start, end, 0), end)
+})
+
+test('confirma somente pointerup válido e cancela os demais encerramentos', () => {
+  const geometry = { start: { x: 1, y: 1 }, end: { x: 20, y: 1 } }
+  assert.equal(gradientGestureAction('pointerup', geometry), 'confirm')
+  assert.equal(gradientGestureAction('pointercancel', geometry), 'cancel')
+  assert.equal(gradientGestureAction('lostpointercapture', geometry), 'cancel')
+  assert.equal(gradientGestureAction('pointerup', {
+    start: { x: 1, y: 1 },
+    end: { x: 1.49, y: 1 }
+  }), 'cancel')
+})
+
+const transparentPixels = (width, height) => new Uint8ClampedArray(width * height * 4)
+const identityTransform = (width, height, x = 0, y = 0) => ({ x, y, width, height, rotation: 0 })
+const linearConfig = {
+  type: 'linear',
+  foregroundColor: '#000000',
+  backgroundColor: '#ffffff',
+  reversed: false
+}
+
+function redChannels(pixels) {
+  const channels = []
+  for (let index = 0; index < pixels.length; index += 4) channels.push(pixels[index])
+  return channels
+}
+
+test('aplica o degradê em RGBA usando o centro dos pixels do documento', () => {
+  const result = applyGradientRaster({
+    sourcePixels: transparentPixels(4, 1),
+    sourceWidth: 4,
+    sourceHeight: 1,
+    transform: identityTransform(4, 1),
+    geometry: { start: { x: 0.5, y: 0.5 }, end: { x: 3.5, y: 0.5 } },
+    config: linearConfig,
+    selection: null,
+    documentWidth: 4,
+    documentHeight: 1
+  })
+  assert.deepEqual(redChannels(result.pixels), [0, 85, 170, 255])
+  assert.deepEqual([...result.pixels.filter((_, index) => index % 4 === 3)], [255, 255, 255, 255])
+})
+
+test('expande raster compacto até os limites do documento e preserva sua origem', () => {
+  const geometry = gradientRasterGeometry(2, 1, identityTransform(2, 1, 1, 0), 4, 1, true)
+  assert.deepEqual(geometry, { originX: -1, originY: 0, width: 4, height: 1 })
+
+  const result = applyGradientRaster({
+    sourcePixels: transparentPixels(2, 1),
+    sourceWidth: 2,
+    sourceHeight: 1,
+    transform: identityTransform(2, 1, 1, 0),
+    geometry: { start: { x: 0.5, y: 0.5 }, end: { x: 3.5, y: 0.5 } },
+    config: linearConfig,
+    selection: null,
+    documentWidth: 4,
+    documentHeight: 1
+  })
+  assert.deepEqual(result.geometry, geometry)
+  assert.deepEqual(redChannels(result.pixels), [0, 85, 170, 255])
+  assert.deepEqual(
+    gradientResultTransform(identityTransform(2, 1, 1, 0), 2, 1, geometry),
+    { x: 0, y: 0, width: 4, height: 1, rotation: 0 }
+  )
+})
+
+test('seleções vetoriais e por pixels limitam a composição sem expandir o raster', () => {
+  const baseRequest = {
+    sourcePixels: transparentPixels(4, 1),
+    sourceWidth: 4,
+    sourceHeight: 1,
+    transform: identityTransform(4, 1),
+    geometry: { start: { x: 0.5, y: 0.5 }, end: { x: 3.5, y: 0.5 } },
+    config: linearConfig,
+    documentWidth: 4,
+    documentHeight: 1
+  }
+  const rectangle = applyGradientRaster({
+    ...baseRequest,
+    selection: { kind: 'rectangle', bounds: { x: 1, y: 0, width: 2, height: 1 } }
+  })
+  assert.deepEqual(redChannels(rectangle.pixels), [0, 85, 170, 0])
+  assert.deepEqual(rectangle.geometry, { originX: 0, originY: 0, width: 4, height: 1 })
+
+  const pixels = applyGradientRaster({
+    ...baseRequest,
+    selection: {
+      kind: 'pixels',
+      layerId: 'layer-1',
+      sourceWidth: 4,
+      sourceHeight: 1,
+      sourceToDocument: [1, 0, 0, 1, 0, 0],
+      spans: [{ y: 0, x0: 2, x1: 4 }],
+      bounds: { x: 2, y: 0, width: 2, height: 1 },
+      pixelCount: 2
+    }
+  })
+  assert.deepEqual(redChannels(pixels.pixels), [0, 0, 170, 255])
+})
+
+test('elipse e laço usam a mesma máscara no núcleo compartilhado', () => {
+  const baseRequest = {
+    sourcePixels: transparentPixels(4, 4),
+    sourceWidth: 4,
+    sourceHeight: 4,
+    transform: identityTransform(4, 4),
+    geometry: { start: { x: 0, y: 2 }, end: { x: 4, y: 2 } },
+    config: linearConfig,
+    documentWidth: 4,
+    documentHeight: 4
+  }
+  const ellipse = applyGradientRaster({
+    ...baseRequest,
+    selection: { kind: 'ellipse', bounds: { x: 0, y: 0, width: 4, height: 4 } }
+  })
+  assert.equal(ellipse.pixels[(1 * 4 + 1) * 4 + 3], 255)
+  assert.equal(ellipse.pixels[3], 0)
+
+  const lasso = applyGradientRaster({
+    ...baseRequest,
+    selection: {
+      kind: 'lasso',
+      points: [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 4 }],
+      bounds: { x: 0, y: 0, width: 4, height: 4 }
+    }
+  })
+  assert.equal(lasso.pixels[(0 * 4 + 0) * 4 + 3], 255)
+  assert.equal(lasso.pixels[(3 * 4 + 3) * 4 + 3], 0)
+})
+
+test('calcula as cores em espaço do documento para camada rotacionada', () => {
+  const result = applyGradientRaster({
+    sourcePixels: transparentPixels(2, 2),
+    sourceWidth: 2,
+    sourceHeight: 2,
+    transform: { x: 0, y: 0, width: 2, height: 2, rotation: 90 },
+    geometry: { start: { x: 0, y: 1 }, end: { x: 2, y: 1 } },
+    config: linearConfig,
+    selection: { kind: 'rectangle', bounds: { x: 0, y: 0, width: 2, height: 2 } },
+    documentWidth: 2,
+    documentHeight: 2
+  })
+  assert.deepEqual(redChannels(result.pixels), [191, 191, 64, 64])
+})
+
+test('processamento integral e processamento em lotes produzem pixels idênticos', () => {
+  const request = {
+    sourcePixels: transparentPixels(5, 4),
+    sourceWidth: 5,
+    sourceHeight: 4,
+    transform: identityTransform(5, 4),
+    geometry: { start: { x: 0, y: 0 }, end: { x: 5, y: 4 } },
+    config: { ...linearConfig, reversed: true },
+    selection: null,
+    documentWidth: 5,
+    documentHeight: 4
+  }
+  const complete = applyGradientRaster(request)
+  const chunked = createGradientRasterState(request)
+  renderGradientRasterRows(chunked, 0, 2)
+  renderGradientRasterRows(chunked, 2, 4)
+  assert.deepEqual(chunked.geometry, complete.geometry)
+  assert.deepEqual(chunked.pixels, complete.pixels)
 })

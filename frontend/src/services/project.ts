@@ -359,7 +359,12 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
         height: archiveAsset.height,
         mimeType: archiveAsset.mimeType,
         sourceUrl,
-        byteSize: archiveAsset.byteSize
+        byteSize: archiveAsset.byteSize,
+        resolutionDpiX: Number.isFinite(stored.image.resolutionDpiX) ? stored.image.resolutionDpiX : undefined,
+        resolutionDpiY: Number.isFinite(stored.image.resolutionDpiY) ? stored.image.resolutionDpiY : undefined,
+        resolutionSource: ['png-phys', 'jpeg-jfif', 'jpeg-exif'].includes(stored.image.resolutionSource ?? '')
+          ? stored.image.resolutionSource
+          : undefined
       }
     }
     const transform = restoreTransform(stored.transform)

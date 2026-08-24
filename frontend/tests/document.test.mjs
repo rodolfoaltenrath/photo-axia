@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   convertDocumentUnit,
   documentBaseMemoryBytes,
+  documentPhysicalSize,
   documentPixelSize,
   parseCustomDocumentPresets,
   pixelsPerDocumentUnit,
@@ -62,6 +63,29 @@ test('valida limites de dimensão, resolução e megapixels', () => {
 
 test('estima a memória RGBA base sem contar camadas futuras', () => {
   assert.equal(documentBaseMemoryBytes(settings({ width: 100, height: 50 })), 20_000)
+})
+
+test('DPI descreve tamanho físico sem alterar documentos definidos em pixels', () => {
+  const at150 = settings({ width: 1754, height: 1240, resolutionDpi: 150 })
+  const at300 = { ...at150, resolutionDpi: 300 }
+
+  assert.deepEqual(documentPixelSize(at150), { width: 1754, height: 1240 })
+  assert.deepEqual(documentPixelSize(at300), { width: 1754, height: 1240 })
+
+  const physical150 = documentPhysicalSize(at150)
+  const physical300 = documentPhysicalSize(at300)
+  assert.ok(Math.abs(physical150.widthCentimeters - 29.701) < 0.001)
+  assert.ok(Math.abs(physical150.heightCentimeters - 20.997) < 0.001)
+  assert.ok(Math.abs(physical300.widthCentimeters - physical150.widthCentimeters / 2) < 0.001)
+  assert.ok(Math.abs(physical300.heightCentimeters - physical150.heightCentimeters / 2) < 0.001)
+})
+
+test('tamanho físico deriva do raster arredondado criado por unidades físicas', () => {
+  const a4 = settings({ unit: 'cm', width: 29.7, height: 21, resolutionDpi: 150 })
+  assert.deepEqual(documentPixelSize(a4), { width: 1754, height: 1240 })
+  const physical = documentPhysicalSize(a4)
+  assert.ok(Math.abs(physical.widthCentimeters - 29.701) < 0.001)
+  assert.ok(Math.abs(physical.heightCentimeters - 20.997) < 0.001)
 })
 
 test('descarta predefinições locais adulteradas e normaliza as válidas', () => {

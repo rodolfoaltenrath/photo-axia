@@ -7,7 +7,7 @@
 ## Metadados
 
 - Última atualização: 2026-08-23
-- Estado geral: Fase 1 em andamento; núcleo matemático concluído e motor raster pendente
+- Estado geral: Fase 1 implementada, aguardando validação prática; continuidade antes do teste de fogo autorizada pelo mantenedor
 - Ordem aprovada: Degradê linear -> Degradê radial -> Varinha Mágica -> Balde de Tinta
 - Plataformas obrigatórias: Windows e Linux
 - Stack atual: Go 1.23, Wails 2.12, Vue 3, TypeScript e Vite
@@ -62,7 +62,7 @@ Registrar a nova decisão em **Registro de decisões** e explicar o motivo.
 | --- | --- | --- |
 | Base de cores principal/secundária | `CONCLUÍDO` | Manter compatibilidade com os novos consumidores |
 | Conta-gotas contínuo | `CONCLUÍDO` | Usar como referência para pointer capture e coalescência |
-| Degradê linear | `EM ANDAMENTO` | Criar o motor raster assíncrono com worker e fallback equivalentes |
+| Degradê linear | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Executar teste de fogo no Wails após completar as ferramentas planejadas |
 | Degradê radial | `NÃO INICIADO` | Iniciar somente após o linear estar validado |
 | Auditoria e aceite da Varinha Mágica | `NÃO INICIADO` | Mapear lacunas entre código existente e produto aceito |
 | Balde de Tinta | `NÃO INICIADO` | Iniciar após estabilizar o motor da Varinha |
@@ -148,15 +148,15 @@ Estas regras valem para todas as fases:
 
 ## Fase 1 — Degradê linear
 
-Estado: `EM ANDAMENTO`
+Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
 
 ### Progresso da fase
 
 - [x] Núcleo puro de geometria, interpolação sRGB, inversão e snap angular.
-- [ ] Motor raster com worker e fallback.
-- [ ] Interação por ponteiro e preview ao vivo.
-- [ ] Integração com toolbar e barra contextual.
-- [ ] Commit raster, histórico e ciclo de assets.
+- [x] Motor raster com worker e fallback. (`IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` integrada no Wails)
+- [x] Interação por ponteiro e preview ao vivo. (`IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` manual)
+- [x] Integração com toolbar e barra contextual. (`IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` manual)
+- [x] Commit raster, histórico e ciclo de assets. (`IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` manual)
 - [ ] Validação automatizada e manual completa.
 
 ### Resultado esperado
@@ -488,6 +488,7 @@ da fase e não declarar validação completa.
 | 2026-08-23 | Construir Balde após Varinha | As duas features devem compartilhar análise de cor, spans e regiões contíguas/globais |
 | 2026-08-23 | Degradê usa principal no início e secundária no fim | Semântica direta para as duas amostras já existentes |
 | 2026-08-23 | Sem seleção, Degradê cobre o documento | Resultado previsível para rasters compactos e coerente com uma ferramenta de preenchimento |
+| 2026-08-24 | Continuar as fases antes do teste de fogo | O mantenedor optou por validar a família de ferramentas em conjunto e corrigir bugs práticos depois da implementação completa |
 
 ## Registro de evolução
 
@@ -500,6 +501,42 @@ da fase e não declarar validação completa.
 - Verificações executadas com sucesso: 194 testes frontend, build Vue/TypeScript e testes Go.
 - Estado da Fase 1 mantido como `EM ANDAMENTO`; ainda não existe ferramenta visível nem mutação raster.
 - Próximo passo: criar `gradientEngine.ts` e o protocolo do worker/fallback usando este módulo puro como fonte única para cálculo dos pixels.
+
+### 2026-08-24 — Motor raster do Degradê linear implementado
+
+- Incremento limitado ao processamento final: UI, interação, commit, histórico e ciclo de object URLs permanecem para os próximos incrementos.
+- Criado `frontend/src/editor/gradientRaster.ts` com composição RGBA opaca, cálculo em espaço do documento, máscaras para retângulo, elipse, laço e spans, geometria de expansão e processamento por lotes.
+- Criado `frontend/src/services/gradientEngine.ts` com leitura exclusiva de `sourceUrl`, fallback cooperativo, `AbortSignal`, codificação PNG/WebP e protocolo de descarte.
+- Criado `frontend/src/workers/gradient.worker.ts`; o worker usa o mesmo núcleo RGBA, processa linhas em lotes para atender cancelamentos e produz o mesmo contrato do fallback.
+- A expansão sem seleção converte os quatro cantos do documento pela matriz existente de documento para source e une o resultado aos bounds do raster original. Com seleção, os limites atuais do raster são preservados, como no Pincel.
+- A máscara é avaliada no centro de cada pixel e a cor opaca substitui o pixel elegível, equivalendo a `source-over` com alfa 255.
+- A escala da prévia derivada acompanha a densidade da prévia do asset original mesmo quando o raster final é expandido.
+- `frontend/tests/gradient.test.mjs` passou de 8 para 14 testes de degradê, cobrindo RGBA, expansão, todas as formas de seleção, rotação e equivalência entre execução integral e em lotes.
+- Verificações executadas com sucesso: 208 testes frontend, build Vue/TypeScript/Vite, testes Go e `git diff --check`.
+- Mudanças locais já existentes na transformação de grupos foram preservadas sem refatoração ou mistura com este incremento.
+- Risco restante: o serviço e o worker compilam, mas ainda não podem ser exercitados manualmente no Wails porque a ferramenta não está conectada à UI; por isso o motor permanece `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`.
+- Estado da Fase 1 mantido como `EM ANDAMENTO`.
+- Próximo passo exato: criar `useGradientInteraction.ts`, o canvas transitório e o overlay da linha, inicialmente emitindo a geometria confirmada sem publicar mutação no histórico.
+
+### 2026-08-24 — Degradê linear integrado de ponta a ponta
+
+- Adicionado `gradient` a `EditorTool`, à barra de ferramentas com ícone próprio e ao mapa de atalhos como `G`.
+- A barra contextual exibe `Linear | Radial`, mantendo Radial desabilitado até a Fase 2, e inversão local que não troca as amostras globais.
+- Criado `frontend/src/components/canvas/composables/useGradientInteraction.ts` com captura exclusiva do botão esquerdo, snapshot de cores/inversão/seleção, atualização limitada a um `requestAnimationFrame`, snap de 15° com `Shift` e cancelamento em `pointercancel`, `lostpointercapture`, `Esc`, troca de ferramenta, camada, documento, navegação temporária ou início concorrente de operação.
+- `CanvasSurface.vue` recebeu canvas transitório limitado a 1.048.576 pixels e overlay SVG com linha e controles de tamanho visual estável em qualquer zoom.
+- A prévia usa `CanvasGradient` acelerado e as máscaras/matrizes existentes; o commit continua usando o núcleo RGBA determinístico compartilhado por worker e fallback.
+- A prévia permanece durante o processamento final e é removida quando a operação termina, evitando reaparecimento momentâneo do asset anterior.
+- `App.vue` agora prepara camadas raster vazias também para o Degradê, executa o motor dentro da `MutationBarrier`, publica `ImageAsset` e `LayerTransform` juntos, registra um único `layer:patch` com label `Degradê`, coleta URLs sem referência e restaura o estado anterior em erro ou aborto.
+- Desfazer durante um commit pendente aborta o degradê sem criar uma entrada de histórico; desmontar o editor também aborta e encerra o worker.
+- `gradientResultTransform` centraliza e testa o ajuste da transformação quando o raster compacto é expandido.
+- Adicionado teste de decisão de encerramento do gesto; o conjunto específico do degradê agora possui 15 testes.
+- Verificações executadas com sucesso: 209 testes frontend, build Vue/TypeScript/Vite com bundle `gradient.worker`, testes Go e `git diff --check`.
+- Arquivos criados neste estágio: `frontend/src/assets/icons/gradient.svg` e `frontend/src/components/canvas/composables/useGradientInteraction.ts`.
+- Arquivos alterados neste estágio: `App.vue`, `ToolBar.vue`, `CanvasViewport.vue`, `CanvasContextBar.vue`, `CanvasSurface.vue`, `canvas.types.ts`, `useCanvasShortcuts.ts`, `gradient.ts`, `gradientRaster.ts`, `editor.ts`, `style.css`, `gradient.test.mjs` e este roadmap.
+- Mudanças locais anteriores na transformação de grupos continuam preservadas.
+- Riscos restantes: preview/commit, pointer capture, desempenho real, undo/redo e ciclo de URLs ainda precisam do teste manual conjunto em Windows e Linux; a Fase 1 não está `CONCLUÍDO`.
+- Estado da Fase 1: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`.
+- Próximo passo exato: iniciar a Fase 2 habilitando o cálculo radial no núcleo compartilhado, conforme autorização do mantenedor para continuar antes do teste de fogo.
 
 ### 2026-08-23 — Roadmap criado
 
