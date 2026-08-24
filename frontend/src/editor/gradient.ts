@@ -1,6 +1,6 @@
 import type { SelectionBounds, SelectionPoint } from './selection'
 
-export type GradientType = 'linear'
+export type GradientType = 'linear' | 'radial'
 export type GradientRgb = readonly [red: number, green: number, blue: number]
 
 export interface GradientConfig {
@@ -97,6 +97,18 @@ export function linearGradientProgress(point: SelectionPoint, geometry: Gradient
     ((point.x - geometry.start.x) * deltaX + (point.y - geometry.start.y) * deltaY) /
     lengthSquared
   )
+}
+
+export function radialGradientProgress(point: SelectionPoint, geometry: GradientGeometry) {
+  const radius = gradientLength(geometry)
+  if (!Number.isFinite(radius) || radius <= Number.EPSILON) return 0
+  return clamp01(Math.hypot(point.x - geometry.start.x, point.y - geometry.start.y) / radius)
+}
+
+export function gradientProgress(point: SelectionPoint, geometry: GradientGeometry, type: GradientType) {
+  return type === 'radial'
+    ? radialGradientProgress(point, geometry)
+    : linearGradientProgress(point, geometry)
 }
 
 function cleanCoordinate(value: number) {

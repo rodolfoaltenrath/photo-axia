@@ -6,9 +6,11 @@ import {
   gradientIsDegenerate,
   gradientLength,
   gradientLineBounds,
+  gradientProgress,
   interpolateGradientColor,
   linearGradientProgress,
   parseGradientColor,
+  radialGradientProgress,
   snapGradientEndpoint
 } from '../src/editor/gradient.ts'
 import {
@@ -95,6 +97,16 @@ test('Shift encaixa o ângulo em passos de quinze graus preservando comprimento'
   assert.deepEqual(snapGradientEndpoint(start, end, 0), end)
 })
 
+test('calcula o progresso radial pelo raio e limita o exterior', () => {
+  const radial = { start: { x: 10, y: 10 }, end: { x: 20, y: 10 } }
+  assert.equal(radialGradientProgress({ x: 10, y: 10 }, radial), 0)
+  assert.equal(radialGradientProgress({ x: 13, y: 14 }, radial), 0.5)
+  assert.equal(radialGradientProgress({ x: 20, y: 10 }, radial), 1)
+  assert.equal(radialGradientProgress({ x: 30, y: 10 }, radial), 1)
+  assert.equal(radialGradientProgress({ x: 10, y: 10 }, { start: { x: 1, y: 1 }, end: { x: 1, y: 1 } }), 0)
+  assert.equal(gradientProgress({ x: 13, y: 14 }, radial, 'radial'), 0.5)
+})
+
 test('confirma somente pointerup válido e cancela os demais encerramentos', () => {
   const geometry = { start: { x: 1, y: 1 }, end: { x: 20, y: 1 } }
   assert.equal(gradientGestureAction('pointerup', geometry), 'confirm')
@@ -114,6 +126,7 @@ const linearConfig = {
   backgroundColor: '#ffffff',
   reversed: false
 }
+const radialConfig = { ...linearConfig, type: 'radial' }
 
 function redChannels(pixels) {
   const channels = []
@@ -135,6 +148,26 @@ test('aplica o degradê em RGBA usando o centro dos pixels do documento', () => 
   })
   assert.deepEqual(redChannels(result.pixels), [0, 85, 170, 255])
   assert.deepEqual([...result.pixels.filter((_, index) => index % 4 === 3)], [255, 255, 255, 255])
+})
+
+test('aplica degradê radial circular do centro até o exterior do raio', () => {
+  const result = applyGradientRaster({
+    sourcePixels: transparentPixels(5, 5),
+    sourceWidth: 5,
+    sourceHeight: 5,
+    transform: identityTransform(5, 5),
+    geometry: { start: { x: 2.5, y: 2.5 }, end: { x: 4.5, y: 2.5 } },
+    config: radialConfig,
+    selection: null,
+    documentWidth: 5,
+    documentHeight: 5
+  })
+  const redAt = (x, y) => result.pixels[(y * 5 + x) * 4]
+  assert.equal(redAt(2, 2), 0)
+  assert.equal(redAt(3, 2), 128)
+  assert.equal(redAt(2, 3), 128)
+  assert.equal(redAt(4, 2), 255)
+  assert.equal(redAt(0, 0), 255)
 })
 
 test('expande raster compacto até os limites do documento e preserva sua origem', () => {

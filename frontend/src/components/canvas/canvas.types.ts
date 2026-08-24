@@ -1,5 +1,5 @@
 import type { BrushOperation } from '../../editor/brush'
-import type { GradientConfig, GradientGeometry } from '../../editor/gradient'
+import type { GradientConfig, GradientGeometry, GradientType } from '../../editor/gradient'
 import type { DocumentPoint, TransformHandle } from '../../editor/freeTransform'
 import type { EditorGuide, GuideOrientation, RulerOrigin, RulerUnit } from '../../editor/guides'
 import type { SelectionMode, SelectionPoint, SelectionRegion } from '../../editor/selection'
@@ -32,6 +32,7 @@ export interface CanvasViewportProps {
   foregroundColor: string
   backgroundColor: string
   gradientReversed: boolean
+  gradientType: GradientType
   document: DocumentSpec
   guides: EditorGuide[]
   guidesLocked: boolean
@@ -91,6 +92,7 @@ export interface CanvasViewportEmits {
   (event: 'update:magicWandContiguous', enabled: boolean): void
   (event: 'update:magicWandTolerance', tolerance: number): void
   (event: 'update:gradientReversed', reversed: boolean): void
+  (event: 'update:gradientType', type: GradientType): void
   (event: 'update:guidesLocked', enabled: boolean): void
   (event: 'update:guidesVisible', enabled: boolean): void
   (event: 'update:guideSnappingEnabled', enabled: boolean): void

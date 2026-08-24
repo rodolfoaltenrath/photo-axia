@@ -7,7 +7,7 @@
 ## Metadados
 
 - Última atualização: 2026-08-23
-- Estado geral: Fase 1 implementada, aguardando validação prática; continuidade antes do teste de fogo autorizada pelo mantenedor
+- Estado geral: Fases 1 e 2 implementadas, aguardando validação prática; continuidade antes do teste de fogo autorizada pelo mantenedor
 - Ordem aprovada: Degradê linear -> Degradê radial -> Varinha Mágica -> Balde de Tinta
 - Plataformas obrigatórias: Windows e Linux
 - Stack atual: Go 1.23, Wails 2.12, Vue 3, TypeScript e Vite
@@ -63,7 +63,7 @@ Registrar a nova decisão em **Registro de decisões** e explicar o motivo.
 | Base de cores principal/secundária | `CONCLUÍDO` | Manter compatibilidade com os novos consumidores |
 | Conta-gotas contínuo | `CONCLUÍDO` | Usar como referência para pointer capture e coalescência |
 | Degradê linear | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Executar teste de fogo no Wails após completar as ferramentas planejadas |
-| Degradê radial | `NÃO INICIADO` | Iniciar somente após o linear estar validado |
+| Degradê radial | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar preview, commit e cancelamento no Windows/Linux no teste de fogo |
 | Auditoria e aceite da Varinha Mágica | `NÃO INICIADO` | Mapear lacunas entre código existente e produto aceito |
 | Balde de Tinta | `NÃO INICIADO` | Iniciar após estabilizar o motor da Varinha |
 
@@ -287,7 +287,7 @@ roadmap antes de usar nomes diferentes e registrar a decisão.
 
 ## Fase 2 — Degradê radial
 
-Estado: `NÃO INICIADO`
+Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
 
 ### Dependência
 
@@ -537,6 +537,31 @@ da fase e não declarar validação completa.
 - Riscos restantes: preview/commit, pointer capture, desempenho real, undo/redo e ciclo de URLs ainda precisam do teste manual conjunto em Windows e Linux; a Fase 1 não está `CONCLUÍDO`.
 - Estado da Fase 1: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`.
 - Próximo passo exato: iniciar a Fase 2 habilitando o cálculo radial no núcleo compartilhado, conforme autorização do mantenedor para continuar antes do teste de fogo.
+
+### 2026-08-24 — Degradê radial integrado ao pipeline compartilhado
+
+- `GradientType` passou a aceitar `radial`; o progresso radial usa a distância do
+  pixel ao ponto inicial dividida pelo raio definido pelo arraste, limitado a `[0, 1]`.
+- O raster compartilhado escolhe o cálculo linear ou radial pela configuração, sem
+  duplicar expansão, máscaras de seleção, processamento em lotes, worker ou fallback.
+- O seletor `Linear | Radial` foi habilitado na barra contextual e o modo permanece
+  apenas em memória, conforme o escopo aprovado.
+- A prévia usa `CanvasGradient` radial com o ponto inicial como centro e a linha de
+  controle existente como indicação do raio. Um raio transitório zero é protegido na
+  prévia e continua sendo descartado como no-op ao encerrar o gesto.
+- Trocar Linear/Radial durante um arraste cancela a interação e remove a prévia antiga.
+- Inversão, seleções, transformações, histórico, cancelamento e ciclo de assets continuam
+  no mesmo fluxo já implementado pelo linear.
+- Adicionados testes para centro, metade do raio, borda, exterior, raio degenerado e
+  simetria circular horizontal/vertical. O conjunto de degradê passou de 15 para 17 testes.
+- Validações executadas: 226 testes frontend, `vue-tsc --noEmit`, build Vite, testes Go,
+  build Wails Windows/amd64 e `git diff --check`.
+- Arquivos alterados: `App.vue`, `CanvasViewport.vue`, `CanvasContextBar.vue`,
+  `canvas.types.ts`, `useGradientInteraction.ts`, `gradient.ts`, `gradientRaster.ts`,
+  `gradient.test.mjs` e este roadmap.
+- Estado da Fase 2: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` manual no Windows e Linux.
+- Próximo passo exato: iniciar a Fase 3 pela auditoria da implementação existente da
+  Varinha Mágica, sem reescrever o motor antes de mapear lacunas e decisões de produto.
 
 ### 2026-08-23 — Roadmap criado
 

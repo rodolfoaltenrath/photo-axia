@@ -2,6 +2,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { brushPreviewSize } from '../../../editor/brush'
 import {
   gradientGestureAction,
+  gradientLength,
   snapGradientEndpoint,
   type GradientConfig,
   type GradientGeometry
@@ -78,12 +79,21 @@ export function useGradientInteraction(options: GradientInteractionOptions) {
     context.save()
     if (interaction.selection) clipContextToSelection(context, interaction.selection, documentToPreview)
     context.setTransform(...documentToPreview)
-    const gradient = context.createLinearGradient(
-      interaction.geometry.start.x,
-      interaction.geometry.start.y,
-      interaction.geometry.end.x,
-      interaction.geometry.end.y
-    )
+    const gradient = interaction.config.type === 'radial'
+      ? context.createRadialGradient(
+          interaction.geometry.start.x,
+          interaction.geometry.start.y,
+          0,
+          interaction.geometry.start.x,
+          interaction.geometry.start.y,
+          Math.max(Number.EPSILON, gradientLength(interaction.geometry))
+        )
+      : context.createLinearGradient(
+          interaction.geometry.start.x,
+          interaction.geometry.start.y,
+          interaction.geometry.end.x,
+          interaction.geometry.end.y
+        )
     const startColor = interaction.config.reversed
       ? interaction.config.backgroundColor
       : interaction.config.foregroundColor
@@ -185,6 +195,9 @@ export function useGradientInteraction(options: GradientInteractionOptions) {
 
   watch(options.activeTool, (tool) => {
     if (tool !== 'gradient') cancelGradient()
+  })
+  watch(() => options.config().type, (type) => {
+    if (gradientInteraction.value && gradientInteraction.value.config.type !== type) cancelGradient()
   })
   watch(options.isBusy, (busy) => {
     const interaction = gradientInteraction.value

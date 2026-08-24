@@ -2,6 +2,7 @@
 import { formatZoom } from '../../editor/viewport'
 import type { RulerUnit } from '../../editor/guides'
 import type { SelectionMode } from '../../editor/selection'
+import type { GradientType } from '../../editor/gradient'
 import type { DocumentSpec, EditorTool } from '../../types/editor'
 
 defineProps<{
@@ -11,6 +12,7 @@ defineProps<{
   document: DocumentSpec
   guideCount: number
   gradientReversed: boolean
+  gradientType: GradientType
   guideSnappingEnabled: boolean
   guidesLocked: boolean
   guidesVisible: boolean
@@ -37,6 +39,7 @@ const emit = defineEmits<{
   (event: 'updateAutoSelectLayer', enabled: boolean): void
   (event: 'updateGuideSnappingEnabled', enabled: boolean): void
   (event: 'updateGradientReversed', reversed: boolean): void
+  (event: 'updateGradientType', type: GradientType): void
   (event: 'updateGuidesLocked', enabled: boolean): void
   (event: 'updateGuidesVisible', enabled: boolean): void
   (event: 'updateMagicWandContiguous', enabled: boolean): void
@@ -109,8 +112,18 @@ const emit = defineEmits<{
     <span v-if="activeTool === 'brush' || activeTool === 'eraser'">{{ brushSize }} px</span>
     <div v-if="activeTool === 'gradient'" class="gradient-options">
       <div class="gradient-mode-control" role="group" aria-label="Tipo de degradê">
-        <button class="active" type="button" aria-pressed="true">Linear</button>
-        <button type="button" disabled title="Disponível na próxima fase">Radial</button>
+        <button
+          :class="{ active: gradientType === 'linear' }"
+          :aria-pressed="gradientType === 'linear'"
+          type="button"
+          @click="emit('updateGradientType', 'linear')"
+        >Linear</button>
+        <button
+          :class="{ active: gradientType === 'radial' }"
+          :aria-pressed="gradientType === 'radial'"
+          type="button"
+          @click="emit('updateGradientType', 'radial')"
+        >Radial</button>
       </div>
       <button
         class="gradient-reverse-button"

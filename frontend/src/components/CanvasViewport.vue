@@ -285,7 +285,7 @@ const {
 } = useGradientInteraction({
   activeTool: () => props.activeTool,
   config: () => ({
-    type: 'linear',
+    type: props.gradientType,
     foregroundColor: props.foregroundColor,
     backgroundColor: props.backgroundColor,
     reversed: props.gradientReversed
@@ -862,6 +862,7 @@ defineExpose({
       :document="document"
       :guide-count="guides.length"
       :gradient-reversed="gradientReversed"
+      :gradient-type="gradientType"
       :guide-snapping-enabled="guideSnappingEnabled"
       :guides-locked="guidesLocked"
       :guides-visible="guidesVisible"
@@ -884,6 +885,7 @@ defineExpose({
       @update-auto-select-layer="emit('update:autoSelectLayer', $event)"
       @update-guide-snapping-enabled="emit('update:guideSnappingEnabled', $event)"
       @update-gradient-reversed="emit('update:gradientReversed', $event)"
+      @update-gradient-type="emit('update:gradientType', $event)"
       @update-guides-locked="emit('update:guidesLocked', $event)"
       @update-guides-visible="emit('update:guidesVisible', $event)"
       @update-magic-wand-contiguous="emit('update:magicWandContiguous', $event)"

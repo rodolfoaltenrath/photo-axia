@@ -120,7 +120,7 @@ import {
   seedSmartLayerRender
 } from './services/smartLayerRenderer'
 import type { BrushOperation } from './editor/brush'
-import type { GradientConfig, GradientGeometry } from './editor/gradient'
+import type { GradientConfig, GradientGeometry, GradientType } from './editor/gradient'
 import { gradientResultTransform } from './editor/gradientRaster'
 import {
   disposeSelectionMoveEngine,
@@ -163,6 +163,7 @@ const brushSize = ref(24)
 const brushColor = ref('#000000')
 const backgroundColor = ref('#ffffff')
 const gradientReversed = ref(false)
+const gradientType = ref<GradientType>('linear')
 const guides = ref<EditorGuide[]>([])
 const rulersVisible = ref(initialRulersVisibility())
 const guidesVisible = ref(true)
@@ -3470,6 +3471,7 @@ onBeforeUnmount(() => {
         :foreground-color="brushColor"
         :background-color="backgroundColor"
         :gradient-reversed="gradientReversed"
+        :gradient-type="gradientType"
         :document="activeDocument"
         :guides="guides"
         :guides-locked="guidesLocked"
@@ -3495,6 +3497,7 @@ onBeforeUnmount(() => {
         @paint-stroke="commitBrushStroke"
         @gradient-gesture="commitGradient"
         @update:gradient-reversed="gradientReversed = $event"
+        @update:gradient-type="gradientType = $event"
         @sample-color="sampleColor"
         @update-guide="updateGuide"
         @create-text="addTextLayer"

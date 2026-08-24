@@ -1,5 +1,5 @@
 import {
-  linearGradientProgress,
+  gradientProgress,
   parseGradientColor,
   type GradientConfig,
   type GradientGeometry
@@ -45,6 +45,7 @@ export interface GradientRasterState {
   endColor: readonly [number, number, number]
   contains: (point: SelectionPoint) => boolean
   gradient: GradientGeometry
+  gradientType: GradientConfig['type']
 }
 
 function normalizedDocumentBounds(width: number, height: number): SelectionBounds {
@@ -206,7 +207,8 @@ export function createGradientRasterState(request: GradientRasterRequest): Gradi
     startColor: request.config.reversed ? background : foreground,
     endColor: request.config.reversed ? foreground : background,
     contains: selectionPredicate(request.selection, request.documentWidth, request.documentHeight),
-    gradient: request.geometry
+    gradient: request.geometry,
+    gradientType: request.config.type
   }
 }
 
@@ -217,7 +219,7 @@ export function renderGradientRasterRows(state: GradientRasterState, startRow: n
     for (let x = 0; x < state.geometry.width; x++) {
       const point = transformSelectionPoint(state.outputToDocument, { x: x + 0.5, y: y + 0.5 })
       if (!state.contains(point)) continue
-      const progress = linearGradientProgress(point, state.gradient)
+      const progress = gradientProgress(point, state.gradient, state.gradientType)
       const offset = (y * state.geometry.width + x) * 4
       for (let channel = 0; channel < 3; channel++) {
         state.pixels[offset + channel] = Math.round(
