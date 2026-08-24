@@ -34,6 +34,8 @@ type App struct {
 	projectFiles          map[string]projectSession
 	recentMu              sync.Mutex
 	recentUploads         map[string]recentUpload
+	exportMu              sync.Mutex
+	exportUploads         map[string]exportUpload
 	recentConfigDirectory string
 	recentCacheDirectory  string
 	documentDirty         atomic.Bool
@@ -162,6 +164,7 @@ func NewApp() *App {
 		projectSaves:  make(map[string]string),
 		projectFiles:  make(map[string]projectSession),
 		recentUploads: make(map[string]recentUpload),
+		exportUploads: make(map[string]exportUpload),
 		previewSlots:  make(chan struct{}, 1),
 		previewCache:  newPreviewCache(),
 	}
@@ -179,6 +182,9 @@ func (a *App) shutdown(context.Context) {
 	a.recentMu.Lock()
 	a.recentUploads = make(map[string]recentUpload)
 	a.recentMu.Unlock()
+	a.exportMu.Lock()
+	a.exportUploads = make(map[string]exportUpload)
+	a.exportMu.Unlock()
 }
 
 func (a *App) SetDocumentDirty(dirty bool) {
@@ -333,14 +339,32 @@ func (a *App) ImportDroppedFiles(paths []string) DroppedFilesResult {
 }
 
 func (a *App) SaveExportedPNG(suggestedName string, dataURL string) (string, error) {
-	if suggestedName == "" {
-		suggestedName = "imagem.png"
+	return a.SaveExportedImage(suggestedName, dataURL, "image/png")
+}
+
+func (a *App) SaveExportedImage(suggestedName string, dataURL string, mimeType string) (string, error) {
+	type exportFormat struct {
+		extension string
+		title     string
+		filter    string
 	}
-	if filepath.Ext(suggestedName) == "" {
-		suggestedName += ".png"
+	formats := map[string]exportFormat{
+		"image/png":  {extension: ".png", title: "Exportar PNG", filter: "Imagem PNG"},
+		"image/jpeg": {extension: ".jpg", title: "Exportar JPEG", filter: "Imagem JPEG"},
+		"image/webp": {extension: ".webp", title: "Exportar WebP", filter: "Imagem WebP"},
+	}
+	format, supported := formats[mimeType]
+	if !supported {
+		return "", fmt.Errorf("formato de exportacao nao suportado")
+	}
+	if suggestedName == "" {
+		suggestedName = "imagem" + format.extension
+	}
+	if !strings.EqualFold(filepath.Ext(suggestedName), format.extension) {
+		suggestedName = strings.TrimSuffix(suggestedName, filepath.Ext(suggestedName)) + format.extension
 	}
 
-	encoded, found := strings.CutPrefix(dataURL, "data:image/png;base64,")
+	encoded, found := strings.CutPrefix(dataURL, "data:"+mimeType+";base64,")
 	if !found {
 		return "", fmt.Errorf("formato de exportacao invalido")
 	}
@@ -349,15 +373,15 @@ func (a *App) SaveExportedPNG(suggestedName string, dataURL string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("decodificar PNG: %w", err)
 	}
-	if len(data) < 8 || http.DetectContentType(data) != "image/png" {
-		return "", fmt.Errorf("conteudo exportado nao e um PNG valido")
+	if len(data) < 8 || http.DetectContentType(data) != mimeType {
+		return "", fmt.Errorf("conteudo exportado nao corresponde ao formato solicitado")
 	}
 
 	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Exportar PNG",
+		Title:           format.title,
 		DefaultFilename: suggestedName,
 		Filters: []runtime.FileFilter{
-			{DisplayName: "Imagem PNG", Pattern: "*.png"},
+			{DisplayName: format.filter, Pattern: "*" + format.extension},
 		},
 	})
 	if err != nil {
@@ -366,12 +390,12 @@ func (a *App) SaveExportedPNG(suggestedName string, dataURL string) (string, err
 	if path == "" {
 		return "", nil
 	}
-	if strings.ToLower(filepath.Ext(path)) != ".png" {
-		path += ".png"
+	if !strings.EqualFold(filepath.Ext(path), format.extension) {
+		path = strings.TrimSuffix(path, filepath.Ext(path)) + format.extension
 	}
 
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return "", fmt.Errorf("salvar PNG: %w", err)
+		return "", fmt.Errorf("salvar imagem: %w", err)
 	}
 
 	return path, nil
@@ -425,12 +449,12 @@ func (a *App) readImageFile(path string) (ImportedImage, error) {
 	a.assetsMu.Unlock()
 
 	return ImportedImage{
-		ID:        id,
-		Name:      filepath.Base(path),
-		Width:     width,
-		Height:    height,
-		MimeType:  mimeType,
-		SourceURL: "/__axia_asset/" + id,
+		ID:               id,
+		Name:             filepath.Base(path),
+		Width:            width,
+		Height:           height,
+		MimeType:         mimeType,
+		SourceURL:        "/__axia_asset/" + id,
 		ByteSize:         byteSize,
 		ResolutionDPIX:   resolutionDPIX,
 		ResolutionDPIY:   resolutionDPIY,
@@ -775,6 +799,7 @@ func (a *App) assetMiddleware(next http.Handler) http.Handler {
 	assets := a.assetHandler()
 	projects := a.projectHandler()
 	recents := a.recentProjectsHandler()
+	exports := a.exportHandler()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/__axia_asset/") {
 			assets.ServeHTTP(response, request)
@@ -786,6 +811,10 @@ func (a *App) assetMiddleware(next http.Handler) http.Handler {
 		}
 		if strings.HasPrefix(request.URL.Path, "/__axia_recent/") {
 			recents.ServeHTTP(response, request)
+			return
+		}
+		if strings.HasPrefix(request.URL.Path, "/__axia_export/") {
+			exports.ServeHTTP(response, request)
 			return
 		}
 		next.ServeHTTP(response, request)

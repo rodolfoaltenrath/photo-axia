@@ -7,6 +7,7 @@ import {
   documentPixelSize,
   parseCustomDocumentPresets,
   pixelsPerDocumentUnit,
+  proportionalDocumentDimension,
   validateDocumentSettings
 } from '../src/editor/document.ts'
 
@@ -78,6 +79,18 @@ test('DPI descreve tamanho físico sem alterar documentos definidos em pixels', 
   assert.ok(Math.abs(physical150.heightCentimeters - 20.997) < 0.001)
   assert.ok(Math.abs(physical300.widthCentimeters - physical150.widthCentimeters / 2) < 0.001)
   assert.ok(Math.abs(physical300.heightCentimeters - physical150.heightCentimeters / 2) < 0.001)
+})
+
+test('calcula a dimensão vinculada preservando a proporção nas duas direções', () => {
+  const a4Landscape = 29.7 / 21
+  assert.equal(proportionalDocumentDimension(1754, a4Landscape, 'px', 'width'), 1240)
+  assert.equal(proportionalDocumentDimension(1240, a4Landscape, 'px', 'height'), 1754)
+  assert.equal(proportionalDocumentDimension(10, 2, 'cm', 'width'), 5)
+})
+
+test('não vincula dimensões com valor ou proporção inválidos', () => {
+  assert.equal(proportionalDocumentDimension(Number.NaN, 2, 'px', 'width'), null)
+  assert.equal(proportionalDocumentDimension(100, 0, 'px', 'height'), null)
 })
 
 test('tamanho físico deriva do raster arredondado criado por unidades físicas', () => {

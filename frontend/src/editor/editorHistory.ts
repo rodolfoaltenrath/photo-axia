@@ -10,6 +10,8 @@ interface SelectionDelta {
   activeAfter?: string
   selectedBefore?: string[]
   selectedAfter?: string[]
+  selectionBefore?: SelectionRegion | null
+  selectionAfter?: SelectionRegion | null
 }
 
 export interface LayerHistoryItem {
@@ -38,8 +40,6 @@ export interface PatchLayerDelta extends SelectionDelta {
   layerId: string
   before: Partial<LayerItem>
   after: Partial<LayerItem>
-  selectionBefore?: SelectionRegion | null
-  selectionAfter?: SelectionRegion | null
 }
 
 export interface ReorderLayerDelta extends SelectionDelta {

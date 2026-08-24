@@ -22,6 +22,8 @@ export function OpenRecentProject(arg1:string):Promise<main.OpenedAxiaProject>;
 
 export function PrepareAxiaProjectSave(arg1:string,arg2:string,arg3:boolean):Promise<main.ProjectSaveTarget>;
 
+export function PrepareExportedImage(arg1:string,arg2:string):Promise<main.ExportSaveTarget>;
+
 export function PrepareRecentThumbnail(arg1:string):Promise<string>;
 
 export function RecordRecentProject(arg1:string,arg2:string,arg3:number,arg4:number):Promise<main.RecentProject>;
@@ -29,6 +31,8 @@ export function RecordRecentProject(arg1:string,arg2:string,arg3:number,arg4:num
 export function ReleaseAxiaProjectAssets():Promise<void>;
 
 export function RemoveRecentProject(arg1:string):Promise<void>;
+
+export function SaveExportedImage(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SaveExportedPNG(arg1:string,arg2:string):Promise<string>;
 

@@ -5,6 +5,7 @@ import FlattenImageDialog from './components/FlattenImageDialog.vue'
 import LayerStyleDialog from './components/LayerStyleDialog.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
+import ExportImageDialog from './components/ExportImageDialog.vue'
 import ProjectHome from './components/ProjectHome.vue'
 import PropertiesPanel from './components/PropertiesPanel.vue'
 import ToolBar from './components/ToolBar.vue'
@@ -23,7 +24,7 @@ import {
   recordRecentProject,
   registerNativeFileDrop,
   releaseAxiaProjectAssets,
-  saveExportedPNGBlob,
+  saveExportedImageBlob,
   removeRecentProject,
   setNativeDocumentDirty,
   uploadRecentThumbnail,
@@ -42,11 +43,13 @@ import {
 } from './services/imageImport'
 import {
   renderDocumentBlob,
+  renderDocumentExportBlob,
   renderDocumentThumbnail,
   renderLayerAppearance,
   renderMergedLayers,
   sampleDocumentColor
 } from './services/renderDocument'
+import { pngBlobWithResolution } from './services/pngMetadata'
 import {
   createAxiaProjectManifest,
   restoreAxiaProject,
@@ -66,6 +69,7 @@ import {
 } from './editor/editorHistory'
 import { useHistory, type HistoryRecordOptions, type HistorySnapshot, type HistoryStep } from './editor/history'
 import { MutationBarrier } from './editor/mutationBarrier'
+import type { ExportSettings } from './editor/exportSettings'
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
@@ -177,6 +181,11 @@ const activeLayerId = ref('layer-bg')
 const selectedLayerIds = ref<string[]>(['layer-bg'])
 const layerSelectionAnchorId = ref('layer-bg')
 const showNewDocumentDialog = ref(false)
+const showExportImageDialog = ref(false)
+const exportEstimateBusy = ref(false)
+const exportEstimatedBytes = ref<number | null>(null)
+const preparedExport = shallowRef<{ key: string; blob: Blob } | null>(null)
+let exportEstimateGeneration = 0
 const appScreen = ref<'home' | 'editor'>('home')
 const hasOpenDocument = ref(false)
 const recentProjects = ref<RecentProject[]>([])
@@ -284,7 +293,7 @@ const documentDirty = computed(() => {
   return savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value
 })
 const modalOpen = computed(() => editorIsBlockedByModal(
-  showNewDocumentDialog.value,
+  showNewDocumentDialog.value || showExportImageDialog.value,
   showUnsavedChangesDialog.value,
   Boolean(layerStyleDialog.value) || showFlattenImageDialog.value
 ))
@@ -585,7 +594,7 @@ async function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
     }
     for (const layerId of result.refreshLayerIds) refreshIds.add(layerId)
     if (result.removedLayerIds.length) resourcesMayBeUnused = true
-    if (delta.type === 'layer:patch' && ('selectionBefore' in delta || 'selectionAfter' in delta)) {
+    if ('selectionBefore' in delta || 'selectionAfter' in delta) {
       restoredSelection = cloneSelection(direction === 'redo' ? delta.selectionAfter ?? null : delta.selectionBefore ?? null)
     }
   }
@@ -1112,15 +1121,20 @@ async function duplicateSelectionOrLayer() {
     const activeBefore = activeLayerId.value
     layers.value.splice(sourceIndex, 0, duplicate)
     activeLayerId.value = duplicate.id
+    selection.value = null
+    selectionGeneration++
+    activeTool.value = 'move'
     recordHistory('Camada via cópia', {
       type: 'layers:add',
       items: [{ index: sourceIndex, layer: cloneLayerHistoryState(duplicate) }],
       activeBefore,
-      activeAfter: duplicate.id
+      activeAfter: duplicate.id,
+      selectionBefore: cloneSelection(currentSelection),
+      selectionAfter: null
     })
     transientObjectUrls.clear()
     collectUnusedObjectUrls()
-    statusText.value = 'Seleção copiada para uma nova camada'
+    statusText.value = 'Área copiada para uma nova camada — pronta para mover'
   } catch (error) {
     if (createdSource) {
       URL.revokeObjectURL(createdSource)
@@ -3081,26 +3095,71 @@ async function readLocalFiles(input: HTMLInputElement) {
   }
 }
 
-async function exportDocument() {
+function exportDocument() {
+  if (isBusy.value) return
+  clearExportEstimate()
+  showExportImageDialog.value = true
+}
+
+function exportSettingsKey(settings: ExportSettings) {
+  return JSON.stringify(settings)
+}
+
+function clearExportEstimate() {
+  exportEstimateGeneration += 1
+  exportEstimateBusy.value = false
+  exportEstimatedBytes.value = null
+  preparedExport.value = null
+}
+
+async function createDocumentExportBlob(settings: ExportSettings) {
+  if (!await settleRasterMutation('Finalizando edição antes de exportar…')) return null
+  const documentId = activeDocument.value.id
+  const exportLayers = layers.value.slice()
+  for (const layer of exportLayers) {
+    if (layer.visible && layer.kind === 'smart') await refreshSmartLayerSource(layer)
+  }
+  if (
+    activeDocument.value.id !== documentId || layers.value.length !== exportLayers.length ||
+    exportLayers.some((layer, index) => layers.value[index] !== layer)
+  ) throw new Error('O documento foi alterado durante a exportação.')
+  return renderDocumentExportBlob(activeDocument.value, exportLayers, settings)
+}
+
+async function estimateDocumentExport(settings: ExportSettings) {
+  if (isBusy.value || exportEstimateBusy.value) return
+  const generation = ++exportEstimateGeneration
+  exportEstimateBusy.value = true
+  errorText.value = ''
+  try {
+    const blob = await createDocumentExportBlob(settings)
+    if (!blob || generation !== exportEstimateGeneration || !showExportImageDialog.value) return
+    preparedExport.value = { key: exportSettingsKey(settings), blob }
+    exportEstimatedBytes.value = blob.size
+  } catch (error) {
+    showError(error, 'Não foi possível calcular o tamanho do arquivo.')
+  } finally {
+    if (generation === exportEstimateGeneration) exportEstimateBusy.value = false
+  }
+}
+
+async function performDocumentExport(settings: ExportSettings) {
   if (isBusy.value) return
   errorText.value = ''
   isBusy.value = true
-  statusText.value = 'Preparando PNG…'
+  statusText.value = `Preparando ${settings.format.toUpperCase()}…`
   try {
-    if (!await settleRasterMutation('Finalizando edição antes de exportar…')) return
-    const documentId = activeDocument.value.id
-    const exportLayers = layers.value.slice()
-    for (const layer of exportLayers) {
-      if (layer.visible && layer.kind === 'smart') await refreshSmartLayerSource(layer)
-    }
-    if (
-      activeDocument.value.id !== documentId || layers.value.length !== exportLayers.length ||
-      exportLayers.some((layer, index) => layers.value[index] !== layer)
-    ) throw new Error('O documento foi alterado durante a exportação.')
-    const blob = await renderDocumentBlob(activeDocument.value, exportLayers)
+    const key = exportSettingsKey(settings)
+    const cached = preparedExport.value?.key === key ? preparedExport.value.blob : null
+    const blob = cached ?? await createDocumentExportBlob(settings)
+    if (!blob) return
     const cleanName = activeDocument.value.name.replace(/\.[^.]+$/, '').trim() || 'imagem'
-    const path = await saveExportedPNGBlob(cleanName, blob)
-    statusText.value = path ? `PNG exportado: ${path}` : 'Exportação cancelada'
+    const path = await saveExportedImageBlob(cleanName, settings.format, blob)
+    statusText.value = path
+      ? `${settings.format.toUpperCase()} exportado (${(blob.size / (1024 * 1024)).toFixed(2)} MB): ${path}`
+      : 'Exportação cancelada'
+    showExportImageDialog.value = false
+    clearExportEstimate()
   } catch (error) {
     showError(error, 'Não foi possível exportar o documento.')
   } finally {
@@ -3128,7 +3187,8 @@ async function exportLayerPNG(layerId = activeLayerId.value) {
     }
     const appearance = await renderLayerAppearance(activeDocument.value, layer, 'isolated-export')
     const filename = quickLayerExportName(activeDocument.value.name, layer.name)
-    const path = await saveExportedPNGBlob(filename, appearance.blob)
+    const pngBlob = await pngBlobWithResolution(appearance.blob, activeDocument.value.resolutionDpi)
+    const path = await saveExportedImageBlob(filename, 'png', pngBlob)
     statusText.value = path ? `Camada exportada: ${path}` : 'Exportação cancelada'
   } catch (error) {
     showError(error, 'Não foi possível exportar a camada como PNG.')
@@ -3499,6 +3559,20 @@ onBeforeUnmount(() => {
       :open="showNewDocumentDialog"
       @close="showNewDocumentDialog = false"
       @create="createDocument"
+    />
+    <ExportImageDialog
+      :background="activeDocument.background"
+      :busy="isBusy"
+      :estimated-bytes="exportEstimatedBytes"
+      :estimating="exportEstimateBusy"
+      :height="activeDocument.height"
+      :open="showExportImageDialog"
+      :resolution-dpi="activeDocument.resolutionDpi"
+      :width="activeDocument.width"
+      @cancel="showExportImageDialog = false; clearExportEstimate()"
+      @estimate="estimateDocumentExport"
+      @export="performDocumentExport"
+      @settings-change="clearExportEstimate"
     />
     <LayerStyleDialog
       :layer-name="layerStyleDialogLayer?.name ?? ''"

@@ -1,5 +1,5 @@
 import type { ImageAsset, ImportedImage, LayerItem } from '../types/editor'
-import { imageResolutionFromHeader } from '../editor/imageResolution'
+import { imageResolutionFromHeader } from '../editor/imageResolution.ts'
 
 const supportedTypes = new Set(['image/png', 'image/jpeg', 'image/gif'])
 const MAX_EDITOR_PREVIEW_PIXELS = 4_194_304

@@ -141,7 +141,10 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
           width: image.width,
           height: image.height,
           mimeType: image.mimeType,
-          byteSize: image.byteSize
+          byteSize: image.byteSize,
+          resolutionDpiX: image.resolutionDpiX,
+          resolutionDpiY: image.resolutionDpiY,
+          resolutionSource: image.resolutionSource
         }
       }
       const styles = normalizeLayerStyleConfig(layer.styles)

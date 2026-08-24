@@ -7,6 +7,7 @@ import {
   documentPhysicalSize,
   documentPixelSize,
   parseCustomDocumentPresets,
+  proportionalDocumentDimension,
   validateDocumentSettings,
   type DocumentPreset
 } from '../editor/document'
@@ -30,6 +31,8 @@ const category = ref<DocumentPreset['category']>('screen')
 const customPresets = ref<DocumentPreset[]>(loadCustomPresets())
 const savingPreset = ref(false)
 const presetName = ref('')
+const keepProportions = ref(true)
+const aspectRatio = ref(1920 / 1080)
 const form = reactive<NewDocumentSettings>({
   name: 'Sem título',
   unit: 'px',
@@ -88,17 +91,38 @@ function applyPreset(preset: DocumentPreset) {
   form.height = preset.height
   form.resolutionDpi = preset.resolutionDpi
   form.background = preset.background
+  aspectRatio.value = preset.width / preset.height
 }
 
 function swapOrientation() {
   const width = form.width
   form.width = form.height
   form.height = width
+  aspectRatio.value = form.width / form.height
 }
 
 function changeUnit(event: Event) {
   const nextUnit = (event.target as HTMLSelectElement).value as DocumentUnit
   Object.assign(form, convertDocumentUnit(form, nextUnit))
+  updateAspectRatio()
+}
+
+function updateAspectRatio() {
+  if (Number.isFinite(form.width) && form.width > 0 && Number.isFinite(form.height) && form.height > 0) {
+    aspectRatio.value = form.width / form.height
+  }
+}
+
+function toggleProportions() {
+  if (keepProportions.value) updateAspectRatio()
+}
+
+function changeDimension(changed: 'width' | 'height', event: Event) {
+  const value = (event.target as HTMLInputElement).valueAsNumber
+  form[changed] = value
+  if (!keepProportions.value) return
+  const linked = proportionalDocumentDimension(value, aspectRatio.value, form.unit, changed)
+  if (linked !== null) form[changed === 'width' ? 'height' : 'width'] = linked
 }
 
 function savePreset() {
@@ -238,22 +262,28 @@ watch(() => props.open, async (open) => {
           <label>
             Largura
             <input
-              v-model.number="form.width"
+              :value="form.width"
               :disabled="busy"
               :min="form.unit === 'px' ? 1 : 0.01"
               :step="form.unit === 'px' ? 1 : 0.01"
               type="number"
+              @input="changeDimension('width', $event)"
             />
           </label>
           <label>
             Altura
             <input
-              v-model.number="form.height"
+              :value="form.height"
               :disabled="busy"
               :min="form.unit === 'px' ? 1 : 0.01"
               :step="form.unit === 'px' ? 1 : 0.01"
               type="number"
+              @input="changeDimension('height', $event)"
             />
+          </label>
+          <label class="document-proportion-lock field-full">
+            <input v-model="keepProportions" :disabled="busy" type="checkbox" @change="toggleProportions" />
+            Manter proporção entre largura e altura
           </label>
           <label>
             Unidade

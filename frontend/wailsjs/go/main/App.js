@@ -42,6 +42,10 @@ export function PrepareAxiaProjectSave(arg1, arg2, arg3) {
   return window['go']['main']['App']['PrepareAxiaProjectSave'](arg1, arg2, arg3);
 }
 
+export function PrepareExportedImage(arg1, arg2) {
+  return window['go']['main']['App']['PrepareExportedImage'](arg1, arg2);
+}
+
 export function PrepareRecentThumbnail(arg1) {
   return window['go']['main']['App']['PrepareRecentThumbnail'](arg1);
 }
@@ -56,6 +60,10 @@ export function ReleaseAxiaProjectAssets() {
 
 export function RemoveRecentProject(arg1) {
   return window['go']['main']['App']['RemoveRecentProject'](arg1);
+}
+
+export function SaveExportedImage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveExportedImage'](arg1, arg2, arg3);
 }
 
 export function SaveExportedPNG(arg1, arg2) {

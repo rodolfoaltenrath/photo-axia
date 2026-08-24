@@ -104,6 +104,11 @@ export function documentBaseMemoryBytes(settings: NewDocumentSettings) {
   return pixels.width * pixels.height * 4
 }
 
+export function proportionalDocumentDimension(value: number, aspectRatio: number, unit: DocumentUnit, changed: 'width' | 'height') {
+  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(aspectRatio) || aspectRatio <= 0) return null
+  return roundedDimension(changed === 'width' ? value / aspectRatio : value * aspectRatio, unit)
+}
+
 export interface DocumentPhysicalSize {
   widthInches: number
   heightInches: number

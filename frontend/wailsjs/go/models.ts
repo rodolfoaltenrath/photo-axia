@@ -39,6 +39,10 @@ export namespace main {
 	    height: number;
 	    mimeType: string;
 	    sourceUrl: string;
+	    byteSize?: number;
+	    resolutionDpiX?: number;
+	    resolutionDpiY?: number;
+	    resolutionSource?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ImportedImage(source);
@@ -52,6 +56,10 @@ export namespace main {
 	        this.height = source["height"];
 	        this.mimeType = source["mimeType"];
 	        this.sourceUrl = source["sourceUrl"];
+	        this.byteSize = source["byteSize"];
+	        this.resolutionDpiX = source["resolutionDpiX"];
+	        this.resolutionDpiY = source["resolutionDpiY"];
+	        this.resolutionSource = source["resolutionSource"];
 	    }
 	}
 	export class DroppedFilesResult {
@@ -100,6 +108,20 @@ export namespace main {
 	        this.appName = source["appName"];
 	        this.engine = source["engine"];
 	        this.documentOpen = source["documentOpen"];
+	    }
+	}
+	export class ExportSaveTarget {
+	    token: string;
+	    path: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ExportSaveTarget(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token = source["token"];
+	        this.path = source["path"];
 	    }
 	}
 	
@@ -167,4 +189,3 @@ export namespace main {
 	}
 
 }
-

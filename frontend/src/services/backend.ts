@@ -9,6 +9,7 @@ import {
   OpenAxiaProject,
   OpenRecentProject,
   PrepareAxiaProjectSave,
+  PrepareExportedImage,
   PrepareRecentThumbnail,
   RecordRecentProject,
   ReleaseAxiaProjectAssets,
@@ -19,6 +20,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime'
 import type { DocumentSpec, ImportedImage, NewDocumentSettings, RecentProject } from '../types/editor'
+import { EXPORT_FORMAT_CAPABILITIES, exportFilename, type ExportFormat } from '../editor/exportSettings'
 import { DEFAULT_LAYER_STYLE_GLOBAL_LIGHT, normalizeLayerStyleGlobalLight } from '../editor/layerStyles'
 
 interface EditorStatus {
@@ -198,6 +200,34 @@ export async function saveExportedPNGBlob(name: string, blob: Blob) {
   if (blob.type && blob.type !== 'image/png') throw new Error('O conteúdo exportado não é um PNG válido.')
   const filename = name.toLowerCase().endsWith('.png') ? name : `${name}.png`
   if (hasDesktopBackend()) return SaveExportedPNG(filename, await blobDataURL(blob))
+
+  const sourceUrl = URL.createObjectURL(blob)
+  try {
+    const link = window.document.createElement('a')
+    link.download = filename
+    link.href = sourceUrl
+    link.click()
+    return filename
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(sourceUrl), 0)
+  }
+}
+
+export async function saveExportedImageBlob(name: string, format: ExportFormat, blob: Blob) {
+  const capabilities = EXPORT_FORMAT_CAPABILITIES[format]
+  if (blob.type !== capabilities.mimeType) throw new Error('O formato codificado não corresponde à exportação solicitada.')
+  const filename = exportFilename(name, format)
+  if (hasDesktopBackend()) {
+    const target = await PrepareExportedImage(filename, capabilities.mimeType)
+    if (!target.token) return ''
+    const response = await fetch(`/__axia_export/save/${encodeURIComponent(target.token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': capabilities.mimeType },
+      body: blob
+    })
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Não foi possível salvar a imagem exportada.')
+    return target.path
+  }
 
   const sourceUrl = URL.createObjectURL(blob)
   try {

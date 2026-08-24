@@ -2830,6 +2830,127 @@ textarea:focus-visible,
   gap: 12px;
 }
 
+.document-form .document-proportion-lock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.document-form .document-proportion-lock input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ui-accent);
+}
+
+.export-image-dialog {
+  width: min(520px, calc(100vw - 32px));
+  border: 1px solid var(--ui-border-strong, #343d48);
+  border-radius: 8px;
+  background: var(--ui-surface-raised, #20262e);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 56%);
+}
+
+.export-image-form {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.export-image-form > label {
+  display: grid;
+  gap: 6px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+
+.export-image-form select,
+.export-image-form input[type='text'] {
+  min-height: 32px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 5px;
+  background: var(--ui-control);
+  color: var(--ui-text);
+  padding: 0 9px;
+}
+
+.export-image-form input[type='range'] {
+  width: 100%;
+}
+
+.export-matte-control {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 8px;
+}
+
+.export-matte-control input[type='color'] {
+  width: 40px;
+  min-height: 32px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 5px;
+  background: var(--ui-control);
+}
+
+.export-summary {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  border-top: 1px solid var(--ui-border);
+  border-bottom: 1px solid var(--ui-border);
+  padding: 12px 0;
+  font-size: 12px;
+}
+
+.export-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.export-summary dt,
+.export-summary dd {
+  margin: 0;
+}
+
+.export-summary dt,
+.export-size-note,
+.export-format-help {
+  color: var(--ui-text-dim);
+}
+
+.export-summary dd {
+  color: var(--ui-text-muted);
+}
+
+.export-size-note,
+.export-warning,
+.export-format-help {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.export-warning {
+  color: #f3c778;
+}
+
+.export-estimate-button {
+  justify-self: start;
+  min-height: 30px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 5px;
+  background: var(--ui-control);
+  color: var(--ui-text-muted);
+  padding: 0 10px;
+}
+
+.export-estimate-button:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  color: var(--ui-text);
+}
+
 .document-resolution-help {
   margin: -2px 0 2px;
   color: var(--ui-text-dim);

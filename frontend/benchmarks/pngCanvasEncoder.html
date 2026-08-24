@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Axia PNG Canvas benchmark</title>
+<pre id="result">running</pre>
+<script>
+const width = 1754
+const height = 1240
+const canvas = document.createElement('canvas')
+canvas.width = width
+canvas.height = height
+const context = canvas.getContext('2d')
+const image = context.createImageData(width, height)
+
+function hash(x, y) {
+  let value = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) >>> 0
+  value = (value ^ Math.imul(x + y, 1274126177)) >>> 0
+  return (value ^ (value >>> 13)) >>> 0
+}
+
+function fill(kind) {
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    let red = 242, green = 242, blue = 238
+    if (kind === 'flat') [red, green, blue] = [40, 120, 180]
+    else if (kind === 'gradient') [red, green, blue] = [Math.floor(x * 255 / (width - 1)), Math.floor(y * 255 / (height - 1)), (x + y) & 255]
+    else if (kind === 'photo-noise') {
+      const value = hash(x, y); [red, green, blue] = [value & 255, (value >>> 8) & 255, (value >>> 16) & 255]
+    } else if (kind === 'mixed') {
+      const insidePhoto = x >= 90 && x < 790 && y >= 100 && y < 610 || x >= 960 && x < 1660 && y >= 680 && y < 1130
+      if (insidePhoto) {
+        const value = hash(x, y); [red, green, blue] = [value & 255, (value >>> 8) & 255, (value >>> 16) & 255]
+      } else if (y % 74 < 3 && x > 80 && x < 1670) [red, green, blue] = [35, 38, 42]
+    }
+    const offset = (y * width + x) * 4
+    image.data[offset] = red
+    image.data[offset + 1] = green
+    image.data[offset + 2] = blue
+    image.data[offset + 3] = 255
+  }
+  context.putImageData(image, 0, 0)
+}
+
+function encode() {
+  const started = performance.now()
+  const dataUrl = canvas.toDataURL('image/png')
+  const encoded = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0
+  return { bytes: encoded.length * 3 / 4 - padding, milliseconds: performance.now() - started }
+}
+
+function run() {
+  const results = []
+  for (const fixture of ['flat', 'gradient', 'photo-noise', 'mixed']) {
+    fill(fixture)
+    const samples = []
+    for (let index = 0; index < 3; index++) samples.push(encode())
+    results.push({
+      fixture,
+      bytes: samples[0].bytes,
+      milliseconds: samples.reduce((total, sample) => total + sample.milliseconds, 0) / samples.length
+    })
+  }
+  document.querySelector('#result').textContent = JSON.stringify(results)
+}
+try { run() } catch (error) { document.querySelector('#result').textContent = JSON.stringify({ error: String(error) }) }
+</script>

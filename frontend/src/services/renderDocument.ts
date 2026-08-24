@@ -20,6 +20,8 @@ import {
   releaseLayerStyleRenderConsumer,
   renderLayerStyle
 } from './layerStyleCompositor.ts'
+import { EXPORT_FORMAT_CAPABILITIES, type ExportSettings } from '../editor/exportSettings.ts'
+import { pngBlobWithResolution } from './pngMetadata.ts'
 
 interface PreparedLayerRaster {
   image: CanvasImageSource
@@ -276,6 +278,43 @@ export async function renderDocumentBlob(document: DocumentSpec, layers: LayerIt
   const blob = await canvasBlob(canvas, 'image/png')
   if (!blob) throw new Error('Não foi possível gerar os pixels do documento.')
   return blob
+}
+
+export async function renderDocumentExportBlob(
+  document: DocumentSpec,
+  layers: LayerItem[],
+  settings: ExportSettings
+) {
+  const canvas = await renderDocumentCanvas(document, layers, document.width, document.height, false, 'export')
+  const capabilities = EXPORT_FORMAT_CAPABILITIES[settings.format]
+  let outputCanvas = canvas
+  if (!capabilities.supportsAlpha && document.background === 'transparent') {
+    const flattened = window.document.createElement('canvas')
+    flattened.width = canvas.width
+    flattened.height = canvas.height
+    const context = flattened.getContext('2d', { alpha: false })
+    if (!context) throw new Error('Não foi possível preparar o fundo da exportação.')
+    context.fillStyle = settings.matteColor ?? '#ffffff'
+    context.fillRect(0, 0, flattened.width, flattened.height)
+    context.drawImage(canvas, 0, 0)
+    outputCanvas = flattened
+  }
+  try {
+    const blob = await canvasBlob(outputCanvas, capabilities.mimeType, settings.quality)
+    if (!blob || blob.type !== capabilities.mimeType) {
+      throw new Error(`O formato ${settings.format.toUpperCase()} não está disponível neste sistema.`)
+    }
+    return settings.format === 'png' && settings.preserveMetadata
+      ? pngBlobWithResolution(blob, settings.resolutionDpi)
+      : blob
+  } finally {
+    if (outputCanvas !== canvas) {
+      outputCanvas.width = 1
+      outputCanvas.height = 1
+    }
+    canvas.width = 1
+    canvas.height = 1
+  }
 }
 
 export async function renderSmartLayerContentBlob(

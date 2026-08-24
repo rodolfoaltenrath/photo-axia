@@ -132,7 +132,7 @@ onBeforeUnmount(() => {
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importImages'))">Importar imagens</button>
           <div class="application-menu-separator" role="separator"></div>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('saveProject'))">Salvar</button>
-          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('exportDocument'))">Exportar imagem como PNG</button>
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('exportDocument'))">Exportar imagem…</button>
         </div>
       </div>
 
