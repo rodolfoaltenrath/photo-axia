@@ -1,4 +1,4 @@
-export type EditorTool = 'move' | 'brush' | 'eraser' | 'gradient' | 'eyedropper' | 'crop' | 'text' | 'hand' | 'zoom'
+export type EditorTool = 'move' | 'brush' | 'eraser' | 'gradient' | 'paint-bucket' | 'eyedropper' | 'crop' | 'text' | 'hand' | 'zoom'
 
 export type LayerKind = 'pixel' | 'image' | 'text' | 'smart' | 'adjustment' | 'background'
 export type LayerBlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'

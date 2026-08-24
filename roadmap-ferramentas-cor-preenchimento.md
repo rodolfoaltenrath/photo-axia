@@ -64,8 +64,8 @@ Registrar a nova decisão em **Registro de decisões** e explicar o motivo.
 | Conta-gotas contínuo | `CONCLUÍDO` | Usar como referência para pointer capture e coalescência |
 | Degradê linear | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Executar teste de fogo no Wails após completar as ferramentas planejadas |
 | Degradê radial | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar preview, commit e cancelamento no Windows/Linux no teste de fogo |
-| Auditoria e aceite da Varinha Mágica | `NÃO INICIADO` | Mapear lacunas entre código existente e produto aceito |
-| Balde de Tinta | `NÃO INICIADO` | Iniciar após estabilizar o motor da Varinha |
+| Auditoria e aceite da Varinha Mágica | `EM ANDAMENTO` | Extrair e validar o contrato neutro de análise de regiões |
+| Balde de Tinta | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar fluxo completo no Windows/Linux e corrigir achados práticos |
 
 ## Baseline confirmado em 2026-08-23
 
@@ -325,7 +325,7 @@ histórico ou asset lifecycle.
 
 ## Fase 3 — Auditoria e aceite da Varinha Mágica
 
-Estado: `NÃO INICIADO`
+Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
 
 ### Objetivo
 
@@ -368,7 +368,7 @@ consumi-los.
 
 ## Fase 4 — Balde de Tinta
 
-Estado: `NÃO INICIADO`
+Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
 
 ### Dependência
 
@@ -419,11 +419,11 @@ copiar o algoritmo experimental para outro arquivo.
 
 ### Critérios de aceite da Fase 4
 
-- [ ] Balde compartilha o motor da Varinha.
-- [ ] Não altera a seleção do usuário.
-- [ ] Cores principal/secundária e tolerância funcionam.
-- [ ] Undo/redo são atômicos.
-- [ ] Testes automatizados passam.
+- [x] Balde compartilha o motor da Varinha.
+- [x] Não altera a seleção do usuário.
+- [x] Cores principal/secundária e tolerância funcionam.
+- [x] Undo/redo são atômicos.
+- [x] Testes automatizados passam.
 - [ ] Windows e Linux validados manualmente.
 - [ ] README e atalhos atualizados.
 
@@ -563,6 +563,53 @@ da fase e não declarar validação completa.
 - Próximo passo exato: iniciar a Fase 3 pela auditoria da implementação existente da
   Varinha Mágica, sem reescrever o motor antes de mapear lacunas e decisões de produto.
 
+### 2026-08-24 — Auditoria técnica da Varinha e início do Balde
+
+- A implementação existente da Varinha foi auditada como base do motor compartilhado.
+  Ela analisa somente a camada ativa e converte o clique do documento para o raster
+  usando as matrizes existentes, inclusive para escala e rotação.
+- A tolerância atual é aplicada independentemente aos canais RGBA, limitada a 0–255.
+  Pixels com alfa zero são equivalentes mesmo quando carregam RGB oculto diferente.
+- O modo contíguo usa vizinhança ortogonal de quatro pixels; o modo global percorre
+  todo o raster e reúne todas as regiões equivalentes em spans ordenados.
+- O padrão existente `contiguous = true`, tolerância 32 e amostragem da camada ativa
+  foi preservado para o MVP; decisões de combinação de seleção permanecem na auditoria.
+- Extraído `frontend/src/editor/colorRegion.ts`, contrato neutro que recebe pixels,
+  dimensões, ponto, tolerância e modo, retornando spans, bounds e contagem de pixels.
+- `magicWandSpans` permanece como wrapper compatível, enquanto worker e fallback da
+  Varinha já consomem diretamente o núcleo neutro.
+- Iniciada a Fase 4 com `frontend/src/editor/paintBucket.ts`: o núcleo aplica cor opaca
+  aos spans encontrados, intersecta a região com a seleção existente no espaço do
+  documento, não modifica a seleção e reconhece preenchimento idêntico como no-op.
+- Criados `colorRegion.test.mjs` e `paintBucket.test.mjs`, cobrindo equivalência com a
+  Varinha, contíguo/global, transparência, preenchimento, seleção e no-op.
+- Validação deste incremento: 30 testes direcionados e `vue-tsc --noEmit` aprovados.
+- Próximo passo exato: criar worker/serviço do Balde com cancelamento e codificação do
+  asset; depois conectar clique esquerdo/direito, UI, `MutationBarrier` e histórico.
+
+### 2026-08-24 — Balde de Tinta integrado de ponta a ponta
+
+- Adicionado `paint-bucket` a `EditorTool`, botão próprio adjacente ao Degradê e atalho
+  `Shift+G`; `G` continua selecionando o Degradê sem alternância invisível.
+- Clique esquerdo usa a cor principal e clique direito usa a secundária. O menu de
+  contexto é bloqueado no canvas durante a interação.
+- A barra contextual reutiliza tolerância e modo contíguo/global da Varinha, deixando
+  explícita a semântica dos dois botões do mouse.
+- Criados `paintBucketEngine.ts` e `paintBucket.worker.ts`. O worker lê a fonte original,
+  executa o motor compartilhado, intersecta a seleção, codifica PNG e gera preview WebP.
+- Abort interrompe a operação descartando o worker ativo; fallback mantém o mesmo núcleo
+  de pixels e verifica o sinal antes/depois do processamento.
+- Camadas raster vazias passam pelo mesmo preparo do Pincel/Degradê. Texto e conteúdo
+  inteligente continuam sujeitos ao fluxo de rasterização já existente.
+- O commit usa `MutationBarrier`, publica asset e transform juntos, cria uma única etapa
+  `Balde de Tinta`, preserva a seleção e restaura tudo em erro ou cancelamento.
+- Preenchimento que não altera nenhum pixel não cria histórico nem novo object URL.
+- Validações: 232 testes frontend, `vue-tsc --noEmit`, build Vite com worker dedicado,
+  testes Go, build Wails Windows/amd64 e `git diff --check`.
+- Estado da Fase 4: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` manual no Windows e Linux.
+- Próximo passo exato: teste prático com regiões contíguas/globais, transparência,
+  seleções, camadas transformadas, botões esquerdo/direito e undo/redo.
+
 ### 2026-08-23 — Roadmap criado
 
 - Documentada a sequência Degradê linear, Degradê radial, auditoria da Varinha e Balde.
@@ -570,3 +617,105 @@ da fase e não declarar validação completa.
 - Mapeados contratos de interação, raster, worker, seleção, histórico e assets.
 - Definidos critérios de aceite, testes mínimos e protocolo obrigatório de atualização.
 - Próximo passo: iniciar a Fase 1 pelo módulo puro `frontend/src/editor/gradient.ts` e seus testes, sem integrar UI antes de validar geometria e interpolação.
+
+### 2026-08-24 — Auditoria pós-implementação: correções funcionais
+
+- Corrigida a divergência entre prévia e commit do Degradê quando uma seleção ultrapassa
+  o raster compacto da camada. O resultado agora expande o raster até a interseção da
+  seleção com o documento, em vez de limitar a pintura aos pixels preexistentes.
+- A expansão com seleção permanece limitada aos seus limites visíveis, evitando alocar
+  desnecessariamente um raster do tamanho completo do documento.
+- O Balde de Tinta agora rejeita camadas invisíveis tanto no tratamento do ponteiro
+  quanto na barreira defensiva do commit, mantendo consistência com Pincel e Degradê.
+- Adicionado teste de regressão para seleção parcialmente fora do documento sobre uma
+  camada compacta, incluindo geometria, pixels gerados e transformação resultante.
+- Próximo passo exato: validar estas correções e iniciar as otimizações de no-op, cópias
+  de raster, representação de spans e cálculo do Degradê radial.
+
+### 2026-08-24 — Otimização do no-op do Balde
+
+- O núcleo do Balde passou a copiar o raster somente ao encontrar o primeiro pixel que
+  realmente mudará, eliminando a cópia redundante e qualquer alocação de saída no no-op.
+- Worker e fallback agora retornam imediatamente quando nada muda, sem recompor canvas,
+  codificar PNG ou gerar preview WebP.
+- A geração de preview do Balde passou a solicitar interpolação de alta qualidade.
+- O contrato do serviço admite resultado sem blob apenas no no-op; o commit valida
+  defensivamente a presença da imagem para todo preenchimento efetivo.
+- Adicionada asserção de regressão garantindo que um no-op não produza raster de saída.
+- Próximo passo exato: validar o conjunto completo e então otimizar a representação de
+  regiões fragmentadas antes de mexer no laço matemático do Degradê radial.
+
+### 2026-08-24 — Otimização de regiões fragmentadas e Degradê radial
+
+- O motor de regiões recebeu `visitColorRegionSpans`, uma varredura incremental que
+  entrega cada segmento por callback e calcula bounds/contagens sem criar objetos.
+- A Varinha preserva `PixelSpan[]`, necessário para seleção, contorno e histórico. O
+  Balde passou a pintar diretamente durante a varredura e não materializa os segmentos.
+- Em padrão xadrez Full HD global, o fluxo anterior gastava cerca de 409 ms apenas para
+  criar 1.036.800 spans e usava aproximadamente 160,8 MB de RSS. O novo fluxo completo
+  de localizar e pintar os mesmos pixels mediu cerca de 106 ms, 72,4 MB de RSS e 8,8 MB
+  de heap no benchmark local.
+- O laço do raster do Degradê passou a incrementar coordenadas do documento diretamente,
+  pré-calcular deltas/divisores/canais e evitar pontos e matrizes temporárias por pixel.
+- O cálculo radial interno usa raiz quadrada sobre a distância ao quadrado e raio
+  pré-calculado, preservando os arredondamentos e os pixels esperados pelos testes.
+- No benchmark local 4K, o Degradê radial caiu de aproximadamente 1.634 ms para 291 ms,
+  redução próxima de 82% no tempo do núcleo.
+- Adicionado teste do caminho incremental do Balde em região global fragmentada.
+- Validações: 234 testes frontend e build TypeScript/Vite aprovados.
+- Risco remanescente: seleções extremamente fragmentadas da Varinha ainda precisam
+  materializar spans por fazerem parte do modelo editável; isso exige uma evolução
+  específica do formato de seleção, não necessária para o Balde.
+- Próximo passo exato: revisar cancelamento/fallback e cobertura integrada das duas
+  ferramentas antes da validação manual.
+
+### 2026-08-24 — Fallback cooperativo e isolamento do botão direito
+
+- A varredura compartilhada passou a expor um iterador retomável de spans. Worker e
+  APIs síncronas continuam consumindo-o sem pausas adicionais.
+- O fallback do Balde agora processa lotes de spans, devolve periodicamente o controle
+  ao navegador e verifica cancelamento antes e depois de cada pausa.
+- Adicionado teste que dispara cancelamento durante uma pausa cooperativa e exige
+  rejeição `AbortError`, comprovando que a interface pode interromper o fallback.
+- O menu de contexto do canvas agora é bloqueado somente quando o Balde está ativo;
+  nas demais ferramentas, o botão direito volta ao comportamento normal da plataforma.
+- Próximo passo exato: executar a validação completa final e revisar as decisões de UX
+  ainda abertas (agrupamento visual e preferências compartilhadas) com o mantenedor.
+
+### 2026-08-24 — UX alinhada ao agrupamento do Photoshop
+
+- Conforme decisão do mantenedor, Degradê e Balde passaram a ocupar um único grupo
+  visual `G` na barra de ferramentas, seguindo o padrão documentado pelo Photoshop.
+- O botão principal mostra e reativa a última ferramenta usada no grupo; o acionador
+  secundário abre uma lista explícita com Degradê e Balde e seus respectivos atalhos.
+- `G` continua selecionando Degradê e `Shift+G` continua selecionando Balde, além de
+  atualizar qual ícone permanece visível como o último utilizado no grupo.
+- Varinha e Balde agora possuem estados independentes de tolerância e modo contíguo.
+  Ambos mantêm os mesmos padrões iniciais (`32` e contíguo ativo), sem sincronização
+  silenciosa depois que o usuário ajusta uma das ferramentas.
+- A separação foi propagada por `App`, viewport, contrato de props/eventos e barra
+  contextual; o commit do Balde consome exclusivamente suas próprias preferências.
+- Validações: 235 testes frontend e build TypeScript/Vite aprovados.
+- Próximo passo exato: validar manualmente abertura/fechamento e posicionamento do flyout
+  no Windows, além da alternância por mouse, `G` e `Shift+G`.
+
+### 2026-08-24 — Seleções fragmentadas compactadas
+
+- A Varinha mantém arrays de objetos para seleções comuns e migra automaticamente para
+  `Int32Array` acima de 20 mil spans, armazenando cada segmento como três inteiros.
+- O formato compacto continua pixel-exato e foi propagado para clonagem, máscaras de
+  canvas, Pincel, Degradê, Balde, hit-test e desenho da seleção.
+- Consultas de ponto em seleções compactas e ordenadas usam busca binária, evitando uma
+  varredura de milhões de spans para cada pixel consultado.
+- Para impedir strings SVG gigantes, o overlay acima de 20 mil spans representa apenas
+  os limites da seleção; operações raster continuam usando a máscara pixel-exata.
+- O worker da Varinha transfere o buffer compacto ao processo principal sem cloná-lo.
+- Benchmark xadrez Full HD com 1.036.800 spans: 11,9 MB de dados compactos, cerca de
+  189 ms, 90 MB de RSS e 10,2 MB de heap; antes eram cerca de 409 ms e 160,8 MB de RSS.
+- Benchmark xadrez 4K com 4.147.200 spans: concluído em cerca de 684 ms, usando 47,5 MB
+  para a seleção compacta, sem o risco anterior de milhões de objetos no heap.
+- Adicionado teste que força e valida a transição automática para o formato compacto.
+- Validações: 236 testes frontend e build TypeScript/Vite aprovados antes da otimização
+  final de transferência do worker; a checagem completa será repetida em seguida.
+- Próximo passo exato: executar validação completa e incluir o caso fragmentado no teste
+  manual da Varinha, observando que o contorno visual será simplificado nesses extremos.

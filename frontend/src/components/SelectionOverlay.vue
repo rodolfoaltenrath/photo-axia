@@ -16,10 +16,10 @@ const props = defineProps<{
 
 const isPixelSelection = computed(() => props.selection.kind === 'pixels')
 const fillPath = computed(() =>
-  props.selection.kind === 'pixels' ? pixelSpansFillPath(props.selection.spans) : vectorSelectionPath(props.selection)
+  props.selection.kind === 'pixels' ? pixelSpansFillPath(props.selection.spans, props.selection.bounds) : vectorSelectionPath(props.selection)
 )
 const outlinePath = computed(() =>
-  props.selection.kind === 'pixels' ? pixelSpansOutlinePath(props.selection.spans) : fillPath.value
+  props.selection.kind === 'pixels' ? pixelSpansOutlinePath(props.selection.spans, props.selection.bounds) : fillPath.value
 )
 const selectionTransform = computed(() =>
   props.selection.kind === 'pixels' ? matrixToSvg(props.selection.sourceToDocument) : undefined

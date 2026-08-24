@@ -388,7 +388,8 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--scrolling': isNativeScrolling.value,
   'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--selection':
-    props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser' || props.activeTool === 'gradient',
+    props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser' ||
+    props.activeTool === 'gradient' || props.activeTool === 'paint-bucket',
   'canvas-scroll--eyedropper': props.activeTool === 'eyedropper',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
@@ -668,6 +669,16 @@ function startViewportPointer(event: PointerEvent) {
     if (point && startGradientPointer(event, point)) return
   }
 
+  if (props.activeTool === 'paint-bucket' && !isSpacePressed.value && (event.button === 0 || event.button === 2)) {
+    if (!paintableLayer.value) return
+    const point = pointerToDocument(event)
+    if (!point || point.x < 0 || point.y < 0 || point.x >= props.document.width || point.y >= props.document.height) return
+    event.preventDefault()
+    event.stopPropagation()
+    emit('paintBucket', point, event.button === 2 ? props.backgroundColor : props.foregroundColor, props.selection)
+    return
+  }
+
   const textLayerTarget = target?.closest('.document-layer[data-layer-kind="text"]')
   if (event.button === 0 && props.activeTool === 'text' && !isSpacePressed.value && !textLayerTarget) {
     const point = pointerToDocument(event)
@@ -712,6 +723,10 @@ function startViewportPointer(event: PointerEvent) {
     scrollTop: scroll.scrollTop,
     pointerId: event.pointerId
   }
+}
+
+function onCanvasContextMenu(event: MouseEvent) {
+  if (props.activeTool === 'paint-bucket') event.preventDefault()
 }
 
 function startLayerPointer(event: PointerEvent, layer: LayerItem) {
@@ -852,6 +867,7 @@ defineExpose({
     @dragover.prevent
     @drop="handleDrop"
     @keydown="handleCanvasKeydown"
+    @contextmenu="onCanvasContextMenu"
     @wheel="handleWheel"
   >
     <CanvasContextBar
@@ -871,6 +887,8 @@ defineExpose({
       :is-viewport-ready="isViewportReady"
       :magic-wand-contiguous="magicWandContiguous"
       :magic-wand-tolerance="magicWandTolerance"
+      :paint-bucket-contiguous="paintBucketContiguous"
+      :paint-bucket-tolerance="paintBucketTolerance"
       :rotation="activeDisplayTransform?.rotation ?? 0"
       :ruler-unit="rulerUnit"
       :rulers-visible="rulersVisible"
@@ -890,6 +908,8 @@ defineExpose({
       @update-guides-visible="emit('update:guidesVisible', $event)"
       @update-magic-wand-contiguous="emit('update:magicWandContiguous', $event)"
       @update-magic-wand-tolerance="emit('update:magicWandTolerance', $event)"
+      @update-paint-bucket-contiguous="emit('update:paintBucketContiguous', $event)"
+      @update-paint-bucket-tolerance="emit('update:paintBucketTolerance', $event)"
       @update-ruler-unit="emit('update:rulerUnit', $event)"
       @update-rulers-visible="emit('update:rulersVisible', $event)"
       @update-selection-mode="emit('update:selectionMode', $event)"

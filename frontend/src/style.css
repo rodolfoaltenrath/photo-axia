@@ -481,6 +481,71 @@ textarea:focus-visible,
   border-color: #313944;
 }
 
+.toolbar-tool-group {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+
+.toolbar-tool-group > button {
+  position: absolute;
+  inset: 0;
+}
+
+.toolbar-tool-group details {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  z-index: 12;
+}
+
+.toolbar-tool-group summary {
+  width: 12px;
+  height: 12px;
+  overflow: hidden;
+  color: #cbd3dc;
+  font-size: 10px;
+  line-height: 12px;
+  text-align: center;
+  cursor: pointer;
+  list-style: none;
+  transform: rotate(45deg);
+}
+
+.toolbar-tool-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.toolbar-tool-flyout {
+  position: absolute;
+  left: 14px;
+  bottom: -7px;
+  display: grid;
+  width: max-content;
+  gap: 4px;
+  border: 1px solid #3b4652;
+  border-radius: 7px;
+  background: #191e25;
+  padding: 5px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.tool-bar .toolbar-tool-flyout button {
+  display: flex;
+  align-items: center;
+  width: 210px;
+  gap: 9px;
+  padding: 0 10px;
+  color: var(--ui-text);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.tool-bar .toolbar-tool-flyout button img {
+  margin: 0;
+}
+
 .canvas-stage {
   display: grid;
   grid-template-rows: 42px minmax(0, 1fr);

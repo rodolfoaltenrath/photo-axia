@@ -269,7 +269,8 @@ test('calcula as cores em espaço do documento para camada rotacionada', () => {
     documentWidth: 2,
     documentHeight: 2
   })
-  assert.deepEqual(redChannels(result.pixels), [191, 191, 64, 64])
+  assert.deepEqual(result.geometry, { originX: -1, originY: 0, width: 3, height: 2 })
+  assert.deepEqual(redChannels(result.pixels), [0, 191, 191, 0, 64, 64])
 })
 
 test('processamento integral e processamento em lotes produzem pixels idênticos', () => {
@@ -290,4 +291,25 @@ test('processamento integral e processamento em lotes produzem pixels idênticos
   renderGradientRasterRows(chunked, 2, 4)
   assert.deepEqual(chunked.geometry, complete.geometry)
   assert.deepEqual(chunked.pixels, complete.pixels)
+})
+
+test('expande raster compacto somente até a seleção visível no documento', () => {
+  const result = applyGradientRaster({
+    sourcePixels: transparentPixels(2, 1),
+    sourceWidth: 2,
+    sourceHeight: 1,
+    transform: identityTransform(2, 1, 1, 0),
+    geometry: { start: { x: 0.5, y: 0.5 }, end: { x: 3.5, y: 0.5 } },
+    config: linearConfig,
+    selection: { kind: 'rectangle', bounds: { x: -10, y: 0, width: 13, height: 1 } },
+    documentWidth: 4,
+    documentHeight: 1
+  })
+
+  assert.deepEqual(result.geometry, { originX: -1, originY: 0, width: 3, height: 1 })
+  assert.deepEqual(redChannels(result.pixels), [0, 85, 170])
+  assert.deepEqual(
+    gradientResultTransform(identityTransform(2, 1, 1, 0), 2, 1, result.geometry),
+    { x: 0, y: 0, width: 3, height: 1, rotation: 0 }
+  )
 })

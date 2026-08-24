@@ -10,6 +10,7 @@ import {
   magicWandSpans,
   opaquePixelBounds,
   pixelSpansOutlinePath,
+  pixelSpansContainPoint,
   SELECTION_EXTRACTION_ALPHA_THRESHOLD,
   selectionContainsPoint,
   selectionDocumentBounds,
@@ -27,6 +28,18 @@ test('setas deslocam a seleção em um pixel ou dez com Shift', () => {
   assert.deepEqual(selectionNudgeDelta('ArrowUp'), { x: 0, y: -1 })
   assert.deepEqual(selectionNudgeDelta('ArrowRight', true), { x: 10, y: 0 })
   assert.equal(selectionNudgeDelta('Enter'), undefined)
+})
+
+test('seleção compacta usa busca ordenada e simplifica somente o contorno extremo', () => {
+  const spans = {
+    kind: 'packed-spans',
+    data: new Int32Array([0, 0, 1, 0, 2, 3, 1, 4, 6]),
+    length: 3
+  }
+  assert.equal(pixelSpansContainPoint(spans, 0, 2.5), true)
+  assert.equal(pixelSpansContainPoint(spans, 0, 1.5), false)
+  assert.equal(pixelSpansContainPoint(spans, 1, 5), true)
+  assert.equal(pixelSpansOutlinePath({ ...spans, length: 20_001 }, { x: 0, y: 0, width: 6, height: 2 }), 'M0 0h6v2H0Z')
 })
 
 test('movimento da seleção arredonda pixels e Shift restringe a ângulos de 45 graus', () => {

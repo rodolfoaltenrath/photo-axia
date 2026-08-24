@@ -1,4 +1,5 @@
 import type { LayerTransform } from '../types/editor'
+import { colorRegionSpans, type ColorRegionResult } from './colorRegion.ts'
 
 export type SelectionMode = 'rectangle' | 'ellipse' | 'lasso' | 'magic-wand'
 
@@ -36,6 +37,14 @@ export interface PixelSpan {
   x1: number
 }
 
+export interface PackedPixelSpans {
+  kind: 'packed-spans'
+  data: Int32Array<ArrayBuffer>
+  length: number
+}
+
+export type PixelSpans = PixelSpan[] | PackedPixelSpans
+
 export type Matrix2D = [number, number, number, number, number, number]
 
 export interface PixelSelection {
@@ -44,17 +53,56 @@ export interface PixelSelection {
   sourceWidth: number
   sourceHeight: number
   sourceToDocument: Matrix2D
-  spans: PixelSpan[]
+  spans: PixelSpans
   bounds: SelectionBounds
   pixelCount: number
 }
 
 export type SelectionRegion = RectangleSelection | EllipseSelection | LassoSelection | PixelSelection
 
-export interface WandResult {
-  spans: PixelSpan[]
-  bounds: SelectionBounds
-  pixelCount: number
+export type WandResult = ColorRegionResult
+
+export function forEachPixelSpan(spans: PixelSpans, visit: (span: PixelSpan, index: number) => void) {
+  if (Array.isArray(spans)) {
+    spans.forEach(visit)
+    return
+  }
+  for (let index = 0; index < spans.length; index++) {
+    const offset = index * 3
+    visit({ y: spans.data[offset]!, x0: spans.data[offset + 1]!, x1: spans.data[offset + 2]! }, index)
+  }
+}
+
+export function pixelSpansSome(spans: PixelSpans, predicate: (span: PixelSpan) => boolean) {
+  if (Array.isArray(spans)) return spans.some(predicate)
+  for (let index = 0; index < spans.length; index++) {
+    const offset = index * 3
+    if (predicate({ y: spans.data[offset]!, x0: spans.data[offset + 1]!, x1: spans.data[offset + 2]! })) return true
+  }
+  return false
+}
+
+export function pixelSpansContainPoint(spans: PixelSpans, y: number, x: number) {
+  if (Array.isArray(spans)) return spans.some((span) => span.y === y && x >= span.x0 && x < span.x1)
+  let low = 0
+  let high = spans.length - 1
+  while (low <= high) {
+    const index = (low + high) >>> 1
+    const offset = index * 3
+    const spanY = spans.data[offset]!
+    const x0 = spans.data[offset + 1]!
+    const x1 = spans.data[offset + 2]!
+    if (spanY < y || (spanY === y && x1 <= x)) low = index + 1
+    else if (spanY > y || x0 > x) high = index - 1
+    else return true
+  }
+  return false
+}
+
+export function clonePixelSpans(spans: PixelSpans): PixelSpans {
+  return Array.isArray(spans)
+    ? spans.map((span) => ({ ...span }))
+    : { kind: 'packed-spans', data: new Int32Array(spans.data), length: spans.length }
 }
 
 const IDENTITY_MATRIX: Matrix2D = [1, 0, 0, 1, 0, 0]
@@ -257,8 +305,17 @@ export function vectorSelectionPath(selection: Exclude<SelectionRegion, PixelSel
   return `${selection.points.map((point, index) => `${index ? 'L' : 'M'}${pathNumber(point.x)} ${pathNumber(point.y)}`).join('')}Z`
 }
 
-export function pixelSpansFillPath(spans: PixelSpan[]) {
-  return spans.map((span) => `M${span.x0} ${span.y}h${span.x1 - span.x0}v1H${span.x0}Z`).join('')
+const MAXIMUM_DETAILED_SELECTION_SPANS = 20_000
+
+function selectionBoundsPath(bounds: SelectionBounds) {
+  return `M${bounds.x} ${bounds.y}h${bounds.width}v${bounds.height}H${bounds.x}Z`
+}
+
+export function pixelSpansFillPath(spans: PixelSpans, fallbackBounds?: SelectionBounds) {
+  if (spans.length > MAXIMUM_DETAILED_SELECTION_SPANS && fallbackBounds) return selectionBoundsPath(fallbackBounds)
+  const path: string[] = []
+  forEachPixelSpan(spans, (span) => path.push(`M${span.x0} ${span.y}h${span.x1 - span.x0}v1H${span.x0}Z`))
+  return path.join('')
 }
 
 function subtractIntervals(start: number, end: number, intervals: Array<[number, number]>) {
@@ -275,17 +332,18 @@ function subtractIntervals(start: number, end: number, intervals: Array<[number,
   return result
 }
 
-export function pixelSpansOutlinePath(spans: PixelSpan[]) {
+export function pixelSpansOutlinePath(spans: PixelSpans, fallbackBounds?: SelectionBounds) {
+  if (spans.length > MAXIMUM_DETAILED_SELECTION_SPANS && fallbackBounds) return selectionBoundsPath(fallbackBounds)
   const rows = new Map<number, Array<[number, number]>>()
-  for (const span of spans) {
+  forEachPixelSpan(spans, (span) => {
     const row = rows.get(span.y) ?? []
     row.push([span.x0, span.x1])
     rows.set(span.y, row)
-  }
+  })
   for (const row of rows.values()) row.sort((first, second) => first[0] - second[0])
 
   const path: string[] = []
-  for (const span of spans) {
+  forEachPixelSpan(spans, (span) => {
     path.push(`M${span.x0} ${span.y}v1`, `M${span.x1} ${span.y}v1`)
     for (const [start, end] of subtractIntervals(span.x0, span.x1, rows.get(span.y - 1) ?? [])) {
       path.push(`M${start} ${span.y}H${end}`)
@@ -293,7 +351,7 @@ export function pixelSpansOutlinePath(spans: PixelSpan[]) {
     for (const [start, end] of subtractIntervals(span.x0, span.x1, rows.get(span.y + 1) ?? [])) {
       path.push(`M${start} ${span.y + 1}H${end}`)
     }
-  }
+  })
   return path.join('')
 }
 
@@ -303,7 +361,7 @@ export function traceSelectionPath(
 ) {
   context.beginPath()
   if (selection.kind === 'pixels') {
-    for (const span of selection.spans) context.rect(span.x0, span.y, span.x1 - span.x0, 1)
+    forEachPixelSpan(selection.spans, (span) => context.rect(span.x0, span.y, span.x1 - span.x0, 1))
     return
   }
 
@@ -382,7 +440,7 @@ export function cloneSelection(selection: SelectionRegion | null): SelectionRegi
     return {
       ...selection,
       sourceToDocument: [...selection.sourceToDocument],
-      spans: selection.spans.map((span) => ({ ...span })),
+      spans: clonePixelSpans(selection.spans),
       bounds: { ...selection.bounds }
     }
   }
@@ -416,7 +474,7 @@ export function selectionContainsPoint(selection: SelectionRegion, point: Select
   if (selection.kind === 'pixels') {
     const sourcePoint = transformSelectionPoint(invertMatrix(selection.sourceToDocument), point)
     const y = Math.floor(sourcePoint.y)
-    return selection.spans.some((span) => span.y === y && sourcePoint.x >= span.x0 && sourcePoint.x < span.x1)
+    return pixelSpansContainPoint(selection.spans, y, sourcePoint.x)
   }
   const { x, y, width, height } = selection.bounds
   if (point.x < x || point.y < y || point.x > x + width || point.y > y + height) return false
@@ -638,41 +696,6 @@ export function sourceScaleFactor(transform: LayerTransform, sourceWidth: number
   return Math.sqrt(scaleX * scaleY)
 }
 
-function colorMatches(
-  pixels: Uint8ClampedArray | Uint8Array,
-  pixelIndex: number,
-  target: readonly [number, number, number, number],
-  tolerance: number
-) {
-  const offset = pixelIndex * 4
-  const alpha = pixels[offset + 3]!
-  if (alpha === 0 && target[3] === 0) return true
-  return (
-    Math.abs(pixels[offset]! - target[0]) <= tolerance &&
-    Math.abs(pixels[offset + 1]! - target[1]) <= tolerance &&
-    Math.abs(pixels[offset + 2]! - target[2]) <= tolerance &&
-    Math.abs(alpha - target[3]) <= tolerance
-  )
-}
-
-function resultFromSpans(spans: PixelSpan[]): WandResult {
-  if (!spans.length) return { spans, bounds: { x: 0, y: 0, width: 0, height: 0 }, pixelCount: 0 }
-  let minX = spans[0]!.x0
-  let maxX = spans[0]!.x1
-  let minY = spans[0]!.y
-  let maxY = minY + 1
-  let pixelCount = 0
-  for (const span of spans) {
-    minX = Math.min(minX, span.x0)
-    maxX = Math.max(maxX, span.x1)
-    minY = Math.min(minY, span.y)
-    maxY = Math.max(maxY, span.y + 1)
-    pixelCount += span.x1 - span.x0
-  }
-  spans.sort((first, second) => first.y - second.y || first.x0 - second.x0)
-  return { spans, bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY }, pixelCount }
-}
-
 export function magicWandSpans(
   pixels: Uint8ClampedArray | Uint8Array,
   width: number,
@@ -682,63 +705,5 @@ export function magicWandSpans(
   tolerance: number,
   contiguous = true
 ): WandResult {
-  const x = Math.max(0, Math.min(width - 1, Math.floor(startX)))
-  const y = Math.max(0, Math.min(height - 1, Math.floor(startY)))
-  if (width <= 0 || height <= 0 || pixels.length < width * height * 4) return resultFromSpans([])
-  const targetOffset = (y * width + x) * 4
-  const target = [
-    pixels[targetOffset]!,
-    pixels[targetOffset + 1]!,
-    pixels[targetOffset + 2]!,
-    pixels[targetOffset + 3]!
-  ] as const
-  const threshold = Math.max(0, Math.min(255, Math.round(tolerance)))
-  const matches = (pixelX: number, pixelY: number) =>
-    colorMatches(pixels, pixelY * width + pixelX, target, threshold)
-  const spans: PixelSpan[] = []
-
-  if (!contiguous) {
-    for (let row = 0; row < height; row++) {
-      let runStart = -1
-      for (let column = 0; column <= width; column++) {
-        const selected = column < width && matches(column, row)
-        if (selected && runStart < 0) runStart = column
-        if (!selected && runStart >= 0) {
-          spans.push({ y: row, x0: runStart, x1: column })
-          runStart = -1
-        }
-      }
-    }
-    return resultFromSpans(spans)
-  }
-
-  const visited = new Uint8Array(width * height)
-  const stack: number[] = [x, y]
-  while (stack.length) {
-    const seedY = stack.pop()!
-    const seedX = stack.pop()!
-    const seedIndex = seedY * width + seedX
-    if (visited[seedIndex] || !matches(seedX, seedY)) continue
-
-    let left = seedX
-    let right = seedX
-    while (left > 0 && !visited[seedY * width + left - 1] && matches(left - 1, seedY)) left--
-    while (right + 1 < width && !visited[seedY * width + right + 1] && matches(right + 1, seedY)) right++
-
-    for (let column = left; column <= right; column++) visited[seedY * width + column] = 1
-    spans.push({ y: seedY, x0: left, x1: right + 1 })
-
-    for (const neighborY of [seedY - 1, seedY + 1]) {
-      if (neighborY < 0 || neighborY >= height) continue
-      let insideRun = false
-      for (let column = left; column <= right; column++) {
-        const neighborIndex = neighborY * width + column
-        const eligible = !visited[neighborIndex] && matches(column, neighborY)
-        if (eligible && !insideRun) stack.push(column, neighborY)
-        insideRun = eligible
-      }
-    }
-  }
-
-  return resultFromSpans(spans)
+  return colorRegionSpans(pixels, width, height, { startX, startY, tolerance, contiguous })
 }

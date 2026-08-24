@@ -1,4 +1,4 @@
-import { magicWandSpans } from '../editor/selection'
+import { colorRegionSpans } from '../editor/colorRegion'
 
 interface WandRequest {
   id: number
@@ -19,16 +19,19 @@ self.onmessage = async (event: MessageEvent<WandRequest>) => {
     context.drawImage(bitmap, 0, 0)
     bitmap.close()
     const image = context.getImageData(0, 0, canvas.width, canvas.height)
-    const result = magicWandSpans(
+    const result = colorRegionSpans(
       image.data,
       image.width,
       image.height,
-      request.x,
-      request.y,
-      request.tolerance,
-      request.contiguous
+      {
+        startX: request.x,
+        startY: request.y,
+        tolerance: request.tolerance,
+        contiguous: request.contiguous
+      }
     )
-    self.postMessage({ id: request.id, result })
+    if (Array.isArray(result.spans)) self.postMessage({ id: request.id, result })
+    else self.postMessage({ id: request.id, result }, { transfer: [result.spans.data.buffer] })
   } catch (error) {
     self.postMessage({
       id: request.id,

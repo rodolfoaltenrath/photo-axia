@@ -42,6 +42,8 @@ export interface CanvasViewportProps {
   layers: LayerItem[]
   magicWandContiguous: boolean
   magicWandTolerance: number
+  paintBucketContiguous: boolean
+  paintBucketTolerance: number
   selection: SelectionRegion | null
   selectionMoveAnchor: SelectionMoveAnchor | null
   selectionMode: SelectionMode
@@ -85,12 +87,15 @@ export interface CanvasViewportEmits {
     config: GradientConfig,
     selection: SelectionRegion | null
   ): void
+  (event: 'paintBucket', point: SelectionPoint, color: string, selection: SelectionRegion | null): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateGuide', guide: EditorGuide): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
   (event: 'update:autoSelectLayer', enabled: boolean): void
   (event: 'update:magicWandContiguous', enabled: boolean): void
   (event: 'update:magicWandTolerance', tolerance: number): void
+  (event: 'update:paintBucketContiguous', enabled: boolean): void
+  (event: 'update:paintBucketTolerance', tolerance: number): void
   (event: 'update:gradientReversed', reversed: boolean): void
   (event: 'update:gradientType', type: GradientType): void
   (event: 'update:guidesLocked', enabled: boolean): void

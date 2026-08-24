@@ -11,6 +11,7 @@ import {
 } from '../../../editor/brush'
 import { layerTransformStyle, type DocumentPoint } from '../../../editor/freeTransform'
 import {
+  forEachPixelSpan,
   invertMatrix,
   layerSourceToDocumentMatrix,
   multiplyMatrices,
@@ -129,7 +130,7 @@ export function useBrushInteraction(options: BrushInteractionOptions) {
     if (!selection) return null
     const path = new Path2D()
     if (selection.kind === 'pixels') {
-      for (const span of selection.spans) path.rect(span.x0, span.y, span.x1 - span.x0, 1)
+      forEachPixelSpan(selection.spans, (span) => path.rect(span.x0, span.y, span.x1 - span.x0, 1))
     } else if (selection.kind === 'rectangle') {
       const { x, y, width, height } = selection.bounds
       path.rect(x, y, width, height)

@@ -112,6 +112,7 @@ import {
 } from './services/selectionEngine'
 import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
 import { applyGradient, disposeGradientEngine } from './services/gradientEngine'
+import { applyPaintBucket, disposePaintBucketEngine } from './services/paintBucketEngine'
 import { clearLayerStyleRenderCache, disposeLayerStyleCompositor } from './services/layerStyleCompositor'
 import {
   clearSmartLayerRenderCache,
@@ -174,6 +175,8 @@ const rulerOrigin = ref<RulerOrigin>({ x: 0, y: 0 })
 const selectionMode = ref<SelectionMode>('rectangle')
 const magicWandTolerance = ref(32)
 const magicWandContiguous = ref(true)
+const paintBucketTolerance = ref(32)
+const paintBucketContiguous = ref(true)
 const selection = shallowRef<SelectionRegion | null>(null)
 const statusText = ref('Inicializando…')
 const errorText = ref('')
@@ -380,11 +383,12 @@ let pendingBrushCommit: {
   label: string
 } | undefined
 let pendingGradientCommit: AbortController | undefined
+let pendingPaintBucketCommit: AbortController | undefined
 
 watch(
   [activeTool, activeLayerId, () => activeDocument.value.id],
   () => {
-    if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient') {
+    if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient' || activeTool.value === 'paint-bucket') {
       void ensureRasterLayerPaintable()
     }
   },
@@ -467,7 +471,7 @@ async function ensureRasterLayerPaintable() {
   const layer = activeLayer.value
   if (
     isBusy.value ||
-    (activeTool.value !== 'brush' && activeTool.value !== 'eraser' && activeTool.value !== 'gradient') ||
+    (activeTool.value !== 'brush' && activeTool.value !== 'eraser' && activeTool.value !== 'gradient' && activeTool.value !== 'paint-bucket') ||
     (layer.kind !== 'background' && layer.kind !== 'pixel') ||
     layer.image ||
     layer.transform
@@ -634,6 +638,14 @@ async function undoHistory() {
     pendingGradientCommit = undefined
     rasterMutationBarrier.discard()
     statusText.value = 'Desfeito: Degradê'
+    errorText.value = ''
+    return
+  }
+  if (pendingPaintBucketCommit && rasterMutationBarrier.isPending) {
+    pendingPaintBucketCommit.abort()
+    pendingPaintBucketCommit = undefined
+    rasterMutationBarrier.discard()
+    statusText.value = 'Desfeito: Balde de Tinta'
     errorText.value = ''
     return
   }
@@ -1745,7 +1757,7 @@ async function createDocument(settings: NewDocumentSettings) {
     showError(error, 'Não foi possível criar o documento.')
   } finally {
     isBusy.value = false
-    if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient') {
+    if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient' || activeTool.value === 'paint-bucket') {
       void ensureRasterLayerPaintable()
     }
   }
@@ -2772,6 +2784,86 @@ function commitGradient(
   }).catch(() => undefined)
 }
 
+async function performPaintBucket(point: SelectionPoint, color: string, bucketSelection: SelectionRegion | null, signal: AbortSignal) {
+  if (isBusy.value) return false
+  clearFloatingSelectionSession()
+  const layer = activeLayer.value
+  if (!layer.visible || (layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) return false
+  const documentId = activeDocument.value.id
+  const beforeImage = { ...layer.image }
+  const beforeTransform = { ...layer.transform }
+  for (const source of [beforeImage.sourceUrl, beforeImage.previewUrl]) {
+    if (source?.startsWith('blob:')) transientObjectUrls.add(source)
+  }
+  let createdSource: string | undefined
+  let createdPreviewUrl: string | undefined
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Preenchendo área…'
+  try {
+    const previewTarget = workingPreviewSize(beforeImage, beforeTransform)
+    const result = await applyPaintBucket(
+      beforeImage, beforeTransform, point, color, paintBucketTolerance.value, paintBucketContiguous.value,
+      bucketSelection, previewTarget.width, previewTarget.height, signal
+    )
+    signal.throwIfAborted()
+    if (result.changedPixelCount === 0) {
+      transientObjectUrls.clear()
+      statusText.value = 'A área já possui essa cor'
+      return false
+    }
+    if (!result.blob) throw new Error('O Balde de Tinta não retornou a imagem preenchida.')
+    createdSource = URL.createObjectURL(result.blob)
+    trackedObjectUrls.add(createdSource)
+    createdPreviewUrl = result.previewBlob ? URL.createObjectURL(result.previewBlob) : undefined
+    if (createdPreviewUrl) trackedObjectUrls.add(createdPreviewUrl)
+    const newAsset: ImageAsset = {
+      width: beforeImage.width,
+      height: beforeImage.height,
+      mimeType: 'image/png',
+      sourceUrl: createdSource,
+      byteSize: result.blob.size,
+      previewUrl: createdPreviewUrl,
+      previewWidth: result.previewWidth,
+      previewHeight: result.previewHeight
+    }
+    await preloadImage(newAsset.previewUrl ?? newAsset.sourceUrl, signal)
+    signal.throwIfAborted()
+    if (activeDocument.value.id !== documentId || !layers.value.includes(layer)) throw new Error('A camada original não está mais disponível.')
+    layer.image = newAsset
+    layer.transform = beforeTransform
+    recordHistory('Balde de Tinta', {
+      type: 'layer:patch', layerId: layer.id,
+      before: { image: beforeImage, transform: beforeTransform },
+      after: { image: { ...newAsset }, transform: { ...beforeTransform } }
+    })
+    transientObjectUrls.clear()
+    collectUnusedObjectUrls()
+    statusText.value = `${result.changedPixelCount.toLocaleString('pt-BR')} pixels preenchidos`
+    return true
+  } catch (error) {
+    layer.image = beforeImage
+    layer.transform = beforeTransform
+    if (createdSource) { URL.revokeObjectURL(createdSource); trackedObjectUrls.delete(createdSource) }
+    if (createdPreviewUrl) { URL.revokeObjectURL(createdPreviewUrl); trackedObjectUrls.delete(createdPreviewUrl) }
+    transientObjectUrls.clear()
+    if (!(error instanceof DOMException && error.name === 'AbortError')) showError(error, 'Não foi possível aplicar o Balde de Tinta.')
+    return false
+  } finally {
+    isBusy.value = false
+  }
+}
+
+function commitPaintBucket(point: SelectionPoint, color: string, bucketSelection: SelectionRegion | null) {
+  if (rasterMutationBarrier.isPending) return
+  const controller = new AbortController()
+  pendingPaintBucketCommit = controller
+  const commit = rasterMutationBarrier.track(performPaintBucket(point, color, cloneSelection(bucketSelection), controller.signal))
+  void commit.finally(() => {
+    if (pendingPaintBucketCommit === controller) pendingPaintBucketCommit = undefined
+  }).catch(() => undefined)
+}
+
 function preloadImage(url: string, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     const image = new Image()
@@ -3305,7 +3397,7 @@ function handleShortcut(event: KeyboardEvent) {
     v: 'move',
     b: 'brush',
     e: 'eraser',
-    g: 'gradient',
+    g: event.shiftKey ? 'paint-bucket' : 'gradient',
     i: 'eyedropper',
     c: 'crop',
     t: 'text',
@@ -3342,10 +3434,13 @@ onBeforeUnmount(() => {
   pendingBrushCommit = undefined
   pendingGradientCommit?.abort()
   pendingGradientCommit = undefined
+  pendingPaintBucketCommit?.abort()
+  pendingPaintBucketCommit = undefined
   rasterMutationBarrier.discard()
   disposeSelectionEngine()
   disposeBrushEngine()
   disposeGradientEngine()
+  disposePaintBucketEngine()
   disposeSelectionMoveEngine()
   disposeImagePreviewWorker()
   disposeLayerStyleCompositor()
@@ -3481,6 +3576,8 @@ onBeforeUnmount(() => {
         :layers="layers"
         :magic-wand-contiguous="magicWandContiguous"
         :magic-wand-tolerance="magicWandTolerance"
+        :paint-bucket-contiguous="paintBucketContiguous"
+        :paint-bucket-tolerance="paintBucketTolerance"
         :selection="selection"
         :selection-move-anchor="selectionMoveAnchor"
         :selection-mode="selectionMode"
@@ -3496,6 +3593,7 @@ onBeforeUnmount(() => {
         @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"
         @gradient-gesture="commitGradient"
+        @paint-bucket="commitPaintBucket"
         @update:gradient-reversed="gradientReversed = $event"
         @update:gradient-type="gradientType = $event"
         @sample-color="sampleColor"
@@ -3504,6 +3602,8 @@ onBeforeUnmount(() => {
         @select-layer="selectSingleLayer"
         @update:magic-wand-contiguous="magicWandContiguous = $event"
         @update:magic-wand-tolerance="magicWandTolerance = $event"
+        @update:paint-bucket-contiguous="paintBucketContiguous = $event"
+        @update:paint-bucket-tolerance="paintBucketTolerance = $event"
         @update:guides-locked="guidesLocked = $event"
         @update:guides-visible="guidesVisible = $event"
         @update:guide-snapping-enabled="guideSnappingEnabled = $event"

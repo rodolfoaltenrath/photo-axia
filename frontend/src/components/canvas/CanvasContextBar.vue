@@ -21,6 +21,8 @@ defineProps<{
   isViewportReady: boolean
   magicWandContiguous: boolean
   magicWandTolerance: number
+  paintBucketContiguous: boolean
+  paintBucketTolerance: number
   rotation: number
   rulerUnit: RulerUnit
   rulersVisible: boolean
@@ -44,6 +46,8 @@ const emit = defineEmits<{
   (event: 'updateGuidesVisible', enabled: boolean): void
   (event: 'updateMagicWandContiguous', enabled: boolean): void
   (event: 'updateMagicWandTolerance', tolerance: number): void
+  (event: 'updatePaintBucketContiguous', enabled: boolean): void
+  (event: 'updatePaintBucketTolerance', tolerance: number): void
   (event: 'updateRulerUnit', unit: RulerUnit): void
   (event: 'updateRulersVisible', enabled: boolean): void
   (event: 'updateSelectionMode', mode: SelectionMode): void
@@ -135,6 +139,28 @@ const emit = defineEmits<{
       >
         ↔
       </button>
+    </div>
+    <div v-if="activeTool === 'paint-bucket'" class="selection-options">
+      <label class="selection-tolerance">
+        Tolerância
+        <input
+          :value="paintBucketTolerance"
+          max="255"
+          min="0"
+          type="range"
+          @input="emit('updatePaintBucketTolerance', Number(($event.target as HTMLInputElement).value))"
+        />
+        <output>{{ paintBucketTolerance }}</output>
+      </label>
+      <label class="selection-contiguous">
+        <input
+          :checked="paintBucketContiguous"
+          type="checkbox"
+          @change="emit('updatePaintBucketContiguous', ($event.target as HTMLInputElement).checked)"
+        />
+        Contíguo
+      </label>
+      <span>Esquerdo: principal · Direito: secundária</span>
     </div>
     <span>{{ document.width }} × {{ document.height }}</span>
     <span>{{ document.unit === 'px' ? 'pixels' : `${document.physicalWidth} × ${document.physicalHeight} ${document.unit}` }}</span>

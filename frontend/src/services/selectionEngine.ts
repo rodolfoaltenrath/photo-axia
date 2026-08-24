@@ -3,7 +3,6 @@ import {
   drawVectorSelection,
   invertMatrix,
   layerSourceToDocumentMatrix,
-  magicWandSpans,
   multiplyMatrices,
   opaquePixelBounds,
   SELECTION_EXTRACTION_ALPHA_THRESHOLD,
@@ -15,6 +14,7 @@ import {
   type SelectionRegion,
   type WandResult
 } from '../editor/selection'
+import { colorRegionSpans } from '../editor/colorRegion'
 import type { ImageAsset, LayerTransform } from '../types/editor'
 
 interface PendingWand {
@@ -134,7 +134,12 @@ async function fallbackWand(blob: Blob, x: number, y: number, tolerance: number,
   const image = context.getImageData(0, 0, canvas.width, canvas.height)
   canvas.width = 1
   canvas.height = 1
-  return magicWandSpans(image.data, image.width, image.height, x, y, tolerance, contiguous)
+  return colorRegionSpans(image.data, image.width, image.height, {
+    startX: x,
+    startY: y,
+    tolerance,
+    contiguous
+  })
 }
 
 async function runWand(blob: Blob, x: number, y: number, tolerance: number, contiguous: boolean) {
