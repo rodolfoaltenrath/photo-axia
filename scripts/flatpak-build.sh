@@ -36,7 +36,9 @@ flatpak install --user -y flathub \
 
 PATH="${NODE_BIN}:${PATH}" npm --prefix frontend ci
 PATH="${NODE_BIN}:${PATH}" npm --prefix frontend run build
-PATH="${GO_BIN}:${PATH}" go mod vendor
+# A beta.12 omite os DLLs WebView2 usados somente no Windows. O modo -e ainda
+# gera o vendor Linux completo e permite que o build offline do Flatpak prossiga.
+PATH="${GO_BIN}:${PATH}" go mod vendor -e
 
 mkdir -p "dist/flatpak"
 
