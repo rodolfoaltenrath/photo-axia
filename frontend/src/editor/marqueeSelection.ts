@@ -15,6 +15,8 @@ export const MARQUEE_SELECTION_MODES = [
   'single-column'
 ] as const
 
+const VISIBLE_MARQUEE_SELECTION_MODES = ['rectangle', 'ellipse'] as const
+
 export type MarqueeSelectionMode = (typeof MARQUEE_SELECTION_MODES)[number]
 export type MarqueeSelection = RectangleSelection | EllipseSelection
 
@@ -28,8 +30,8 @@ export function isMarqueeSelectionMode(mode: string): mode is MarqueeSelectionMo
 }
 
 export function nextMarqueeSelectionMode(mode: MarqueeSelectionMode): MarqueeSelectionMode {
-  const index = MARQUEE_SELECTION_MODES.indexOf(mode)
-  return MARQUEE_SELECTION_MODES[(index + 1) % MARQUEE_SELECTION_MODES.length]!
+  const index = VISIBLE_MARQUEE_SELECTION_MODES.indexOf(mode as 'rectangle' | 'ellipse')
+  return index === 0 ? 'ellipse' : 'rectangle'
 }
 
 function documentBounds(document: MarqueeDocumentSize): SelectionBounds | null {

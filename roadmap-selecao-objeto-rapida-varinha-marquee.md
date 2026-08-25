@@ -816,3 +816,60 @@ Não incluir esses itens no MVP sem decisão explícita e atualização deste ro
   embora a máscara e o overlay preservem a espessura correta no documento.
 - Próximo passo exato: iniciar a Fase 2 criando os ícones e o slot visual `W`, depois
   migrar a Varinha existente para sua ferramenta dedicada sem alterar `colorRegion.ts`.
+
+### 2026-08-25 — Gargalos da combinação de seleções corrigidos
+
+- A combinação deixou de testar individualmente todos os pixels quando as duas
+  seleções podem ser representadas por intervalos horizontais.
+- Retângulos e elipses agora geram seus intervalos por linha de forma analítica;
+  máscaras de pixels sem rotação ou escala reutilizam diretamente os spans existentes,
+  inclusive na representação compactada `Int32Array`.
+- União, subtração e interseção passaram a operar diretamente nesses intervalos,
+  mantendo a mesma regra de amostragem pelo centro do pixel usada anteriormente.
+- Laços e máscaras com rotação ou escala continuam no caminho pixel-exato já existente;
+  esse fallback conservador evita alterar a geometria em casos não alinhados ao raster.
+- Linha Única e Coluna Única deixaram de recompor a seleção em cada `pointermove`, pois
+  sua geometria depende somente do ponto inicial do gesto.
+- Benchmark local em documento 3840 × 2160: união de retângulos caiu de 317,7 para
+  1,02 ms; subtração, de 382 para 0,78 ms; interseção, de 8,4 para 0,22 ms. A
+  interseção de uma elipse 4K com o documento levou 1,56 ms.
+- Adicionados testes para documento 4K, bounds fracionários e equivalência pixel a
+  pixel da elipse analítica. Validação: 259 testes frontend, `vue-tsc --noEmit`, build
+  Vite e `git diff --check` passaram.
+- Limite consciente: laços grandes e seleções raster transformadas ainda podem ter
+  custo proporcional à área combinada; sua otimização exige um algoritmo geométrico
+  ou rasterização por spans específico e permanece candidata a uma etapa futura.
+
+### 2026-08-25 — Fechamento coordenado dos seletores da toolbar
+
+- Os flyouts de ferramentas deixaram de funcionar como elementos `details` isolados:
+  interagir com outro grupo fecha o anterior e clicar fora da toolbar fecha qualquer
+  seletor aberto.
+- Clicar novamente no acionador do mesmo grupo preserva a alternância nativa de abrir
+  e fechar, sem interferir nos atalhos de teclado do canvas.
+- O comportamento é compartilhado pelos grupos Marquee e Degradê/Balde e os listeners
+  globais são removidos quando a toolbar é desmontada.
+- A toolbar passou a formar uma camada de empilhamento em `z-index: 50`, acima das
+  réguas (`45`), para que estas não atravessem visualmente os flyouts abertos; alertas
+  e modais globais continuam em níveis superiores.
+- O botão direito sobre o botão principal de um grupo agora abre seu flyout e impede o
+  menu de contexto nativo. O clique esquerdo continua ativando a ferramenta lembrada e
+  o acionador no canto inferior direito continua funcionando sem alteração.
+- Com uma ferramenta de seleção ativa, clicar com o botão esquerdo no pasteboard da
+  engine, fora dos limites do documento, agora desmarca a seleção atual. Réguas, barra
+  contextual, toolbar e painéis permanecem fora desse listener e não desmarcam.
+- Gestos de Marquee e Laço agora podem começar no pasteboard, fora do documento, e
+  atravessar suas bordas; a máscara provisória e final continua estritamente recortada
+  ao documento. Um clique externo sem área resultante continua desmarcando. A Varinha
+  permanece restrita a cliques sobre pixels reais, pois depende de um ponto amostrado.
+
+### 2026-08-25 — Simplificação das ferramentas Marquee expostas
+
+- Seleção de Linha Única e Seleção de Coluna Única foram retiradas do flyout da toolbar
+  e da barra contextual por serem recursos técnicos de uso raro e pouco claros para o
+  público principal do Axia.
+- `Shift+M` agora alterna somente entre Seleção Retangular e Seleção Elíptica.
+- A implementação de linha e coluna de um pixel foi preservada internamente, inclusive
+  com seus testes, para compatibilidade e possível reativação futura.
+- Caso um estado antigo ainda indique um dos modos ocultos, a toolbar apresenta a
+  Seleção Retangular como fallback seguro.

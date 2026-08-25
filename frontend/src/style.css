@@ -347,6 +347,8 @@ textarea:focus-visible,
 }
 
 .tool-bar {
+  position: relative;
+  z-index: 50;
   display: grid;
   align-content: start;
   gap: 8px;
@@ -2704,7 +2706,7 @@ textarea:focus-visible,
   position: fixed;
   top: 58px;
   left: 50%;
-  z-index: 30;
+  z-index: 10000;
   display: flex;
   width: min(680px, calc(100vw - 48px));
   align-items: center;
@@ -2718,6 +2720,14 @@ textarea:focus-visible,
   padding: 10px 12px;
   transform: translateX(-50%);
   white-space: pre-line;
+}
+
+.tool-bar button img.toolbar-raster-icon {
+  filter: brightness(0) invert(0.86);
+}
+
+.tool-bar button[aria-pressed='true'] img.toolbar-raster-icon {
+  filter: brightness(0) invert(0.86);
 }
 
 .error-banner button {

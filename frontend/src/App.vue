@@ -118,7 +118,7 @@ import {
 } from './services/selectionEngine'
 import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
 import { applyGradient, disposeGradientEngine } from './services/gradientEngine'
-import { applyPaintBucket, disposePaintBucketEngine } from './services/paintBucketEngine'
+import { applyPaintBucket, applySolidFill, disposePaintBucketEngine } from './services/paintBucketEngine'
 import { clearLayerStyleRenderCache, disposeLayerStyleCompositor } from './services/layerStyleCompositor'
 import {
   clearSmartLayerRenderCache,
@@ -2793,7 +2793,7 @@ function commitGradient(
   }).catch(() => undefined)
 }
 
-async function performPaintBucket(point: SelectionPoint, color: string, bucketSelection: SelectionRegion | null, signal: AbortSignal) {
+async function performPaintBucket(point: SelectionPoint | null, color: string, bucketSelection: SelectionRegion | null, signal: AbortSignal) {
   if (isBusy.value) return false
   clearFloatingSelectionSession()
   const layer = activeLayer.value
@@ -2808,20 +2808,26 @@ async function performPaintBucket(point: SelectionPoint, color: string, bucketSe
   let createdPreviewUrl: string | undefined
   isBusy.value = true
   errorText.value = ''
-  statusText.value = 'Preenchendo área…'
+  const solidFill = point === null
+  statusText.value = solidFill ? 'Preenchendo seleção…' : 'Preenchendo área…'
   try {
     const previewTarget = workingPreviewSize(beforeImage, beforeTransform)
-    const result = await applyPaintBucket(
-      beforeImage, beforeTransform, point, color, paintBucketTolerance.value, paintBucketContiguous.value,
-      bucketSelection, previewTarget.width, previewTarget.height, signal
-    )
+    const result = solidFill
+      ? await applySolidFill(
+          beforeImage, beforeTransform, color, bucketSelection,
+          previewTarget.width, previewTarget.height, signal
+        )
+      : await applyPaintBucket(
+          beforeImage, beforeTransform, point, color, paintBucketTolerance.value, paintBucketContiguous.value,
+          bucketSelection, previewTarget.width, previewTarget.height, signal
+        )
     signal.throwIfAborted()
     if (result.changedPixelCount === 0) {
       transientObjectUrls.clear()
-      statusText.value = 'A área já possui essa cor'
+      statusText.value = solidFill ? 'A seleção já possui essa cor' : 'A área já possui essa cor'
       return false
     }
-    if (!result.blob) throw new Error('O Balde de Tinta não retornou a imagem preenchida.')
+    if (!result.blob) throw new Error('O preenchimento não retornou a imagem processada.')
     createdSource = URL.createObjectURL(result.blob)
     trackedObjectUrls.add(createdSource)
     createdPreviewUrl = result.previewBlob ? URL.createObjectURL(result.previewBlob) : undefined
@@ -2841,7 +2847,7 @@ async function performPaintBucket(point: SelectionPoint, color: string, bucketSe
     if (activeDocument.value.id !== documentId || !layers.value.includes(layer)) throw new Error('A camada original não está mais disponível.')
     layer.image = newAsset
     layer.transform = beforeTransform
-    recordHistory('Balde de Tinta', {
+    recordHistory(solidFill ? 'Preencher com cor' : 'Balde de Tinta', {
       type: 'layer:patch', layerId: layer.id,
       before: { image: beforeImage, transform: beforeTransform },
       after: { image: { ...newAsset }, transform: { ...beforeTransform } }
@@ -2856,7 +2862,9 @@ async function performPaintBucket(point: SelectionPoint, color: string, bucketSe
     if (createdSource) { URL.revokeObjectURL(createdSource); trackedObjectUrls.delete(createdSource) }
     if (createdPreviewUrl) { URL.revokeObjectURL(createdPreviewUrl); trackedObjectUrls.delete(createdPreviewUrl) }
     transientObjectUrls.clear()
-    if (!(error instanceof DOMException && error.name === 'AbortError')) showError(error, 'Não foi possível aplicar o Balde de Tinta.')
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      showError(error, solidFill ? 'Não foi possível preencher com a cor.' : 'Não foi possível aplicar o Balde de Tinta.')
+    }
     return false
   } finally {
     isBusy.value = false
@@ -2868,6 +2876,16 @@ function commitPaintBucket(point: SelectionPoint, color: string, bucketSelection
   const controller = new AbortController()
   pendingPaintBucketCommit = controller
   const commit = rasterMutationBarrier.track(performPaintBucket(point, color, cloneSelection(bucketSelection), controller.signal))
+  void commit.finally(() => {
+    if (pendingPaintBucketCommit === controller) pendingPaintBucketCommit = undefined
+  }).catch(() => undefined)
+}
+
+function commitSolidFill(color: string) {
+  if (rasterMutationBarrier.isPending) return
+  const controller = new AbortController()
+  pendingPaintBucketCommit = controller
+  const commit = rasterMutationBarrier.track(performPaintBucket(null, color, cloneSelection(selection.value), controller.signal))
   void commit.finally(() => {
     if (pendingPaintBucketCommit === controller) pendingPaintBucketCommit = undefined
   }).catch(() => undefined)
@@ -3382,6 +3400,19 @@ function handleShortcut(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
   if (target?.closest('input, select, textarea, [contenteditable="true"]')) return
 
+  if (event.code === 'Backspace' && !event.shiftKey) {
+    if (event.altKey && !command) {
+      event.preventDefault()
+      commitSolidFill(brushColor.value)
+      return
+    }
+    if (command && !event.altKey) {
+      event.preventDefault()
+      commitSolidFill(backgroundColor.value)
+      return
+    }
+  }
+
   if ((event.key === 'Delete' || event.key === 'Backspace') && !selection.value) {
     event.preventDefault()
     deleteLayer(activeLayerId.value)
@@ -3494,6 +3525,7 @@ onBeforeUnmount(() => {
       :can-convert-to-smart-layer="canConvertSelectedLayersToSmart"
       :can-duplicate-layer="Boolean(activeLayer.image || activeLayer.text)"
       :can-edit-smart-layer="activeLayer.kind === 'smart'"
+      :can-fill-layer="activeLayer.visible && ['image', 'background', 'pixel'].includes(activeLayer.kind) && Boolean(activeLayer.image && activeLayer.transform)"
       :can-flatten-image="canFlattenImage"
       :can-merge-layers="selectedLayerIds.length > 1"
       :can-rasterize-layer="layerCanRasterize(activeLayer)"
@@ -3517,6 +3549,8 @@ onBeforeUnmount(() => {
       @duplicate-layer="duplicateLayer()"
       @edit-smart-layer="editSmartLayerContent()"
       @export-document="exportDocument"
+      @fill-background="commitSolidFill(backgroundColor)"
+      @fill-foreground="commitSolidFill(brushColor)"
       @flatten-image="requestFlattenImage"
       @history-jump="jumpHistory"
       @home="showProjectHome"

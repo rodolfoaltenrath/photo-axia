@@ -107,8 +107,6 @@ const emit = defineEmits<{
           <optgroup label="Marquee">
             <option value="rectangle">Retangular</option>
             <option value="ellipse">Elíptica</option>
-            <option value="single-row">Linha única</option>
-            <option value="single-column">Coluna única</option>
           </optgroup>
           <optgroup label="Compatibilidade">
             <option value="lasso">Laço livre</option>

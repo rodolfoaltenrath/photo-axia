@@ -20,6 +20,8 @@ export interface PaintBucketColorRegionRequest extends Omit<PaintBucketRasterReq
   regionOptions: ColorRegionOptions
 }
 
+export interface SolidFillRasterRequest extends Omit<PaintBucketRasterRequest, 'region'> {}
+
 export interface CooperativePaintBucketOptions {
   spansPerChunk?: number
   throwIfCancelled?: () => void
@@ -36,6 +38,36 @@ function paintBucketColor(value: string) {
     Number.parseInt(hex.slice(4, 6), 16),
     255
   ] as const
+}
+
+export function applySolidFillRaster(request: SolidFillRasterRequest): PaintBucketRasterResult {
+  const expectedLength = request.width * request.height * 4
+  if (request.width <= 0 || request.height <= 0 || request.pixels.length < expectedLength) {
+    throw new Error('O raster de origem do preenchimento é inválido.')
+  }
+  const color = paintBucketColor(request.color)
+  let output: Uint8ClampedArray<ArrayBuffer> | undefined
+  let changedPixelCount = 0
+  for (let y = 0; y < request.height; y++) {
+    for (let x = 0; x < request.width; x++) {
+      if (request.selection) {
+        const documentPoint = transformSelectionPoint(request.sourceToDocument, { x: x + 0.5, y: y + 0.5 })
+        if (!selectionContainsPoint(request.selection, documentPoint)) continue
+      }
+      const offset = (y * request.width + x) * 4
+      if (
+        request.pixels[offset] === color[0] && request.pixels[offset + 1] === color[1] &&
+        request.pixels[offset + 2] === color[2] && request.pixels[offset + 3] === color[3]
+      ) continue
+      if (!output) {
+        output = new Uint8ClampedArray(expectedLength)
+        output.set(request.pixels.subarray(0, expectedLength))
+      }
+      output.set(color, offset)
+      changedPixelCount += 1
+    }
+  }
+  return { pixels: output, changedPixelCount }
 }
 
 export function applyPaintBucketRaster(request: PaintBucketRasterRequest): PaintBucketRasterResult {

@@ -69,11 +69,13 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
     const scroll = options.scrollArea.value
     if (!scroll || event.button !== 0) return false
     const document = options.document()
-    if (rawPoint.x < 0 || rawPoint.y < 0 || rawPoint.x >= document.width || rawPoint.y >= document.height) return false
+    const pointIsInsideDocument = rawPoint.x >= 0 && rawPoint.y >= 0 &&
+      rawPoint.x < document.width && rawPoint.y < document.height
     event.preventDefault()
     event.stopPropagation()
     const mode = options.selectionMode()
     if (mode === 'magic-wand') {
+      if (!pointIsInsideDocument) return false
       options.magicWandSelect(rawPoint)
       return true
     }
@@ -104,6 +106,7 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
     const interaction = selectionInteraction.value
     if (interaction?.pointerId !== event.pointerId) return false
     event.preventDefault()
+    if (interaction.mode === 'single-row' || interaction.mode === 'single-column') return true
     const point = interaction.mode === 'rectangle' || interaction.mode === 'ellipse'
       ? options.snapPoint(rawPoint, event)
       : rawPoint

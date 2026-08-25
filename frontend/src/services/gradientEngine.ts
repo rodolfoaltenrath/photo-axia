@@ -4,7 +4,7 @@ import {
   type GradientRasterState
 } from '../editor/gradientRaster'
 import { gradientIsDegenerate, type GradientConfig, type GradientGeometry } from '../editor/gradient'
-import { selectionIsEmpty, type SelectionRegion } from '../editor/selection'
+import { cloneSelection, selectionIsEmpty, type SelectionRegion } from '../editor/selection'
 import type { ImageAsset, LayerTransform } from '../types/editor'
 
 export interface GradientResult {
@@ -209,15 +209,24 @@ export async function applyGradient(
   if (!response.ok) throw new Error('Não foi possível carregar a camada para aplicar o degradê.')
   const sourceBlob = await response.blob()
   throwIfAborted(signal)
+  // Vue may wrap gesture state in proxies, which cannot cross the Worker boundary.
+  // Snapshot every structured value into plain data before calling postMessage.
+  const workerTransform: LayerTransform = { ...transform }
+  const workerGeometry: GradientGeometry = {
+    start: { ...geometry.start },
+    end: { ...geometry.end }
+  }
+  const workerConfig: GradientConfig = { ...config }
+  const workerSelection = cloneSelection(activeSelection)
   const worker = gradientWorkerInstance()
   if (!worker) {
     return fallbackGradient(
       sourceBlob,
       asset,
-      transform,
-      geometry,
-      config,
-      activeSelection,
+      workerTransform,
+      workerGeometry,
+      workerConfig,
+      workerSelection,
       previewWidth,
       previewHeight,
       documentWidth,
@@ -247,10 +256,10 @@ export async function applyGradient(
       sourceBlob,
       assetWidth: asset.width,
       assetHeight: asset.height,
-      transform,
-      geometry,
-      config,
-      selection: activeSelection,
+      transform: workerTransform,
+      geometry: workerGeometry,
+      config: workerConfig,
+      selection: workerSelection,
       previewWidth,
       previewHeight,
       documentWidth,

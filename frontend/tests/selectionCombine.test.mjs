@@ -191,3 +191,40 @@ test('documento enorme processa somente os bounds envolvidos', () => {
   assert.equal(result.pixelCount, 9)
   assert.deepEqual(result.bounds, { x: 999_992, y: 999_992, width: 3, height: 3 })
 })
+
+test('combina retângulos em documento 4K por intervalos sem rasterizar pixel a pixel', () => {
+  const document = { width: 3840, height: 2160 }
+  const full = { kind: 'rectangle', bounds: { x: 0, y: 0, width: 3840, height: 2160 } }
+  const cut = { kind: 'rectangle', bounds: { x: 100, y: 100, width: 400, height: 300 } }
+  const result = combineSelections(full, cut, 'subtract', document)
+  assert.equal(result.pixelCount, 3840 * 2160 - 400 * 300)
+  assert.equal(result.spans.length, 2460)
+})
+
+test('caminho por intervalos preserva a amostragem pelo centro em bounds fracionários', () => {
+  const first = { kind: 'rectangle', bounds: { x: 0.8, y: 0.8, width: 2, height: 2 } }
+  const second = { kind: 'rectangle', bounds: { x: 1.2, y: 1.2, width: 2, height: 2 } }
+  const result = combineSelections(first, second, 'intersect', { width: 5, height: 5 })
+  assert.equal(result.pixelCount, 4)
+  assert.deepEqual(spansArray(result), [
+    { y: 1, x0: 1, x1: 3 },
+    { y: 2, x0: 1, x1: 3 }
+  ])
+})
+
+test('caminho analítico da elipse preserva a máscara baseada no centro do pixel', () => {
+  const ellipse = { kind: 'ellipse', bounds: { x: 0.3, y: 0.7, width: 6.2, height: 4.4 } }
+  const full = { kind: 'rectangle', bounds: { x: 0, y: 0, width: 8, height: 6 } }
+  const result = combineSelections(ellipse, full, 'intersect', { width: 8, height: 6 })
+  const expected = []
+  for (let y = 0; y < 6; y++) {
+    let start = -1
+    for (let x = 0; x <= 8; x++) {
+      const inside = x < 8 && ((x + 0.5 - 3.4) / 3.1) ** 2 + ((y + 0.5 - 2.9) / 2.2) ** 2 <= 1 &&
+        x + 0.5 >= 0.3 && x + 0.5 < 6.5 && y + 0.5 >= 0.7 && y + 0.5 < 5.1
+      if (inside && start < 0) start = x
+      if (!inside && start >= 0) { expected.push({ y, x0: start, x1: x }); start = -1 }
+    }
+  }
+  assert.deepEqual(spansArray(result), expected)
+})

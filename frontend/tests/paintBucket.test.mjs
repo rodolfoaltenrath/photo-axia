@@ -4,7 +4,8 @@ import { colorRegionSpans } from '../src/editor/colorRegion.ts'
 import {
   applyPaintBucketColorRegion,
   applyPaintBucketColorRegionCooperatively,
-  applyPaintBucketRaster
+  applyPaintBucketRaster,
+  applySolidFillRaster
 } from '../src/editor/paintBucket.ts'
 
 const rgba = (...pixels) => new Uint8ClampedArray(pixels.flat())
@@ -56,6 +57,26 @@ test('preenche região fragmentada sem materializar objetos de span', () => {
   })
   assert.equal(result.changedPixelCount, 2)
   assert.deepEqual([...result.pixels], [255, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255])
+})
+
+test('preenchimento integral ignora as cores existentes quando não há seleção', () => {
+  const source = rgba([10, 20, 30, 255], [200, 150, 100, 128], [0, 0, 0, 0])
+  const result = applySolidFillRaster({
+    pixels: source, width: 3, height: 1, color: '#336699', selection: null, sourceToDocument: identity
+  })
+  assert.equal(result.changedPixelCount, 3)
+  assert.deepEqual([...result.pixels], [51, 102, 153, 255, 51, 102, 153, 255, 51, 102, 153, 255])
+})
+
+test('preenchimento integral usa a seleção somente como máscara', () => {
+  const source = rgba([10, 10, 10, 255], [20, 20, 20, 255], [30, 30, 30, 255])
+  const result = applySolidFillRaster({
+    pixels: source, width: 3, height: 1, color: '#ff0000',
+    selection: { kind: 'rectangle', bounds: { x: 1, y: 0, width: 2, height: 1 } },
+    sourceToDocument: identity
+  })
+  assert.equal(result.changedPixelCount, 2)
+  assert.deepEqual([...result.pixels], [10, 10, 10, 255, 255, 0, 0, 255, 255, 0, 0, 255])
 })
 
 test('fallback cooperativo cede controle e observa cancelamento entre lotes', async () => {

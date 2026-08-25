@@ -113,11 +113,11 @@ export namespace main {
 	export class ExportSaveTarget {
 	    token: string;
 	    path: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExportSaveTarget(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.token = source["token"];
@@ -189,3 +189,4 @@ export namespace main {
 	}
 
 }
+

@@ -1,5 +1,5 @@
-import { applyPaintBucketColorRegionCooperatively } from '../editor/paintBucket'
-import { invertMatrix, layerSourceToDocumentMatrix, selectionIsEmpty, transformSelectionPoint, type SelectionPoint, type SelectionRegion } from '../editor/selection'
+import { applyPaintBucketColorRegionCooperatively, applySolidFillRaster } from '../editor/paintBucket'
+import { cloneSelection, invertMatrix, layerSourceToDocumentMatrix, selectionIsEmpty, transformSelectionPoint, type SelectionPoint, type SelectionRegion } from '../editor/selection'
 import type { ImageAsset, LayerTransform } from '../types/editor'
 
 export interface PaintBucketResult {
@@ -92,6 +92,36 @@ async function fallback(
   return { blob, previewBlob, previewWidth, previewHeight, changedPixelCount: result.changedPixelCount }
 }
 
+async function fallbackSolidFill(
+  sourceBlob: Blob, asset: ImageAsset, transform: LayerTransform, color: string,
+  selection: SelectionRegion | null, previewWidth: number, previewHeight: number, signal?: AbortSignal
+): Promise<PaintBucketResult> {
+  throwIfAborted(signal)
+  const bitmap = await createImageBitmap(sourceBlob)
+  const canvas = makeCanvas(asset.width, asset.height)
+  const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+  if (!context) { bitmap.close(); throw new Error('O sistema não disponibilizou leitura de pixels.') }
+  context.drawImage(bitmap, 0, 0, asset.width, asset.height); bitmap.close()
+  const image = context.getImageData(0, 0, asset.width, asset.height)
+  const result = applySolidFillRaster({
+    pixels: image.data, width: asset.width, height: asset.height, color, selection,
+    sourceToDocument: layerSourceToDocumentMatrix(transform, asset.width, asset.height)
+  })
+  throwIfAborted(signal)
+  if (!result.pixels) return { previewWidth, previewHeight, changedPixelCount: 0 }
+  context.putImageData(new ImageData(result.pixels, asset.width, asset.height), 0, 0)
+  const previewCanvas = previewWidth === asset.width && previewHeight === asset.height ? undefined : makeCanvas(previewWidth, previewHeight)
+  const previewContext = previewCanvas?.getContext('2d')
+  if (previewContext) {
+    previewContext.imageSmoothingEnabled = true
+    previewContext.imageSmoothingQuality = 'high'
+    previewContext.drawImage(canvas, 0, 0, previewWidth, previewHeight)
+  }
+  const [blob, previewBlob] = await Promise.all([encode(canvas), previewCanvas ? encode(previewCanvas, 'image/webp') : undefined])
+  throwIfAborted(signal)
+  return { blob, previewBlob, previewWidth, previewHeight, changedPixelCount: result.changedPixelCount }
+}
+
 export async function applyPaintBucket(
   asset: ImageAsset, transform: LayerTransform, point: SelectionPoint, color: string, tolerance: number,
   contiguous: boolean, selection: SelectionRegion | null, previewWidth: number, previewHeight: number, signal?: AbortSignal
@@ -105,7 +135,7 @@ export async function applyPaintBucket(
   const response = await fetch(asset.sourceUrl, { signal })
   if (!response.ok) throw new Error('Não foi possível carregar a camada para preenchimento.')
   const sourceBlob = await response.blob()
-  const activeSelection = selection && !selectionIsEmpty(selection) ? selection : null
+  const activeSelection = selection && !selectionIsEmpty(selection) ? cloneSelection(selection) : null
   const activeWorker = workerInstance()
   if (!activeWorker) return fallback(sourceBlob, asset, transform, point, color, tolerance, contiguous, activeSelection, previewWidth, previewHeight, signal)
   const id = nextId++
@@ -115,7 +145,32 @@ export async function applyPaintBucket(
     pending.set(id, { resolve, reject, cleanup })
     signal?.addEventListener('abort', cancel, { once: true })
     if (signal?.aborted) { cancel(); return }
-    activeWorker.postMessage({ id, sourceBlob, assetWidth: asset.width, assetHeight: asset.height, transform, point, color, tolerance, contiguous, selection: activeSelection, previewWidth, previewHeight })
+    activeWorker.postMessage({ id, mode: 'bucket', sourceBlob, assetWidth: asset.width, assetHeight: asset.height, transform: { ...transform }, point: { ...point }, color, tolerance, contiguous, selection: activeSelection, previewWidth, previewHeight })
+  })
+}
+
+export async function applySolidFill(
+  asset: ImageAsset, transform: LayerTransform, color: string, selection: SelectionRegion | null,
+  previewWidth: number, previewHeight: number, signal?: AbortSignal
+) {
+  throwIfAborted(signal)
+  const response = await fetch(asset.sourceUrl, { signal })
+  if (!response.ok) throw new Error('Não foi possível carregar a camada para preenchimento.')
+  const sourceBlob = await response.blob()
+  const activeSelection = selection && !selectionIsEmpty(selection) ? cloneSelection(selection) : null
+  const activeWorker = workerInstance()
+  if (!activeWorker) return fallbackSolidFill(sourceBlob, asset, transform, color, activeSelection, previewWidth, previewHeight, signal)
+  const id = nextId++
+  return new Promise<PaintBucketResult>((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener('abort', cancel)
+    const cancel = () => { if (pending.has(id)) terminateWorker() }
+    pending.set(id, { resolve, reject, cleanup })
+    signal?.addEventListener('abort', cancel, { once: true })
+    if (signal?.aborted) { cancel(); return }
+    activeWorker.postMessage({
+      id, mode: 'solid-fill', sourceBlob, assetWidth: asset.width, assetHeight: asset.height,
+      transform: { ...transform }, color, selection: activeSelection, previewWidth, previewHeight
+    })
   })
 }
 

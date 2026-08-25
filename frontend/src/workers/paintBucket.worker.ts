@@ -1,10 +1,10 @@
-import { applyPaintBucketColorRegion } from '../editor/paintBucket'
+import { applyPaintBucketColorRegion, applySolidFillRaster } from '../editor/paintBucket'
 import { invertMatrix, layerSourceToDocumentMatrix, transformSelectionPoint, type SelectionPoint, type SelectionRegion } from '../editor/selection'
 import type { LayerTransform } from '../types/editor'
 
 interface Request {
   id: number; sourceBlob: Blob; assetWidth: number; assetHeight: number; transform: LayerTransform;
-  point: SelectionPoint; color: string; tolerance: number; contiguous: boolean; selection: SelectionRegion | null;
+  mode?: 'bucket' | 'solid-fill'; point?: SelectionPoint; color: string; tolerance?: number; contiguous?: boolean; selection: SelectionRegion | null;
   previewWidth: number; previewHeight: number
 }
 
@@ -18,14 +18,23 @@ self.onmessage = async (event: MessageEvent<Request>) => {
     context.drawImage(bitmap, 0, 0, request.assetWidth, request.assetHeight); bitmap.close()
     const image = context.getImageData(0, 0, request.assetWidth, request.assetHeight)
     const sourceToDocument = layerSourceToDocumentMatrix(request.transform, request.assetWidth, request.assetHeight)
-    const sourcePoint = transformSelectionPoint(invertMatrix(sourceToDocument), request.point)
-    const result = applyPaintBucketColorRegion({
-      pixels: image.data, width: request.assetWidth, height: request.assetHeight,
-      color: request.color, selection: request.selection, sourceToDocument,
-      regionOptions: {
-        startX: sourcePoint.x, startY: sourcePoint.y, tolerance: request.tolerance, contiguous: request.contiguous
-      }
-    })
+    const result = request.mode === 'solid-fill'
+      ? applySolidFillRaster({
+          pixels: image.data, width: request.assetWidth, height: request.assetHeight,
+          color: request.color, selection: request.selection, sourceToDocument
+        })
+      : (() => {
+          if (!request.point) throw new Error('O ponto inicial do Balde de Tinta é inválido.')
+          const sourcePoint = transformSelectionPoint(invertMatrix(sourceToDocument), request.point)
+          return applyPaintBucketColorRegion({
+            pixels: image.data, width: request.assetWidth, height: request.assetHeight,
+            color: request.color, selection: request.selection, sourceToDocument,
+            regionOptions: {
+              startX: sourcePoint.x, startY: sourcePoint.y,
+              tolerance: request.tolerance ?? 0, contiguous: request.contiguous ?? true
+            }
+          })
+        })()
     if (!result.pixels) {
       self.postMessage({ id: request.id, result: {
         previewWidth: request.previewWidth, previewHeight: request.previewHeight, changedPixelCount: 0

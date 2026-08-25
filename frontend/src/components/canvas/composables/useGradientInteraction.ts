@@ -35,6 +35,7 @@ interface GradientInteractionOptions {
 export function useGradientInteraction(options: GradientInteractionOptions) {
   const gradientInteraction = ref<GradientInteraction | null>(null)
   const gradientPreviewCanvas = ref<HTMLCanvasElement | null>(null)
+  let handoffFallbackTimer = 0
 
   const gradientPreviewDimensions = computed(() => {
     const documentSpec = options.document()
@@ -185,12 +186,22 @@ export function useGradientInteraction(options: GradientInteractionOptions) {
 
   function cancelGradient() {
     if (!gradientInteraction.value) return false
+    if (handoffFallbackTimer) window.clearTimeout(handoffFallbackTimer)
+    handoffFallbackTimer = 0
     options.discardInteractionFrame()
     const canvas = gradientPreviewCanvas.value
     canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
     gradientInteraction.value = null
     gradientPreviewCanvas.value = null
     return true
+  }
+
+  function notifyLayerImageReady(layerId: string) {
+    const interaction = gradientInteraction.value
+    if (options.isBusy() || interaction?.pointerId !== -1 || interaction.layerId !== layerId) return
+    // CanvasLayer emits readiness only after its double buffer becomes the active
+    // texture, so the preview can now leave without revealing the previous raster.
+    cancelGradient()
   }
 
   watch(options.activeTool, (tool) => {
@@ -201,8 +212,18 @@ export function useGradientInteraction(options: GradientInteractionOptions) {
   })
   watch(options.isBusy, (busy) => {
     const interaction = gradientInteraction.value
-    if ((busy && interaction && interaction.pointerId >= 0) || (!busy && interaction?.pointerId === -1)) {
+    if (busy && interaction && interaction.pointerId >= 0) {
       cancelGradient()
+      return
+    }
+    if (!busy && interaction?.pointerId === -1) {
+      // Successful commits are cleared by notifyLayerImageReady after CanvasLayer's
+      // two-frame texture handoff. This fallback covers errors and no-op commits.
+      if (handoffFallbackTimer) window.clearTimeout(handoffFallbackTimer)
+      handoffFallbackTimer = window.setTimeout(() => {
+        handoffFallbackTimer = 0
+        if (!options.isBusy() && gradientInteraction.value === interaction) cancelGradient()
+      }, 1000)
     }
   })
   watch(
@@ -219,6 +240,8 @@ export function useGradientInteraction(options: GradientInteractionOptions) {
     gradientPreviewDimensions,
     gradientPreviewStyle,
     hasGradientPointer,
+    notifyLayerImageError: notifyLayerImageReady,
+    notifyLayerImageLoaded: notifyLayerImageReady,
     startGradientPointer,
     stopGradientPointer,
     updateGradientPointer

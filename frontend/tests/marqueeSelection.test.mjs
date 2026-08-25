@@ -10,7 +10,7 @@ import { combineSelections } from '../src/editor/selectionCombine.ts'
 
 const documentSize = { width: 8, height: 6 }
 
-test('expõe exatamente as quatro ferramentas Marquee na ordem aprovada', () => {
+test('preserva os quatro modos internos e alterna somente os dois expostos na interface', () => {
   assert.deepEqual(MARQUEE_SELECTION_MODES, [
     'rectangle',
     'ellipse',
@@ -20,6 +20,7 @@ test('expõe exatamente as quatro ferramentas Marquee na ordem aprovada', () => 
   assert.equal(isMarqueeSelectionMode('single-row'), true)
   assert.equal(isMarqueeSelectionMode('lasso'), false)
   assert.equal(nextMarqueeSelectionMode('rectangle'), 'ellipse')
+  assert.equal(nextMarqueeSelectionMode('ellipse'), 'rectangle')
   assert.equal(nextMarqueeSelectionMode('single-column'), 'rectangle')
 })
 

@@ -281,6 +281,8 @@ const {
   gradientPreviewDimensions,
   gradientPreviewStyle,
   hasGradientPointer,
+  notifyLayerImageError: notifyGradientImageError,
+  notifyLayerImageLoaded: notifyGradientImageLoaded,
   startGradientPointer,
   stopGradientPointer,
   updateGradientPointer
@@ -347,8 +349,8 @@ const {
   handleLayerImageLoaded,
   waitForLayerImages
 } = useLayerImageReadiness({
-  notifyImageLoaded: [notifySelectionMoveImageLoaded, notifyBrushImageLoaded],
-  notifyImageError: [notifySelectionMoveImageError, notifyBrushImageError]
+  notifyImageLoaded: [notifySelectionMoveImageLoaded, notifyBrushImageLoaded, notifyGradientImageLoaded],
+  notifyImageError: [notifySelectionMoveImageError, notifyBrushImageError, notifyGradientImageError]
 })
 
 const {
@@ -658,6 +660,12 @@ function startViewportPointer(event: PointerEvent) {
   if (props.activeTool === 'crop' && !isSpacePressed.value) {
     const point = pointerToDocument(event)
     if (point && startSelectionPointer(event, point)) return
+    if (event.button === 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      cancelSelection()
+      return
+    }
   }
 
   if ((props.activeTool === 'brush' || props.activeTool === 'eraser') && !isSpacePressed.value) {

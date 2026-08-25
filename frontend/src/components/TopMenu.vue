@@ -10,6 +10,7 @@ const props = defineProps<{
   canDeleteLayer: boolean
   canDuplicateLayer: boolean
   canEditSmartLayer: boolean
+  canFillLayer: boolean
   canFlattenImage: boolean
   canMergeLayers: boolean
   canRasterizeLayer: boolean
@@ -36,6 +37,8 @@ const emit = defineEmits<{
   (event: 'duplicateLayer'): void
   (event: 'editSmartLayer'): void
   (event: 'exportDocument'): void
+  (event: 'fillBackground'): void
+  (event: 'fillForeground'): void
   (event: 'flattenImage'): void
   (event: 'historyJump', position: number): void
   (event: 'home'): void
@@ -141,6 +144,9 @@ onBeforeUnmount(() => {
         <div v-if="openMenu === 'edit'" class="application-menu-popover" role="menu">
           <button type="button" role="menuitem" :disabled="isBusy || !canUndo" :title="canUndo ? `Desfazer ${undoLabel}` : 'Nada para desfazer'" @click="runCommand(() => emit('undo'))">Desfazer</button>
           <button type="button" role="menuitem" :disabled="isBusy || !canRedo" :title="canRedo ? `Refazer ${redoLabel}` : 'Nada para refazer'" @click="runCommand(() => emit('redo'))">Refazer</button>
+          <div class="application-menu-separator" role="separator"></div>
+          <button type="button" role="menuitem" :disabled="isBusy || !canFillLayer" title="Preencher com a cor principal (Alt+Backspace)" @click="runCommand(() => emit('fillForeground'))">Preencher com cor principal</button>
+          <button type="button" role="menuitem" :disabled="isBusy || !canFillLayer" title="Preencher com a cor secundária (Ctrl+Backspace)" @click="runCommand(() => emit('fillBackground'))">Preencher com cor secundária</button>
         </div>
       </div>
 

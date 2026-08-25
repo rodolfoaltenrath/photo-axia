@@ -719,3 +719,46 @@ da fase e não declarar validação completa.
   final de transferência do worker; a checagem completa será repetida em seguida.
 - Próximo passo exato: executar validação completa e incluir o caso fragmentado no teste
   manual da Varinha, observando que o contorno visual será simplificado nesses extremos.
+
+### 2026-08-25 — Correção do envio do Degradê ao worker e ajustes visuais
+
+- Corrigido o erro `Object could not be cloned` ao confirmar um Degradê: geometria,
+  configuração, transformação e seleção agora são convertidas em snapshots planos antes
+  de atravessar a fronteira de `postMessage`, sem proxies reativos do Vue.
+- O mesmo snapshot é usado pelo fallback, mantendo worker e processamento cooperativo
+  com entradas equivalentes e independentes do estado vivo da interface.
+- Os novos PNGs de Mover e Degradê receberam contraste claro pela apresentação da
+  toolbar, preservando integralmente os pixels e o canal alfa fornecidos. O contraste
+  claro também permanece no estado ativo, acompanhando os demais ícones do tema.
+- O SVG do Balde passou a declarar seu traço claro diretamente, pois `currentColor` não
+  herda a cor do botão quando o arquivo SVG é consumido externamente por uma tag `img`.
+- O alerta global passou para `z-index: 10000`, acima de toolbar, réguas, painéis,
+  flyouts e janelas do editor, evitando que a mensagem seja parcialmente encoberta.
+- Validação automatizada: 259 testes frontend, TypeScript, build Vite e
+  `git diff --check` aprovados. Validação manual do gesto real no Wails permanece pendente.
+
+### 2026-08-25 — Comando Preencher com cor
+
+- Adicionado ao menu Editar um preenchimento integral com a cor principal ou secundária,
+  separado do Balde de Tinta para preservar a semântica equivalente à do Photoshop.
+- `Alt+Backspace` usa a cor principal e `Ctrl+Backspace` usa a secundária. Os comandos
+  também aparecem por extenso no menu para usuários que não conhecem os atalhos.
+- Com seleção, todos os pixels da máscara são preenchidos sem consultar cor, tolerância
+  ou contiguidade; sem seleção, todo o raster da camada ativa é preenchido.
+- O processamento reutiliza worker, geração de preview, cancelamento, URLs e histórico
+  atômico do Balde. Pixels que já possuem a cor final são tratados como no-op.
+- Adicionados testes puros para conteúdo heterogêneo, transparência e máscara retangular.
+- Validação automatizada: 261 testes frontend, TypeScript, build Vite e
+  `git diff --check` aprovados; validação manual no Wails permanece pendente.
+
+### 2026-08-25 — Transição visual contínua ao confirmar o Degradê
+
+- A prévia do Degradê deixou de ser removida imediatamente quando o processamento
+  termina. Ela permanece até o Vue publicar a nova URL da camada e o navegador alcançar
+  o próximo frame, evitando mostrar o raster anterior por um instante no `pointerup`.
+- A proteção verifica se a interação ainda é a mesma e se nenhuma nova operação ficou
+  ocupada antes de limpar a prévia, impedindo que uma finalização antiga afete outro gesto.
+- A primeira tentativa aguardava apenas um frame, mas a validação manual mostrou que o
+  buffer duplo de `CanvasLayer` prepara a textura por dois frames. A prévia agora é
+  removida pelo evento real de ativação do novo buffer; um timeout de segurança cobre
+  somente falhas e commits sem troca de imagem.
