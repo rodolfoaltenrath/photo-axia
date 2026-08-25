@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasViewport from './components/CanvasViewport.vue'
 import FlattenImageDialog from './components/FlattenImageDialog.vue'
+import ImportPdfDialog from './components/ImportPdfDialog.vue'
 import LayerStyleDialog from './components/LayerStyleDialog.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
@@ -23,12 +24,14 @@ import {
   listRecentProjects,
   recordRecentProject,
   registerNativeFileDrop,
+  releaseDesktopPDF,
   releaseAxiaProjectAssets,
   saveExportedImageBlob,
   removeRecentProject,
   setNativeDocumentDirty,
   uploadRecentThumbnail,
-  selectDesktopImages
+  selectDesktopImages,
+  selectDesktopPDF
 } from './services/backend'
 import {
   clearPreparedImageCache,
@@ -50,6 +53,7 @@ import {
   sampleDocumentColor
 } from './services/renderDocument'
 import { pngBlobWithResolution } from './services/pngMetadata'
+import { closePDFImport, renderPDFPages, type PDFImportSource, type PDFRenderRequest } from './services/pdfImport'
 import {
   createAxiaProjectManifest,
   restoreAxiaProject,
@@ -194,6 +198,9 @@ const selectedLayerIds = ref<string[]>(['layer-bg'])
 const layerSelectionAnchorId = ref('layer-bg')
 const showNewDocumentDialog = ref(false)
 const showExportImageDialog = ref(false)
+const showImportPdfDialog = ref(false)
+const pdfImportSource = shallowRef<PDFImportSource | null>(null)
+const pdfImportProgress = ref('')
 const exportEstimateBusy = ref(false)
 const exportEstimatedBytes = ref<number | null>(null)
 const preparedExport = shallowRef<{ key: string; blob: Blob } | null>(null)
@@ -206,6 +213,7 @@ const showUnsavedChangesDialog = ref(false)
 const showFlattenImageDialog = ref(false)
 const layerStyleDialog = shallowRef<{ layerId: string; before: LayerStyleConfig }>()
 const fileInput = ref<HTMLInputElement | null>(null)
+const pdfFileInput = ref<HTMLInputElement | null>(null)
 const canvasViewport = ref<InstanceType<typeof CanvasViewport> | null>(null)
 const projectPath = ref('')
 const savedHistoryRevision = ref<number | null>(null)
@@ -305,7 +313,7 @@ const documentDirty = computed(() => {
   return savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value
 })
 const modalOpen = computed(() => editorIsBlockedByModal(
-  showNewDocumentDialog.value || showExportImageDialog.value,
+  showNewDocumentDialog.value || showExportImageDialog.value || showImportPdfDialog.value,
   showUnsavedChangesDialog.value,
   Boolean(layerStyleDialog.value) || showFlattenImageDialog.value
 ))
@@ -3218,6 +3226,143 @@ async function readLocalFiles(input: HTMLInputElement) {
   }
 }
 
+let pdfImportController: AbortController | undefined
+
+async function releasePDFSource() {
+  const source = pdfImportSource.value
+  pdfImportSource.value = null
+  if (!source) return
+  if (source.id) await releaseDesktopPDF(source.id).catch(() => undefined)
+  else if (source.sourceUrl.startsWith('blob:')) URL.revokeObjectURL(source.sourceUrl)
+}
+
+async function importPDF() {
+  if (isBusy.value || showImportPdfDialog.value) return
+  errorText.value = ''
+  if (!hasDesktopBackend()) {
+    pdfFileInput.value?.click()
+    return
+  }
+  isBusy.value = true
+  statusText.value = 'Selecionando PDF…'
+  try {
+    const source = await selectDesktopPDF()
+    if (!source) {
+      statusText.value = 'Importação de PDF cancelada'
+      return
+    }
+    await releasePDFSource()
+    pdfImportSource.value = source
+    showImportPdfDialog.value = true
+    statusText.value = 'PDF pronto para importar'
+  } catch (error) {
+    showError(error, 'Não foi possível abrir o PDF.')
+  } finally {
+    isBusy.value = false
+  }
+}
+
+async function handleNativeFileDrop(
+  images: ImportedImage[],
+  pdf: PDFImportSource | null,
+  errors: string[]
+) {
+  if (isBusy.value || showImportPdfDialog.value) {
+    if (pdf?.id) await releaseDesktopPDF(pdf.id).catch(() => undefined)
+    return
+  }
+  errorText.value = ''
+  try {
+    if (images.length || errors.length) await addDroppedImages(images, errors)
+    if (!pdf) return
+    await releasePDFSource()
+    pdfImportSource.value = pdf
+    showImportPdfDialog.value = true
+    statusText.value = 'PDF pronto para escolher a página'
+  } catch (error) {
+    if (pdf?.id) await releaseDesktopPDF(pdf.id).catch(() => undefined)
+    showError(error, 'Não foi possível abrir os arquivos arrastados.')
+  }
+}
+
+async function openLocalPDF(file: File) {
+  if (file.size <= 0 || file.size > 512 * 1024 * 1024) {
+    showError(new Error('O PDF deve ter no máximo 512 MB.'), 'Não foi possível abrir o PDF.')
+    return
+  }
+  if (file.type && file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    showError(new Error('Selecione um arquivo PDF.'), 'Não foi possível abrir o PDF.')
+    return
+  }
+  await releasePDFSource()
+  pdfImportSource.value = {
+    id: '',
+    name: file.name,
+    sourceUrl: URL.createObjectURL(file),
+    byteSize: file.size
+  }
+  showImportPdfDialog.value = true
+  statusText.value = 'PDF pronto para importar'
+}
+
+async function readLocalPDF(input: HTMLInputElement) {
+  const file = input.files?.[0]
+  input.value = ''
+  if (file) await openLocalPDF(file)
+}
+
+async function openDroppedPDF(file: File, errors: string[]) {
+  if (isBusy.value || showImportPdfDialog.value) return
+  await openLocalPDF(file)
+  if (errors.length) errorText.value = errors.join('\n')
+}
+
+async function cancelPDFImport() {
+  if (isBusy.value && pdfImportController) {
+    pdfImportProgress.value = 'Cancelando importação…'
+    pdfImportController.abort()
+    return
+  }
+  if (isBusy.value) return
+  showImportPdfDialog.value = false
+  pdfImportProgress.value = ''
+  await releasePDFSource()
+  statusText.value = 'Importação de PDF cancelada'
+}
+
+async function performPDFImport(request: PDFRenderRequest) {
+  if (isBusy.value) return
+  isBusy.value = true
+  errorText.value = ''
+  pdfImportController = new AbortController()
+  pdfImportProgress.value = 'Preparando a página…'
+  statusText.value = 'Convertendo página do PDF…'
+  try {
+    const images = await renderPDFPages(request, pdfImportController.signal, (completed, count) => {
+      pdfImportProgress.value = `Convertendo página ${completed} de ${count}…`
+      statusText.value = pdfImportProgress.value
+    })
+    pdfImportProgress.value = 'Adicionando página ao documento…'
+    await addImportedImages(images)
+    showImportPdfDialog.value = false
+    await releasePDFSource()
+    statusText.value = 'Página do PDF importada'
+  } catch (error) {
+    showImportPdfDialog.value = false
+    await releasePDFSource()
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      statusText.value = 'Importação de PDF cancelada'
+    } else {
+      showError(error, 'Não foi possível importar a página do PDF.')
+    }
+  } finally {
+    await closePDFImport(request.document).catch(() => undefined)
+    pdfImportController = undefined
+    pdfImportProgress.value = ''
+    isBusy.value = false
+  }
+}
+
 function exportDocument() {
   if (isBusy.value) return
   clearExportEstimate()
@@ -3470,7 +3615,7 @@ onMounted(async () => {
   window.addEventListener('wheel', blockBrowserWheelZoom, zoomEventOptions)
   window.addEventListener('keydown', handleShortcut)
   window.addEventListener('beforeunload', protectUnsavedDocument)
-  unregisterNativeFileDrop = registerNativeFileDrop(addDroppedImages)
+  unregisterNativeFileDrop = registerNativeFileDrop(handleNativeFileDrop)
 
   try {
     const [status] = await Promise.all([getEditorStatus(), refreshRecentProjects()])
@@ -3482,6 +3627,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   unregisterNativeFileDrop?.()
+  pdfImportController?.abort()
+  void releasePDFSource()
   if (previewRefreshTimer) clearTimeout(previewRefreshTimer)
   pendingBrushCommit?.controller.abort()
   pendingBrushCommit = undefined
@@ -3558,6 +3705,7 @@ onBeforeUnmount(() => {
       @history-jump="jumpHistory"
       @home="showProjectHome"
       @import-images="importImages"
+      @import-pdf="importPDF"
       @merge-layers="mergeSelectedLayers"
       @new-document="requestNewDocument"
       @open-layer-styles="openLayerStyles(activeLayerId)"
@@ -3580,6 +3728,13 @@ onBeforeUnmount(() => {
       multiple
       type="file"
       @change="readLocalFiles($event.target as HTMLInputElement)"
+    />
+    <input
+      ref="pdfFileInput"
+      accept="application/pdf,.pdf"
+      class="visually-hidden"
+      type="file"
+      @change="readLocalPDF($event.target as HTMLInputElement)"
     />
 
     <section
@@ -3648,6 +3803,7 @@ onBeforeUnmount(() => {
         @delete-guide="deleteGuide"
         @delete-selection="deleteSelectedPixels"
         @images-dropped="addDroppedImages"
+        @pdf-dropped="openDroppedPDF"
         @magic-wand-select="selectWithMagicWand"
         @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"
@@ -3736,6 +3892,14 @@ onBeforeUnmount(() => {
       @estimate="estimateDocumentExport"
       @export="performDocumentExport"
       @settings-change="clearExportEstimate"
+    />
+    <ImportPdfDialog
+      :busy="isBusy"
+      :open="showImportPdfDialog"
+      :progress="pdfImportProgress"
+      :source="pdfImportSource"
+      @cancel="cancelPDFImport"
+      @import="performPDFImport"
     />
     <LayerStyleDialog
       :layer-name="layerStyleDialogLayer?.name ?? ''"

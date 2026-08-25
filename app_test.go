@@ -11,10 +11,21 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestCloseDialogUsesPlatformButtonIdentifiers(t *testing.T) {
+	confirm, cancel := closeDialogButtonLabels()
+	if confirm == "" || cancel == "" || confirm == cancel {
+		t.Fatalf("invalid close dialog labels: %q, %q", confirm, cancel)
+	}
+	if runtime.GOOS == "windows" && (confirm != "Yes" || cancel != "No") {
+		t.Fatalf("Windows message box callbacks require Yes/No, got %q/%q", confirm, cancel)
+	}
+}
 
 func TestCreateDocumentValidatesNativeBoundary(t *testing.T) {
 	app := NewApp()
@@ -373,6 +384,68 @@ func BenchmarkGenerateImagePreview4K(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(info.Size())/1024, "source-KiB")
+}
+
+func TestPDFImportRegistersServesAndReleasesSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "documento.pdf")
+	content := []byte("%PDF-1.7\n% teste Axia\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	source, err := app.registerPDFImport(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Name != "documento.pdf" || source.ByteSize != int64(len(content)) {
+		t.Fatalf("unexpected PDF source: %#v", source)
+	}
+
+	response := httptest.NewRecorder()
+	app.pdfHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, source.SourceURL, nil))
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/pdf" {
+		t.Fatalf("unexpected PDF response: status=%d type=%q", response.Code, response.Header().Get("Content-Type"))
+	}
+	if response.Body.String() != string(content) {
+		t.Fatal("served PDF differs from source")
+	}
+
+	app.ReleasePDFImport(source.ID)
+	released := httptest.NewRecorder()
+	app.pdfHandler().ServeHTTP(released, httptest.NewRequest(http.MethodGet, source.SourceURL, nil))
+	if released.Code != http.StatusNotFound {
+		t.Fatalf("released PDF remained accessible: %d", released.Code)
+	}
+}
+
+func TestPDFImportRejectsNonPDF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "falso.pdf")
+	if err := os.WriteFile(path, []byte("not a PDF"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewApp().registerPDFImport(path); err == nil {
+		t.Fatal("non-PDF content was accepted")
+	}
+}
+
+func TestImportDroppedFilesRoutesPDFToPageImporter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "arrastado.pdf")
+	content := []byte("%PDF-1.7\n% PDF arrastado\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	result := app.ImportDroppedFiles([]string{path})
+	if len(result.Images) != 0 || len(result.Errors) != 0 || result.PDF == nil {
+		t.Fatalf("unexpected dropped PDF result: %#v", result)
+	}
+	if result.PDF.Name != "arrastado.pdf" || result.PDF.SourceURL == "" {
+		t.Fatalf("unexpected dropped PDF source: %#v", result.PDF)
+	}
+
+	app.ReleasePDFImport(result.PDF.ID)
 }
 
 func TestImageResolutionFromPNGPhys(t *testing.T) {

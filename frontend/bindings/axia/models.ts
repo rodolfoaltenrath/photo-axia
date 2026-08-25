@@ -20,6 +20,7 @@ export interface DocumentSpec {
  */
 export interface DroppedFilesResult {
     "images": ImportedImage[] | null;
+    "pdf"?: PDFImportSource | null;
     "errors": string[] | null;
 }
 
@@ -52,6 +53,13 @@ export interface OpenedAxiaProject {
     "manifest": string;
     "assetUrls": { [_ in string]?: string } | null;
     "sessionId": string;
+}
+
+export interface PDFImportSource {
+    "id": string;
+    "name": string;
+    "sourceUrl": string;
+    "byteSize": number;
 }
 
 export interface ProjectSaveTarget {

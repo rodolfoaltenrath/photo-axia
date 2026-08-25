@@ -272,7 +272,7 @@ export interface ImageAsset {
   byteSize?: number
   resolutionDpiX?: number
   resolutionDpiY?: number
-  resolutionSource?: 'png-phys' | 'jpeg-jfif' | 'jpeg-exif'
+  resolutionSource?: 'png-phys' | 'jpeg-jfif' | 'jpeg-exif' | 'pdf-render'
   previewUrl?: string
   previewWidth?: number
   previewHeight?: number
@@ -298,7 +298,7 @@ export interface ImportedImage {
   byteSize?: number
   resolutionDpiX?: number
   resolutionDpiY?: number
-  resolutionSource?: 'png-phys' | 'jpeg-jfif' | 'jpeg-exif'
+  resolutionSource?: 'png-phys' | 'jpeg-jfif' | 'jpeg-exif' | 'pdf-render'
 }
 
 export interface NewDocumentSettings {

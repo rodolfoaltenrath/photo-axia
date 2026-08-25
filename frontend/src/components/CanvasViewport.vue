@@ -481,7 +481,18 @@ async function handleDrop(event: DragEvent) {
   event.preventDefault()
   if (!event.dataTransfer?.files.length) return
 
-  const result = await readBrowserImages(event.dataTransfer.files)
+  const files = Array.from(event.dataTransfer.files)
+  const pdfs = files.filter((file) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))
+  if (pdfs.length) {
+    const errors = [
+      ...pdfs.slice(1).map((file) => `${file.name}: solte somente um PDF por vez`),
+      ...files.filter((file) => !pdfs.includes(file)).map((file) => `${file.name}: solte imagens separadamente do PDF`)
+    ]
+    emit('pdfDropped', pdfs[0]!, errors)
+    return
+  }
+
+  const result = await readBrowserImages(files)
   if (result.images.length || result.errors.length) {
     emit('imagesDropped', result.images, result.errors)
   }

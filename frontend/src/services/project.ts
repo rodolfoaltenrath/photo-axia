@@ -365,7 +365,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
         byteSize: archiveAsset.byteSize,
         resolutionDpiX: Number.isFinite(stored.image.resolutionDpiX) ? stored.image.resolutionDpiX : undefined,
         resolutionDpiY: Number.isFinite(stored.image.resolutionDpiY) ? stored.image.resolutionDpiY : undefined,
-        resolutionSource: ['png-phys', 'jpeg-jfif', 'jpeg-exif'].includes(stored.image.resolutionSource ?? '')
+        resolutionSource: ['png-phys', 'jpeg-jfif', 'jpeg-exif', 'pdf-render'].includes(stored.image.resolutionSource ?? '')
           ? stored.image.resolutionSource
           : undefined
       }

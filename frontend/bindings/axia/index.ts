@@ -13,6 +13,7 @@ export type {
     ExportSaveTarget,
     ImportedImage,
     OpenedAxiaProject,
+    PDFImportSource,
     ProjectSaveTarget,
     RecentProject
 } from "./models.js";

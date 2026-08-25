@@ -43,6 +43,7 @@ const emit = defineEmits<{
   (event: 'historyJump', position: number): void
   (event: 'home'): void
   (event: 'importImages'): void
+  (event: 'importPdf'): void
   (event: 'mergeLayers'): void
   (event: 'newDocument'): void
   (event: 'openLayerStyles'): void
@@ -133,6 +134,7 @@ onBeforeUnmount(() => {
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('newDocument'))">Novo</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openProject'))">Abrir projeto</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importImages'))">Importar imagens</button>
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importPdf'))">Importar PDF…</button>
           <div class="application-menu-separator" role="separator"></div>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('saveProject'))">Salvar</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('exportDocument'))">Exportar imagem…</button>

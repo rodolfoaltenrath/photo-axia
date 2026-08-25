@@ -31,6 +31,7 @@ type App struct {
 	mainWindow            application.Window
 	assetsMu              sync.RWMutex
 	imagePaths            map[string]string
+	pdfPaths              map[string]string
 	projectMu             sync.Mutex
 	projectSaves          map[string]string
 	projectFiles          map[string]projectSession
@@ -163,6 +164,7 @@ type ImportedImage struct {
 func NewApp() *App {
 	return &App{
 		imagePaths:    make(map[string]string),
+		pdfPaths:      make(map[string]string),
 		projectSaves:  make(map[string]string),
 		projectFiles:  make(map[string]projectSession),
 		recentUploads: make(map[string]recentUpload),
@@ -203,6 +205,10 @@ func (a *App) ServiceShutdown() error {
 
 func (a *App) shutdown(context.Context) {
 	a.releaseProjectSessions("")
+	a.assetsMu.Lock()
+	a.imagePaths = make(map[string]string)
+	a.pdfPaths = make(map[string]string)
+	a.assetsMu.Unlock()
 	a.projectMu.Lock()
 	a.projectSaves = make(map[string]string)
 	a.projectMu.Unlock()
@@ -231,14 +237,15 @@ func (a *App) handleWindowClosing(event *application.WindowEvent) {
 	}
 
 	confirmed := false
+	confirmLabel, cancelLabel := closeDialogButtonLabels()
 	dialog := a.desktop.Dialog.Question().
 		SetTitle("Alterações não salvas").
 		SetMessage("O projeto possui alterações não salvas. Deseja sair mesmo assim?").
 		AttachToWindow(a.mainWindow)
-	dialog.AddButton("Sair sem salvar").OnClick(func() {
+	dialog.AddButton(confirmLabel).OnClick(func() {
 		confirmed = true
 	})
-	cancelButton := dialog.AddButton("Cancelar")
+	cancelButton := dialog.AddButton(cancelLabel)
 	dialog.SetDefaultButton(cancelButton)
 	dialog.SetCancelButton(cancelButton)
 	dialog.Show()
@@ -337,10 +344,79 @@ func (a *App) SelectImageFiles() ([]ImportedImage, error) {
 	return images, nil
 }
 
+const maxPDFImportBytes int64 = 512 * 1024 * 1024
+
+type PDFImportSource struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SourceURL string `json:"sourceUrl"`
+	ByteSize  int64  `json:"byteSize"`
+}
+
+func (a *App) SelectPDFFile() (PDFImportSource, error) {
+	if a.desktop == nil {
+		return PDFImportSource{}, fmt.Errorf("aplicativo desktop indisponivel")
+	}
+	dialog := a.desktop.Dialog.OpenFile().
+		SetTitle("Importar PDF").
+		AddFilter("Documento PDF", "*.pdf")
+	if a.mainWindow != nil {
+		dialog.AttachToWindow(a.mainWindow)
+	}
+	path, err := dialog.PromptForSingleSelection()
+	if err != nil || path == "" {
+		return PDFImportSource{}, err
+	}
+	return a.registerPDFImport(path)
+}
+
+func (a *App) registerPDFImport(path string) (PDFImportSource, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return PDFImportSource{}, fmt.Errorf("abrir PDF: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return PDFImportSource{}, fmt.Errorf("examinar PDF: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return PDFImportSource{}, fmt.Errorf("o item selecionado nao e um arquivo")
+	}
+	if info.Size() <= 0 || info.Size() > maxPDFImportBytes {
+		return PDFImportSource{}, fmt.Errorf("o PDF deve ter no maximo 512 MB")
+	}
+	header := make([]byte, 5)
+	if _, err := io.ReadFull(file, header); err != nil || !bytes.Equal(header, []byte("%PDF-")) {
+		return PDFImportSource{}, fmt.Errorf("o arquivo selecionado nao e um PDF valido")
+	}
+	token, err := projectToken()
+	if err != nil {
+		return PDFImportSource{}, fmt.Errorf("preparar importacao do PDF: %w", err)
+	}
+	id := "pdf-" + token
+	a.assetsMu.Lock()
+	a.pdfPaths[id] = path
+	a.assetsMu.Unlock()
+	return PDFImportSource{
+		ID:        id,
+		Name:      filepath.Base(path),
+		SourceURL: "/__axia_pdf/" + id,
+		ByteSize:  info.Size(),
+	}, nil
+}
+
+func (a *App) ReleasePDFImport(id string) {
+	a.assetsMu.Lock()
+	delete(a.pdfPaths, id)
+	a.assetsMu.Unlock()
+}
+
 // DroppedFilesResult is the outcome of importing a native OS drag-and-drop.
 type DroppedFilesResult struct {
-	Images []ImportedImage `json:"images"`
-	Errors []string        `json:"errors"`
+	Images []ImportedImage  `json:"images"`
+	PDF    *PDFImportSource `json:"pdf,omitempty"`
+	Errors []string         `json:"errors"`
 }
 
 // ImportDroppedFiles reads the files a user dragged onto the window (native
@@ -351,7 +427,21 @@ type DroppedFilesResult struct {
 func (a *App) ImportDroppedFiles(paths []string) DroppedFilesResult {
 	images := make([]ImportedImage, 0, len(paths))
 	errs := make([]string, 0)
+	var pdf *PDFImportSource
 	for _, path := range paths {
+		if strings.EqualFold(filepath.Ext(path), ".pdf") {
+			if pdf != nil {
+				errs = append(errs, fmt.Sprintf("%s: solte somente um PDF por vez", filepath.Base(path)))
+				continue
+			}
+			source, err := a.registerPDFImport(path)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %s", filepath.Base(path), err))
+				continue
+			}
+			pdf = &source
+			continue
+		}
 		imported, err := a.readImageFile(path)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %s", filepath.Base(path), err))
@@ -359,7 +449,7 @@ func (a *App) ImportDroppedFiles(paths []string) DroppedFilesResult {
 		}
 		images = append(images, imported)
 	}
-	return DroppedFilesResult{Images: images, Errors: errs}
+	return DroppedFilesResult{Images: images, PDF: pdf, Errors: errs}
 }
 
 func (a *App) SaveExportedPNG(suggestedName string, dataURL string) (string, error) {
@@ -768,6 +858,31 @@ func (a *App) assetHandler() http.Handler {
 	})
 }
 
+func (a *App) pdfHandler() http.Handler {
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet && request.Method != http.MethodHead {
+			http.Error(response, "metodo nao permitido", http.StatusMethodNotAllowed)
+			return
+		}
+		id, found := strings.CutPrefix(request.URL.Path, "/__axia_pdf/")
+		if !found || id == "" || strings.Contains(id, "/") {
+			http.NotFound(response, request)
+			return
+		}
+		a.assetsMu.RLock()
+		path, exists := a.pdfPaths[id]
+		a.assetsMu.RUnlock()
+		if !exists {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/pdf")
+		response.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeFile(response, request, path)
+	})
+}
+
 func generateImagePreview(path string, width int, height int) (previewCacheEntry, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -819,12 +934,17 @@ func writePreviewEntry(response http.ResponseWriter, entry previewCacheEntry) {
 
 func (a *App) assetMiddleware(next http.Handler) http.Handler {
 	assets := a.assetHandler()
+	pdfs := a.pdfHandler()
 	projects := a.projectHandler()
 	recents := a.recentProjectsHandler()
 	exports := a.exportHandler()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/__axia_asset/") {
 			assets.ServeHTTP(response, request)
+			return
+		}
+		if strings.HasPrefix(request.URL.Path, "/__axia_pdf/") {
+			pdfs.ServeHTTP(response, request)
 			return
 		}
 		if strings.HasPrefix(request.URL.Path, "/__axia_project/") {

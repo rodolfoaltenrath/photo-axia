@@ -48,6 +48,7 @@ Consulte [docs/axia-format.md](docs/axia-format.md) para detalhes do formato de 
 ### Importação e camadas
 
 - Importação de PNG, JPEG e GIF pelo seletor de arquivos ou por arrastar e soltar.
+- Importação raster de uma página PDF por vez, com miniaturas, senha, resolução e fundo configuráveis.
 - Miniaturas otimizadas e cache de previews para imagens grandes.
 - Criação, seleção automática, movimentação, renomeação, duplicação, exclusão e reordenação de camadas.
 - Controle individual de visibilidade e opacidade.

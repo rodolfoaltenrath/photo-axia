@@ -12,16 +12,19 @@ import {
   PrepareExportedImage,
   PrepareRecentThumbnail,
   RecordRecentProject,
+  ReleasePDFImport,
   ReleaseAxiaProjectAssets,
   SaveExportedPNG,
   RemoveRecentProject,
   SetDocumentDirty,
-  SelectImageFiles
+  SelectImageFiles,
+  SelectPDFFile
 } from '../../bindings/axia/app'
 import { Events } from '@wailsio/runtime'
 import type { DocumentSpec, ImportedImage, NewDocumentSettings, RecentProject } from '../types/editor'
 import { EXPORT_FORMAT_CAPABILITIES, exportFilename, type ExportFormat } from '../editor/exportSettings'
 import { DEFAULT_LAYER_STYLE_GLOBAL_LIGHT, normalizeLayerStyleGlobalLight } from '../editor/layerStyles'
+import type { PDFImportSource } from './pdfImport.ts'
 
 interface EditorStatus {
   appName: string
@@ -92,7 +95,7 @@ export async function selectDesktopImages(): Promise<ImportedImage[]> {
  * desktop build. Returns an unregister function.
  */
 export function registerNativeFileDrop(
-  onDrop: (images: ImportedImage[], errors: string[]) => void
+  onDrop: (images: ImportedImage[], pdf: PDFImportSource | null, errors: string[]) => void
 ): () => void {
   if (!hasDesktopBackend()) return () => {}
 
@@ -100,8 +103,23 @@ export function registerNativeFileDrop(
     const paths = event.data ?? []
     if (!paths.length) return
     const result = await ImportDroppedFiles(paths)
-    onDrop((result.images ?? []) as ImportedImage[], result.errors ?? [])
+    onDrop(
+      (result.images ?? []) as ImportedImage[],
+      result.pdf ? result.pdf as PDFImportSource : null,
+      result.errors ?? []
+    )
   })
+}
+
+export async function selectDesktopPDF(): Promise<PDFImportSource | null> {
+  if (!hasDesktopBackend()) return null
+  const source = await SelectPDFFile()
+  return source.id ? source as PDFImportSource : null
+}
+
+export async function releaseDesktopPDF(id: string) {
+  if (!hasDesktopBackend() || !id) return
+  await ReleasePDFImport(id)
 }
 
 export async function applyPreviewFilter(filterName: string) {
