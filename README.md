@@ -28,7 +28,7 @@ Estamos trabalhando para publicar o repositório Flatpak, portanto o comando `fl
 
 ![Tela inicial do Axia com projetos recentes](assets/background%201.jpeg)
 
-![Editor do Axia com documento, camadas, propriedades, réguas e guias](assets/background%202.jpeg)
+![Editor do Axia com documento, camadas, propriedades, réguas e guias](assets/background%202.png)
 
 ## Recursos atuais
 
