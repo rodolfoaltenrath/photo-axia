@@ -1,7 +1,13 @@
 import type { LayerTransform } from '../types/editor'
 import { colorRegionSpans, type ColorRegionResult } from './colorRegion.ts'
 
-export type SelectionMode = 'rectangle' | 'ellipse' | 'lasso' | 'magic-wand'
+export type SelectionMode =
+  | 'rectangle'
+  | 'ellipse'
+  | 'single-row'
+  | 'single-column'
+  | 'lasso'
+  | 'magic-wand'
 
 export interface SelectionPoint {
   x: number
@@ -49,7 +55,7 @@ export type Matrix2D = [number, number, number, number, number, number]
 
 export interface PixelSelection {
   kind: 'pixels'
-  layerId: string
+  sourceLayerId?: string
   sourceWidth: number
   sourceHeight: number
   sourceToDocument: Matrix2D

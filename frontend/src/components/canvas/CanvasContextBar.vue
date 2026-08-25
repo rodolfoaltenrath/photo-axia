@@ -2,6 +2,7 @@
 import { formatZoom } from '../../editor/viewport'
 import type { RulerUnit } from '../../editor/guides'
 import type { SelectionMode } from '../../editor/selection'
+import type { SelectionCombineMode } from '../../editor/selectionCombine'
 import type { GradientType } from '../../editor/gradient'
 import type { DocumentSpec, EditorTool } from '../../types/editor'
 
@@ -27,6 +28,7 @@ defineProps<{
   rulerUnit: RulerUnit
   rulersVisible: boolean
   selectionMode: SelectionMode
+  selectionCombineMode: SelectionCombineMode
   visualZoom: number
   captureRotationOutput: (element: unknown) => void
 }>()
@@ -51,6 +53,7 @@ const emit = defineEmits<{
   (event: 'updateRulerUnit', unit: RulerUnit): void
   (event: 'updateRulersVisible', enabled: boolean): void
   (event: 'updateSelectionMode', mode: SelectionMode): void
+  (event: 'updateSelectionCombineMode', mode: SelectionCombineMode): void
   (event: 'zoomIn'): void
   (event: 'zoomOut'): void
 }>()
@@ -60,16 +63,57 @@ const emit = defineEmits<{
   <div class="context-bar">
     <span>{{ activeTool }}</span>
     <div v-if="activeTool === 'crop'" class="selection-options">
+      <div
+        v-if="selectionMode !== 'magic-wand'"
+        class="selection-combine-control"
+        role="group"
+        aria-label="Combinação da seleção"
+      >
+        <button
+          :aria-pressed="selectionCombineMode === 'replace'"
+          type="button"
+          title="Nova seleção"
+          aria-label="Nova seleção"
+          @click="emit('updateSelectionCombineMode', 'replace')"
+        ><span class="selection-combine-icon selection-combine-icon--replace"></span></button>
+        <button
+          :aria-pressed="selectionCombineMode === 'add'"
+          type="button"
+          title="Adicionar à seleção"
+          aria-label="Adicionar à seleção"
+          @click="emit('updateSelectionCombineMode', 'add')"
+        ><span class="selection-combine-icon selection-combine-icon--add">+</span></button>
+        <button
+          :aria-pressed="selectionCombineMode === 'subtract'"
+          type="button"
+          title="Subtrair da seleção"
+          aria-label="Subtrair da seleção"
+          @click="emit('updateSelectionCombineMode', 'subtract')"
+        ><span class="selection-combine-icon selection-combine-icon--subtract">−</span></button>
+        <button
+          :aria-pressed="selectionCombineMode === 'intersect'"
+          type="button"
+          title="Interseccionar com a seleção"
+          aria-label="Interseccionar com a seleção"
+          @click="emit('updateSelectionCombineMode', 'intersect')"
+        ><span class="selection-combine-icon selection-combine-icon--intersect"></span></button>
+      </div>
       <label>
         Modo
         <select
           :value="selectionMode"
           @change="emit('updateSelectionMode', ($event.target as HTMLSelectElement).value as SelectionMode)"
         >
-          <option value="rectangle">Retângulo</option>
-          <option value="ellipse">Elipse</option>
-          <option value="lasso">Laço livre</option>
-          <option value="magic-wand">Varinha mágica</option>
+          <optgroup label="Marquee">
+            <option value="rectangle">Retangular</option>
+            <option value="ellipse">Elíptica</option>
+            <option value="single-row">Linha única</option>
+            <option value="single-column">Coluna única</option>
+          </optgroup>
+          <optgroup label="Compatibilidade">
+            <option value="lasso">Laço livre</option>
+            <option value="magic-wand">Varinha mágica</option>
+          </optgroup>
         </select>
       </label>
       <label v-if="selectionMode === 'magic-wand'" class="selection-tolerance">

@@ -3,6 +3,7 @@ import type { GradientConfig, GradientGeometry, GradientType } from '../../edito
 import type { DocumentPoint, TransformHandle } from '../../editor/freeTransform'
 import type { EditorGuide, GuideOrientation, RulerOrigin, RulerUnit } from '../../editor/guides'
 import type { SelectionMode, SelectionPoint, SelectionRegion } from '../../editor/selection'
+import type { SelectionCombineMode } from '../../editor/selectionCombine'
 import type {
   DocumentSpec,
   EditorTool,
@@ -45,6 +46,7 @@ export interface CanvasViewportProps {
   paintBucketContiguous: boolean
   paintBucketTolerance: number
   selection: SelectionRegion | null
+  selectionCombineMode: SelectionCombineMode
   selectionMoveAnchor: SelectionMoveAnchor | null
   selectionMode: SelectionMode
   rulerOrigin: RulerOrigin
@@ -105,6 +107,7 @@ export interface CanvasViewportEmits {
   (event: 'update:rulerUnit', unit: RulerUnit): void
   (event: 'update:rulersVisible', enabled: boolean): void
   (event: 'update:selection', selection: SelectionRegion | null): void
+  (event: 'update:selectionCombineMode', mode: SelectionCombineMode): void
   (event: 'update:selectionMode', mode: SelectionMode): void
   (event: 'clearGuides'): void
 }
@@ -249,6 +252,8 @@ export interface SelectionInteraction {
   mode: Exclude<SelectionMode, 'magic-wand'>
   start: SelectionPoint
   points: SelectionPoint[]
+  parentSelection: SelectionRegion | null
+  combineMode: SelectionCombineMode
 }
 
 export interface BrushInteraction {

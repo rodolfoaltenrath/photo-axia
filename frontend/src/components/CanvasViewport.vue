@@ -136,6 +136,7 @@ const {
 
 const {
   cancelSelection,
+  cancelSelectionPointer,
   hasSelectionPointer,
   selectionDraft,
   startSelectionPointer,
@@ -148,6 +149,7 @@ const {
   document: () => props.document,
   scale: () => scale.value,
   selection: () => props.selection,
+  selectionCombineMode: () => props.selectionCombineMode,
   selectionMode: () => props.selectionMode,
   scrollArea,
   snapPoint: snapPointForInteraction,
@@ -654,8 +656,7 @@ function startViewportPointer(event: PointerEvent) {
   }
 
   if (props.activeTool === 'crop' && !isSpacePressed.value) {
-    const rawPoint = pointerToDocument(event)
-    const point = rawPoint ? snapPointForInteraction(rawPoint, event) : undefined
+    const point = pointerToDocument(event)
     if (point && startSelectionPointer(event, point)) return
   }
 
@@ -826,7 +827,8 @@ function stopPointer(event: PointerEvent) {
     flushColorSample()
     colorSamplePointer = undefined
   }
-  stopSelectionPointer(event.pointerId)
+  if (event.type === 'pointerup') stopSelectionPointer(event.pointerId)
+  else cancelSelectionPointer(event.pointerId)
   stopBrushPointer(event)
   stopGradientPointer(event)
   stopSelectionMovePointer(event)
@@ -893,6 +895,7 @@ defineExpose({
       :ruler-unit="rulerUnit"
       :rulers-visible="rulersVisible"
       :selection-mode="selectionMode"
+      :selection-combine-mode="selectionCombineMode"
       :visual-zoom="visualZoom"
       @cancel-transform="cancelFreeTransform"
       @clear-guides="emit('clearGuides')"
@@ -913,6 +916,7 @@ defineExpose({
       @update-ruler-unit="emit('update:rulerUnit', $event)"
       @update-rulers-visible="emit('update:rulersVisible', $event)"
       @update-selection-mode="emit('update:selectionMode', $event)"
+      @update-selection-combine-mode="emit('update:selectionCombineMode', $event)"
       @zoom-in="zoomIn"
       @zoom-out="zoomOut"
     />

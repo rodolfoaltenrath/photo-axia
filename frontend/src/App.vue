@@ -105,6 +105,12 @@ import {
   type SelectionRegion
 } from './editor/selection'
 import {
+  isMarqueeSelectionMode,
+  nextMarqueeSelectionMode,
+  type MarqueeSelectionMode
+} from './editor/marqueeSelection'
+import type { SelectionCombineMode } from './editor/selectionCombine'
+import {
   createMagicWandSelection,
   disposeSelectionEngine,
   eraseImageSelection,
@@ -173,6 +179,8 @@ const guideSnappingEnabled = ref(true)
 const rulerUnit = ref<RulerUnit>('px')
 const rulerOrigin = ref<RulerOrigin>({ x: 0, y: 0 })
 const selectionMode = ref<SelectionMode>('rectangle')
+const lastMarqueeMode = ref<MarqueeSelectionMode>('rectangle')
+const selectionCombineMode = ref<SelectionCombineMode>('replace')
 const magicWandTolerance = ref(32)
 const magicWandContiguous = ref(true)
 const paintBucketTolerance = ref(32)
@@ -2227,6 +2235,7 @@ async function selectWithMagicWand(point: SelectionPoint) {
 function setSelectionMode(mode: SelectionMode) {
   selectionGeneration++
   selectionMode.value = mode
+  if (isMarqueeSelectionMode(mode)) lastMarqueeMode.value = mode
 }
 
 function updateSelection(value: SelectionRegion | null) {
@@ -3393,6 +3402,16 @@ function handleShortcut(event: KeyboardEvent) {
 
   if (event.ctrlKey || event.metaKey || event.altKey) return
 
+  if (event.code === 'KeyM') {
+    event.preventDefault()
+    const current = isMarqueeSelectionMode(selectionMode.value)
+      ? selectionMode.value
+      : lastMarqueeMode.value
+    setSelectionMode(event.shiftKey ? nextMarqueeSelectionMode(current) : current)
+    activeTool.value = 'crop'
+    return
+  }
+
   const toolsByKey: Record<string, EditorTool> = {
     v: 'move',
     b: 'brush',
@@ -3552,7 +3571,9 @@ onBeforeUnmount(() => {
         v-model:active-tool="activeTool"
         v-model:background-color="backgroundColor"
         v-model:foreground-color="brushColor"
+        :selection-mode="selectionMode"
         @tool-double-click="handleToolDoubleClick"
+        @update-selection-mode="setSelectionMode"
       />
 
       <CanvasViewport
@@ -3579,6 +3600,7 @@ onBeforeUnmount(() => {
         :paint-bucket-contiguous="paintBucketContiguous"
         :paint-bucket-tolerance="paintBucketTolerance"
         :selection="selection"
+        :selection-combine-mode="selectionCombineMode"
         :selection-move-anchor="selectionMoveAnchor"
         :selection-mode="selectionMode"
         :ruler-origin="rulerOrigin"
@@ -3612,6 +3634,7 @@ onBeforeUnmount(() => {
         @update:rulers-visible="rulersVisible = $event"
         @clear-guides="clearGuides"
         @update:selection="updateSelection"
+        @update:selection-combine-mode="selectionCombineMode = $event"
         @update:selection-mode="setSelectionMode"
         @update-transform="updateLayerTransform"
         @update:auto-select-layer="autoSelectLayer = $event"

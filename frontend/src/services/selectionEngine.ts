@@ -170,7 +170,7 @@ export async function createMagicWandSelection(
   const result = await runWand(await response.blob(), sourcePoint.x, sourcePoint.y, tolerance, contiguous)
   return {
     kind: 'pixels',
-    layerId,
+    sourceLayerId: layerId,
     sourceWidth: asset.width,
     sourceHeight: asset.height,
     sourceToDocument,

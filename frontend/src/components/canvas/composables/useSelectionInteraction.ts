@@ -4,7 +4,6 @@ import {
   clampSelectionToBounds,
   constrainedSelectionEndpoint,
   createLassoSelection,
-  createShapeSelection,
   pointsBounds,
   selectionIsEmpty,
   snapShapeSelectionToBounds,
@@ -12,6 +11,15 @@ import {
   type SelectionPoint,
   type SelectionRegion
 } from '../../../editor/selection'
+import {
+  createMarqueeSelection,
+  isMarqueeSelectionMode
+} from '../../../editor/marqueeSelection'
+import {
+  combineSelections,
+  resolveSelectionCombineMode,
+  type SelectionCombineMode
+} from '../../../editor/selectionCombine'
 import type { LayerTransform } from '../../../types/editor'
 import type { SelectionInteraction } from '../canvas.types'
 
@@ -21,6 +29,7 @@ interface SelectionInteractionOptions {
   document: () => { width: number; height: number }
   scale: () => number
   selection: () => SelectionRegion | null
+  selectionCombineMode: () => SelectionCombineMode
   selectionMode: () => SelectionMode
   scrollArea: Ref<HTMLDivElement | null>
   snapPoint: (point: DocumentPoint, event: PointerEvent) => DocumentPoint
@@ -33,9 +42,13 @@ interface SelectionInteractionOptions {
 export function useSelectionInteraction(options: SelectionInteractionOptions) {
   const selectionDraft = shallowRef<SelectionRegion | null>(null)
   const selectionInteraction = ref<SelectionInteraction | null>(null)
-  const visibleSelection = computed(() => selectionDraft.value ?? options.selection())
+  const visibleSelection = computed(() => selectionInteraction.value ? selectionDraft.value : options.selection())
 
-  function selectionBounds() {
+  function selectionBounds(mode: SelectionInteraction['mode']) {
+    if (isMarqueeSelectionMode(mode)) {
+      const document = options.document()
+      return { x: 0, y: 0, width: document.width, height: document.height }
+    }
     const transform = options.activeLayerTransform()
     if (!transform) {
       const document = options.document()
@@ -44,27 +57,46 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
     return { x: transform.x, y: transform.y, width: transform.width, height: transform.height }
   }
 
-  function startSelectionPointer(event: PointerEvent, point: SelectionPoint) {
+  function combinedDraft(
+    parentSelection: SelectionRegion | null,
+    incoming: SelectionRegion | null,
+    mode: SelectionCombineMode
+  ) {
+    return combineSelections(parentSelection, incoming, mode, options.document())
+  }
+
+  function startSelectionPointer(event: PointerEvent, rawPoint: SelectionPoint) {
     const scroll = options.scrollArea.value
     if (!scroll || event.button !== 0) return false
+    const document = options.document()
+    if (rawPoint.x < 0 || rawPoint.y < 0 || rawPoint.x >= document.width || rawPoint.y >= document.height) return false
     event.preventDefault()
     event.stopPropagation()
     const mode = options.selectionMode()
     if (mode === 'magic-wand') {
-      options.magicWandSelect(point)
+      options.magicWandSelect(rawPoint)
       return true
     }
+
+    const point = mode === 'rectangle' || mode === 'ellipse'
+      ? options.snapPoint(rawPoint, event)
+      : rawPoint
+    const parentSelection = options.selection()
+    const combineMode = resolveSelectionCombineMode(options.selectionCombineMode(), event)
 
     scroll.setPointerCapture(event.pointerId)
     selectionInteraction.value = {
       pointerId: event.pointerId,
       mode,
       start: point,
-      points: [point]
+      points: [point],
+      parentSelection,
+      combineMode
     }
-    selectionDraft.value = mode === 'lasso'
+    const incoming: SelectionRegion | null = mode === 'lasso'
       ? { kind: 'lasso', points: [point], bounds: { x: point.x, y: point.y, width: 0, height: 0 } }
-      : createShapeSelection(mode, point, point)
+      : createMarqueeSelection(mode, point, point, options.document())
+    selectionDraft.value = combinedDraft(parentSelection, incoming, combineMode)
     return true
   }
 
@@ -72,7 +104,9 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
     const interaction = selectionInteraction.value
     if (interaction?.pointerId !== event.pointerId) return false
     event.preventDefault()
-    const point = interaction.mode === 'lasso' ? rawPoint : options.snapPoint(rawPoint, event)
+    const point = interaction.mode === 'rectangle' || interaction.mode === 'ellipse'
+      ? options.snapPoint(rawPoint, event)
+      : rawPoint
     if (interaction.mode === 'lasso') {
       const previous = interaction.points.at(-1)!
       const minimumDistance = Math.max(0.25, 1.5 / options.scale())
@@ -81,7 +115,11 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
       const points = interaction.points.slice()
       options.scheduleInteractionFrame(() => {
         if (selectionInteraction.value?.pointerId !== event.pointerId) return
-        selectionDraft.value = { kind: 'lasso', points, bounds: pointsBounds(points) }
+        selectionDraft.value = combinedDraft(
+          interaction.parentSelection,
+          { kind: 'lasso', points, bounds: pointsBounds(points) },
+          interaction.combineMode
+        )
       })
     } else {
       const endpoint = event.shiftKey
@@ -94,10 +132,16 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
             Number.NEGATIVE_INFINITY
           )
         : point
-      const selection = createShapeSelection(interaction.mode, interaction.start, endpoint, event.shiftKey)
+      const selection = createMarqueeSelection(
+        interaction.mode,
+        interaction.start,
+        endpoint,
+        options.document(),
+        event.shiftKey
+      )
       options.scheduleInteractionFrame(() => {
         if (selectionInteraction.value?.pointerId !== event.pointerId) return
-        selectionDraft.value = selection
+        selectionDraft.value = combinedDraft(interaction.parentSelection, selection, interaction.combineMode)
       })
     }
     return true
@@ -110,13 +154,18 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
   function stopSelectionPointer(pointerId: number) {
     if (selectionInteraction.value?.pointerId !== pointerId) return false
     let completed = selectionDraft.value
-    if (completed?.kind === 'lasso') {
-      completed = createLassoSelection(completed.points, Math.max(0.2, 0.75 / options.scale()))
+    const interaction = selectionInteraction.value
+    if (interaction.mode === 'lasso') {
+      const lasso = createLassoSelection(interaction.points, Math.max(0.2, 0.75 / options.scale()))
+      const clamped = clampSelectionToBounds(lasso, selectionBounds(interaction.mode))
+      completed = combinedDraft(interaction.parentSelection, clamped, interaction.combineMode)
     }
     if (completed) {
-      const bounds = selectionBounds()
+      const bounds = selectionBounds(interaction.mode)
       completed = clampSelectionToBounds(completed, bounds)
-      completed = snapShapeSelectionToBounds(completed, bounds, 6 / Math.max(options.scale(), 0.01))
+      if (interaction.mode === 'rectangle' || interaction.mode === 'ellipse') {
+        completed = snapShapeSelectionToBounds(completed, bounds, 6 / Math.max(options.scale(), 0.01))
+      }
     }
     options.updateSelection(completed && !selectionIsEmpty(completed) ? completed : null)
     selectionInteraction.value = null
@@ -127,9 +176,10 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
   function cancelSelection() {
     if (!selectionInteraction.value && !options.selection()) return false
     options.discardInteractionFrame()
+    const wasCreating = Boolean(selectionInteraction.value)
     selectionInteraction.value = null
     selectionDraft.value = null
-    options.updateSelection(null)
+    if (!wasCreating) options.updateSelection(null)
     return true
   }
 
@@ -140,12 +190,19 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
     selectionDraft.value = null
   }
 
+  function cancelSelectionPointer(pointerId: number) {
+    if (selectionInteraction.value?.pointerId !== pointerId) return false
+    cancelCreation()
+    return true
+  }
+
   watch(options.activeTool, (tool) => {
     if (tool !== 'crop') cancelCreation()
   })
 
   return {
     cancelSelection,
+    cancelSelectionPointer,
     hasSelectionPointer,
     selectionDraft,
     startSelectionPointer,

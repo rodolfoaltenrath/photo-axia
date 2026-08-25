@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import type { EditorTool } from '../types/editor'
+import {
+  isMarqueeSelectionMode,
+  type MarqueeSelectionMode
+} from '../editor/marqueeSelection'
+import type { SelectionMode } from '../editor/selection'
 import brushIcon from '../assets/icons/brush.svg'
-import cropIcon from '../assets/icons/crop.svg'
 import eraserIcon from '../assets/icons/eraser.svg'
 import eyedropperIcon from '../assets/icons/eyedropper.svg'
 import gradientIcon from '../assets/icons/gradient.svg'
@@ -11,12 +15,18 @@ import handIcon from '../assets/icons/hand.svg'
 import moveIcon from '../assets/icons/move.svg'
 import textIcon from '../assets/icons/text.svg'
 import zoomIcon from '../assets/icons/zoom.svg'
+import marqueeRectangleIcon from '../assets/icons/marquee-rectangle.svg'
+import marqueeEllipseIcon from '../assets/icons/marquee-ellipse.svg'
+import marqueeRowIcon from '../assets/icons/marquee-row.svg'
+import marqueeColumnIcon from '../assets/icons/marquee-column.svg'
 
+const props = defineProps<{ selectionMode: SelectionMode }>()
 const activeTool = defineModel<EditorTool>('activeTool', { required: true })
 const foregroundColor = defineModel<string>('foregroundColor', { required: true })
 const backgroundColor = defineModel<string>('backgroundColor', { required: true })
 const emit = defineEmits<{
   (event: 'toolDoubleClick', tool: EditorTool): void
+  (event: 'updateSelectionMode', mode: SelectionMode): void
 }>()
 
 type ToolDefinition = { id: EditorTool; icon: string; label: string; enabled: boolean }
@@ -32,17 +42,30 @@ const colorTools: ToolDefinition[] = [
   { id: 'paint-bucket', icon: paintBucketIcon, label: 'Balde de Tinta (Shift+G)', enabled: true }
 ]
 
-const toolsAfterColorGroup: ToolDefinition[] = [
+const toolsBeforeMarqueeGroup: ToolDefinition[] = [
   { id: 'eyedropper', icon: eyedropperIcon, label: 'Conta-gotas (I)', enabled: true },
-  { id: 'crop', icon: cropIcon, label: 'Recorte e seleção (C)', enabled: true },
+]
+
+const toolsAfterMarqueeGroup: ToolDefinition[] = [
   { id: 'text', icon: textIcon, label: 'Texto (T)', enabled: true },
   { id: 'hand', icon: handIcon, label: 'Mão (H)', enabled: true },
   { id: 'zoom', icon: zoomIcon, label: 'Zoom (Z)', enabled: true }
 ]
 
+const marqueeTools: Array<{ mode: MarqueeSelectionMode; icon: string; label: string }> = [
+  { mode: 'rectangle', icon: marqueeRectangleIcon, label: 'Seleção Retangular (M)' },
+  { mode: 'ellipse', icon: marqueeEllipseIcon, label: 'Seleção Elíptica (Shift+M)' },
+  { mode: 'single-row', icon: marqueeRowIcon, label: 'Seleção de Linha Única (Shift+M)' },
+  { mode: 'single-column', icon: marqueeColumnIcon, label: 'Seleção de Coluna Única (Shift+M)' }
+]
+
 const rememberedColorTool = ref<'gradient' | 'paint-bucket'>('gradient')
+const rememberedMarqueeMode = ref<MarqueeSelectionMode>('rectangle')
 watch(activeTool, (tool) => {
   if (tool === 'gradient' || tool === 'paint-bucket') rememberedColorTool.value = tool
+}, { immediate: true })
+watch(() => props.selectionMode, (mode) => {
+  if (isMarqueeSelectionMode(mode)) rememberedMarqueeMode.value = mode
 }, { immediate: true })
 
 function selectColorTool(tool: 'gradient' | 'paint-bucket', event?: Event) {
@@ -50,6 +73,18 @@ function selectColorTool(tool: 'gradient' | 'paint-bucket', event?: Event) {
   activeTool.value = tool
   const details = (event?.currentTarget as HTMLElement | null)?.closest('details')
   if (details) details.open = false
+}
+
+function selectMarqueeTool(mode: MarqueeSelectionMode, event?: Event) {
+  rememberedMarqueeMode.value = mode
+  emit('updateSelectionMode', mode)
+  activeTool.value = 'crop'
+  const details = (event?.currentTarget as HTMLElement | null)?.closest('details')
+  if (details) details.open = false
+}
+
+function marqueeTool(mode: MarqueeSelectionMode) {
+  return marqueeTools.find((tool) => tool.mode === mode)!
 }
 
 function swapColors() {
@@ -110,7 +145,50 @@ function resetColors() {
     </div>
 
     <button
-      v-for="tool in toolsAfterColorGroup"
+      v-for="tool in toolsBeforeMarqueeGroup"
+      :key="tool.id"
+      :aria-label="tool.label"
+      :aria-pressed="activeTool === tool.id"
+      :disabled="!tool.enabled"
+      :title="tool.label"
+      type="button"
+      @click="activeTool = tool.id"
+      @dblclick="emit('toolDoubleClick', tool.id)"
+    >
+      <img alt="" :src="tool.icon" />
+    </button>
+
+    <div class="toolbar-tool-group" :class="{ active: activeTool === 'crop' && isMarqueeSelectionMode(selectionMode) }">
+      <button
+        :aria-label="marqueeTool(rememberedMarqueeMode).label"
+        :aria-pressed="activeTool === 'crop' && isMarqueeSelectionMode(selectionMode)"
+        :title="marqueeTool(rememberedMarqueeMode).label"
+        type="button"
+        @click="selectMarqueeTool(rememberedMarqueeMode)"
+      >
+        <img alt="" :src="marqueeTool(rememberedMarqueeMode).icon" />
+      </button>
+      <details>
+        <summary aria-label="Mostrar ferramentas de seleção Marquee" title="Mostrar ferramentas do grupo M">▸</summary>
+        <div class="toolbar-tool-flyout" role="menu" aria-label="Ferramentas do grupo M">
+          <button
+            v-for="tool in marqueeTools"
+            :key="tool.mode"
+            :aria-pressed="activeTool === 'crop' && selectionMode === tool.mode"
+            :title="tool.label"
+            type="button"
+            role="menuitem"
+            @click="selectMarqueeTool(tool.mode, $event)"
+          >
+            <img alt="" :src="tool.icon" />
+            <span>{{ tool.label }}</span>
+          </button>
+        </div>
+      </details>
+    </div>
+
+    <button
+      v-for="tool in toolsAfterMarqueeGroup"
       :key="tool.id"
       :aria-label="tool.label"
       :aria-pressed="activeTool === tool.id"
