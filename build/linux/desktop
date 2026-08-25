@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Axia
+Comment=Editor de imagens desktop
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/axia %u
+Terminal=false
+Type=Application
+Icon=axia
+Categories=Utility;
+StartupWMClass=axia
+
+ 

@@ -14,8 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -80,13 +78,11 @@ func axiaFilename(name string) string {
 func (a *App) PrepareAxiaProjectSave(suggestedName string, currentPath string, saveAs bool) (ProjectSaveTarget, error) {
 	path := strings.TrimSpace(currentPath)
 	if saveAs || path == "" {
-		selected, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-			Title:           "Salvar projeto Axia",
-			DefaultFilename: axiaFilename(suggestedName),
-			Filters: []runtime.FileFilter{
-				{DisplayName: "Projeto Axia", Pattern: "*.axia"},
-			},
-		})
+		dialog, err := a.newSaveFileDialog("Salvar projeto Axia", axiaFilename(suggestedName), "Projeto Axia", "*.axia")
+		if err != nil {
+			return ProjectSaveTarget{}, err
+		}
+		selected, err := dialog.PromptForSingleSelection()
 		if err != nil {
 			return ProjectSaveTarget{}, err
 		}
@@ -110,12 +106,16 @@ func (a *App) PrepareAxiaProjectSave(suggestedName string, currentPath string, s
 }
 
 func (a *App) OpenAxiaProject() (OpenedAxiaProject, error) {
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Abrir projeto Axia",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Projeto Axia", Pattern: "*.axia"},
-		},
-	})
+	if a.desktop == nil {
+		return OpenedAxiaProject{}, fmt.Errorf("aplicativo desktop indisponivel")
+	}
+	dialog := a.desktop.Dialog.OpenFile().
+		SetTitle("Abrir projeto Axia").
+		AddFilter("Projeto Axia", "*.axia")
+	if a.mainWindow != nil {
+		dialog.AttachToWindow(a.mainWindow)
+	}
+	path, err := dialog.PromptForSingleSelection()
 	if err != nil || path == "" {
 		return OpenedAxiaProject{}, err
 	}

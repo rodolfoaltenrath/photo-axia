@@ -1,0 +1,44 @@
+version: '3'
+
+info:
+  companyName: rodolfoaltenrath
+  productName: Axia
+  productIdentifier: io.github.rodolfoaltenrath.photo-axia
+  description: Editor de imagens desktop
+  copyright: Copyright 2026 rodolfoaltenrath
+  comments: Editor raster por camadas para Windows e Linux
+  version: 0.1.0
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 500
+  ignore:
+    dir:
+      - .git
+      - .toolchains
+      - node_modules
+      - frontend
+      - bin
+      - build/bin
+    file:
+      - .DS_Store
+      - .gitignore
+      - '*_test.go'
+    watched_extension:
+      - '*.go'
+    git_ignore: true
+  executes:
+    - cmd: wails3 task build DEV=true
+      type: blocking
+    - cmd: wails3 task frontend:dev VITE_PORT=${WAILS_VITE_PORT}
+      type: background
+    - cmd: wails3 task run
+      type: primary
+
+fileAssociations:
+  - ext: axia
+    name: Projeto Axia
+    description: Projeto editável do Axia
+    iconName: icon
+    role: Editor

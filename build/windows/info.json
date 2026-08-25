@@ -1,15 +1,15 @@
 {
 	"fixed": {
-		"file_version": "{{.Info.ProductVersion}}"
+		"file_version": "0.1.0"
 	},
 	"info": {
 		"0000": {
-			"ProductVersion": "{{.Info.ProductVersion}}",
-			"CompanyName": "{{.Info.CompanyName}}",
-			"FileDescription": "{{.Info.ProductName}}",
-			"LegalCopyright": "{{.Info.Copyright}}",
-			"ProductName": "{{.Info.ProductName}}",
-			"Comments": "{{.Info.Comments}}"
+			"ProductVersion": "0.1.0",
+			"CompanyName": "rodolfoaltenrath",
+			"FileDescription": "Editor de imagens desktop",
+			"LegalCopyright": "Copyright 2026 rodolfoaltenrath",
+			"ProductName": "Axia",
+			"Comments": "Editor raster por camadas para Windows e Linux"
 		}
 	}
 }

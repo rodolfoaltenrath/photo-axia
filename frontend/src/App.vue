@@ -3102,7 +3102,10 @@ async function openProject(recentPath = '') {
       return
     }
     openedSessionID = opened.sessionId
-    const restored = restoreAxiaProject(opened.manifest, opened.assetUrls)
+    const assetUrls = Object.fromEntries(
+      Object.entries(opened.assetUrls ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    )
+    const restored = restoreAxiaProject(opened.manifest, assetUrls)
     clearSmartLayerRenderCache()
     const smartLayers = restored.layers.filter((layer) => layer.kind === 'smart')
     for (const [index, layer] of smartLayers.entries()) {
@@ -3502,7 +3505,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="app-shell" :class="{ 'app-shell--busy': isBusy }">
+  <main class="app-shell" :class="{ 'app-shell--busy': isBusy }" data-file-drop-target>
     <ProjectHome
       v-if="appScreen === 'home'"
       :inert="modalOpen || undefined"

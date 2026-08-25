@@ -1,0 +1,130 @@
+version: '3'
+
+vars:
+  APP_NAME: axia
+  BIN_DIR: bin
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 34115}}'
+
+tasks:
+  go:mod:tidy:
+    internal: true
+    run: once
+    cmds:
+      - go mod tidy
+
+  frontend:install:
+    internal: true
+    run: once
+    dir: frontend
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/**/*
+    cmds:
+      - npm install
+
+  bindings:
+    summary: Gera bindings TypeScript tipados para os serviços Go
+    run: once
+    deps:
+      - go:mod:tidy
+    sources:
+      - '*.go'
+      - go.mod
+      - go.sum
+    generates:
+      - frontend/bindings/**/*
+    cmds:
+      - wails3 generate bindings -clean=true -ts -i
+
+  frontend:build:
+    internal: true
+    run: once
+    deps:
+      - frontend:install
+      - bindings
+    dir: frontend
+    sources:
+      - src/**/*
+      - index.html
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - tsconfig.node.json
+      - vite.config.ts
+      - bindings/**/*
+    generates:
+      - dist/**/*
+    cmds:
+      - npm run {{if eq .DEV "true"}}build:dev{{else}}build{{end}}
+
+  frontend:dev:
+    internal: true
+    deps:
+      - frontend:install
+    dir: frontend
+    cmds:
+      - npm run dev -- --port {{.VITE_PORT}} --strictPort
+
+  windows:resources:
+    internal: true
+    platforms: [windows]
+    dir: build
+    sources:
+      - config.yml
+      - windows/icon.ico
+      - windows/info.json
+      - windows/wails.exe.manifest
+    generates:
+      - ../wails_windows_{{ARCH}}.syso
+    cmds:
+      - wails3 generate syso -arch {{ARCH}} -icon windows/icon.ico -manifest windows/wails.exe.manifest -info windows/info.json -out ../wails_windows_{{ARCH}}.syso
+
+  build:
+    summary: Compila o Axia para o sistema operacional atual
+    deps:
+      - windows:resources
+      - task: frontend:build
+        vars:
+          DEV: '{{.DEV}}'
+    cmds:
+      - >-
+        go build
+        {{if eq .DEV "true"}}{{if .EXTRA_TAGS}}-tags {{.EXTRA_TAGS}} {{end}}-buildvcs=false -gcflags=all=-l{{else}}-tags production{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false -ldflags="-s -w{{if eq OS "windows"}} -H windowsgui{{end}}"{{end}}
+        -o "{{.BIN_DIR}}/{{.APP_NAME}}{{exeExt}}" .
+
+  package:
+    summary: Gera o instalador NSIS no Windows
+    platforms: [windows]
+    deps:
+      - build
+    dir: build/windows/nsis
+    cmds:
+      - wails3 generate webview2bootstrapper -dir .
+      - makensis -DARG_WAILS_AMD64_BINARY="{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}.exe" project.nsi
+
+  run:
+    summary: Executa o binário compilado
+    cmds:
+      - '"{{.BIN_DIR}}/{{.APP_NAME}}{{exeExt}}"'
+
+  dev:
+    summary: Executa backend Wails e Vite com hot reload
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  test:
+    summary: Executa testes Go e frontend
+    deps:
+      - frontend:install
+    cmds:
+      - go test ./...
+      - task: bindings
+      - task: frontend:test
+
+  frontend:test:
+    internal: true
+    dir: frontend
+    cmds:
+      - npm test

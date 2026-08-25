@@ -17,8 +17,8 @@ import {
   RemoveRecentProject,
   SetDocumentDirty,
   SelectImageFiles
-} from '../../wailsjs/go/main/App'
-import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime'
+} from '../../bindings/axia/app'
+import { Events } from '@wailsio/runtime'
 import type { DocumentSpec, ImportedImage, NewDocumentSettings, RecentProject } from '../types/editor'
 import { EXPORT_FORMAT_CAPABILITIES, exportFilename, type ExportFormat } from '../editor/exportSettings'
 import { DEFAULT_LAYER_STYLE_GLOBAL_LIGHT, normalizeLayerStyleGlobalLight } from '../editor/layerStyles'
@@ -30,7 +30,7 @@ interface EditorStatus {
 }
 
 export function hasDesktopBackend() {
-  return Boolean((window as typeof window & { go?: unknown }).go)
+  return Boolean((window as typeof window & { _wails?: unknown })._wails)
 }
 
 export async function getEditorStatus(): Promise<EditorStatus> {
@@ -96,13 +96,12 @@ export function registerNativeFileDrop(
 ): () => void {
   if (!hasDesktopBackend()) return () => {}
 
-  OnFileDrop(async (_x, _y, paths) => {
+  return Events.On('axia:files-dropped', async (event) => {
+    const paths = event.data ?? []
     if (!paths.length) return
     const result = await ImportDroppedFiles(paths)
-    onDrop(result.images as ImportedImage[], result.errors)
-  }, true)
-
-  return () => OnFileDropOff()
+    onDrop((result.images ?? []) as ImportedImage[], result.errors ?? [])
+  })
 }
 
 export async function applyPreviewFilter(filterName: string) {

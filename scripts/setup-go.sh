@@ -2,8 +2,8 @@
 set -eu
 
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-GO_VERSION="${GO_VERSION:-1.23.12}"
-WAILS_VERSION="${WAILS_VERSION:-v2.12.0}"
+GO_VERSION="${GO_VERSION:-1.26.5}"
+WAILS_VERSION="${WAILS_VERSION:-v3.0.0-beta.12}"
 TOOLCHAIN_DIR="${PROJECT_DIR}/.toolchains"
 
 case "$(uname -m)" in
@@ -14,7 +14,7 @@ esac
 
 GO_DIR="${TOOLCHAIN_DIR}/go${GO_VERSION}"
 GO_BIN="${GO_DIR}/bin"
-WAILS_BIN="${TOOLCHAIN_DIR}/bin/wails"
+WAILS_BIN="${TOOLCHAIN_DIR}/bin/wails3"
 
 if [ ! -x "${GO_BIN}/go" ]; then
   if [ -e "${GO_DIR}" ]; then
@@ -34,9 +34,9 @@ if [ ! -x "${GO_BIN}/go" ]; then
 fi
 
 mkdir -p "${TOOLCHAIN_DIR}/bin"
-if [ ! -x "${WAILS_BIN}" ]; then
+if [ ! -x "${WAILS_BIN}" ] || [ "$("${WAILS_BIN}" version 2>/dev/null || true)" != "${WAILS_VERSION}" ]; then
   echo "Instalando Wails ${WAILS_VERSION}..."
-  GOBIN="${TOOLCHAIN_DIR}/bin" "${GO_BIN}/go" install "github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}"
+  GOBIN="${TOOLCHAIN_DIR}/bin" "${GO_BIN}/go" install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}"
 fi
 
 "${GO_BIN}/go" version

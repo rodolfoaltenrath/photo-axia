@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -16,25 +15,6 @@ import (
 	"testing"
 	"time"
 )
-
-func TestPreventCloseAfterDialogAcceptsNativeAndCustomConfirmations(t *testing.T) {
-	for _, answer := range []string{"Yes", "sim", "Sair sem salvar", "  YES  "} {
-		if preventCloseAfterDialog(answer, nil) {
-			t.Fatalf("expected %q to allow closing", answer)
-		}
-	}
-}
-
-func TestPreventCloseAfterDialogKeepsDocumentOnCancelOrError(t *testing.T) {
-	for _, answer := range []string{"", "No", "Cancel", "Cancelar"} {
-		if !preventCloseAfterDialog(answer, nil) {
-			t.Fatalf("expected %q to prevent closing", answer)
-		}
-	}
-	if !preventCloseAfterDialog("Yes", errors.New("dialog failed")) {
-		t.Fatal("a dialog error must preserve the document")
-	}
-}
 
 func TestCreateDocumentValidatesNativeBoundary(t *testing.T) {
 	app := NewApp()

@@ -25,7 +25,7 @@ modules:
         GOFLAGS: -mod=vendor
         GOTOOLCHAIN: local
     build-commands:
-      - go build -trimpath -tags desktop,production,webkit2_41 -ldflags="-s -w" -o /app/bin/axia .
+      - go build -trimpath -tags production -ldflags="-s -w" -o /app/bin/axia .
       - install -Dm644 packaging/flatpak/io.github.rodolfoaltenrath.photo-axia.desktop /app/share/applications/io.github.rodolfoaltenrath.photo-axia.desktop
       - install -Dm644 packaging/flatpak/io.github.rodolfoaltenrath.photo-axia.metainfo.xml /app/share/metainfo/io.github.rodolfoaltenrath.photo-axia.metainfo.xml
       - install -Dm644 packaging/flatpak/io.github.rodolfoaltenrath.photo-axia.png /app/share/icons/hicolor/512x512/apps/io.github.rodolfoaltenrath.photo-axia.png

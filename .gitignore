@@ -5,6 +5,9 @@
 
 # Saidas de build
 /build/bin/
+/build/ios/
+/bin/
+*.syso
 /frontend/dist/*
 !/frontend/dist/.gitkeep
 /vendor/
@@ -13,6 +16,7 @@
 /repo/
 /dist/
 /.wails/
+/.task/
 /.vite/
 
 # Testes, cobertura e profiling

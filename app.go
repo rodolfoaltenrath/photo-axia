@@ -21,12 +21,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"golang.org/x/image/draw"
 )
 
 type App struct {
 	ctx                   context.Context
+	desktop               *application.App
+	mainWindow            application.Window
 	assetsMu              sync.RWMutex
 	imagePaths            map[string]string
 	projectMu             sync.Mutex
@@ -170,8 +172,33 @@ func NewApp() *App {
 	}
 }
 
-func (a *App) startup(ctx context.Context) {
+func (a *App) configureDesktop(desktop *application.App, window application.Window) {
+	a.desktop = desktop
+	a.mainWindow = window
+}
+
+func (a *App) newSaveFileDialog(title, filename, filterName, pattern string) (*application.SaveFileDialogStruct, error) {
+	if a.desktop == nil {
+		return nil, fmt.Errorf("aplicativo desktop indisponivel")
+	}
+	return a.desktop.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:    title,
+		Filename: filename,
+		Filters: []application.FileFilter{
+			{DisplayName: filterName, Pattern: pattern},
+		},
+		Window: a.mainWindow,
+	}), nil
+}
+
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
+	return nil
+}
+
+func (a *App) ServiceShutdown() error {
+	a.shutdown(nil)
+	return nil
 }
 
 func (a *App) shutdown(context.Context) {
@@ -191,40 +218,36 @@ func (a *App) SetDocumentDirty(dirty bool) {
 	a.documentDirty.Store(dirty)
 }
 
-func preventCloseAfterDialog(result string, err error) bool {
-	if err != nil {
-		return true
-	}
-	// O backend GTK do Wails 2 usa botões nativos Yes/No e ignora os textos
-	// personalizados; Windows e macOS devolvem o rótulo configurado.
-	answer := strings.ToLower(strings.TrimSpace(result))
-	switch answer {
-	case "yes", "sim", "sair sem salvar":
-		return false
-	default:
-		return true
-	}
-}
-
-func (a *App) beforeClose(ctx context.Context) bool {
+func (a *App) handleWindowClosing(event *application.WindowEvent) {
 	if !a.documentDirty.Load() {
-		return false
+		return
 	}
-	result, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
-		Type:          runtime.QuestionDialog,
-		Title:         "Alterações não salvas",
-		Message:       "O projeto possui alterações não salvas. Deseja sair mesmo assim?",
-		Buttons:       []string{"Sair sem salvar", "Cancelar"},
-		DefaultButton: "Cancelar",
-		CancelButton:  "Cancelar",
+
+	// WindowClosing is cancelable in v3. Cancel first so a missing native
+	// dialog can never discard an edited document.
+	event.Cancel()
+	if a.desktop == nil || a.mainWindow == nil {
+		return
+	}
+
+	confirmed := false
+	dialog := a.desktop.Dialog.Question().
+		SetTitle("Alterações não salvas").
+		SetMessage("O projeto possui alterações não salvas. Deseja sair mesmo assim?").
+		AttachToWindow(a.mainWindow)
+	dialog.AddButton("Sair sem salvar").OnClick(func() {
+		confirmed = true
 	})
-	if preventCloseAfterDialog(result, err) {
-		return true
+	cancelButton := dialog.AddButton("Cancelar")
+	dialog.SetDefaultButton(cancelButton)
+	dialog.SetCancelButton(cancelButton)
+	dialog.Show()
+
+	if confirmed {
+		// Prevent a second confirmation when Close emits WindowClosing again.
+		a.documentDirty.Store(false)
+		a.mainWindow.Close()
 	}
-	// Evita uma segunda confirmação caso o backend nativo gere outro evento de
-	// fechamento enquanto a janela está encerrando.
-	a.documentDirty.Store(false)
-	return false
 }
 
 func (a *App) GetEditorStatus() EditorStatus {
@@ -288,15 +311,16 @@ func (a *App) ApplyPreviewFilter(filterName string) string {
 }
 
 func (a *App) SelectImageFiles() ([]ImportedImage, error) {
-	paths, err := runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Importar imagens",
-		Filters: []runtime.FileFilter{
-			{
-				DisplayName: "Imagens",
-				Pattern:     "*.png;*.jpg;*.jpeg;*.gif",
-			},
-		},
-	})
+	if a.desktop == nil {
+		return nil, fmt.Errorf("aplicativo desktop indisponivel")
+	}
+	dialog := a.desktop.Dialog.OpenFile().
+		SetTitle("Importar imagens").
+		AddFilter("Imagens", "*.png;*.jpg;*.jpeg;*.gif")
+	if a.mainWindow != nil {
+		dialog.AttachToWindow(a.mainWindow)
+	}
+	paths, err := dialog.PromptForMultipleSelection()
 	if err != nil {
 		return nil, err
 	}
@@ -377,13 +401,11 @@ func (a *App) SaveExportedImage(suggestedName string, dataURL string, mimeType s
 		return "", fmt.Errorf("conteudo exportado nao corresponde ao formato solicitado")
 	}
 
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           format.title,
-		DefaultFilename: suggestedName,
-		Filters: []runtime.FileFilter{
-			{DisplayName: format.filter, Pattern: "*" + format.extension},
-		},
-	})
+	dialog, err := a.newSaveFileDialog(format.title, suggestedName, format.filter, "*"+format.extension)
+	if err != nil {
+		return "", err
+	}
+	path, err := dialog.PromptForSingleSelection()
 	if err != nil {
 		return "", err
 	}

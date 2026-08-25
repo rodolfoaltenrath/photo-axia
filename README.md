@@ -183,40 +183,41 @@ No macOS, use `Command` no lugar de `Ctrl` nos atalhos correspondentes.
 
 Requisitos para um ambiente novo:
 
-- Go 1.23 ou superior.
+- Go 1.26.5.
 - Node.js 24 ou superior.
-- Wails 2.12.
+- Wails 3.0.0-beta.12.
 - Microsoft Edge WebView2 Runtime.
 
 Instale as dependências e execute em desenvolvimento:
 
 ```powershell
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.12
 Set-Location frontend
 npm install
 Set-Location ..
-wails dev
+wails3 dev -config ./build/config.yml
 ```
 
 Gerar e executar a build de produção:
 
 ```powershell
-wails build
-Get-Process axia -ErrorAction SilentlyContinue | Stop-Process
-.\build\bin\axia.exe
+wails3 build
+.\bin\axia.exe
 ```
 
 Se o checkout já possuir as toolchains locais usadas neste ambiente:
 
 ```powershell
-$env:Path = "$PWD\.toolchains\go1.23.12\bin;$PWD\.toolchains\bin;C:\Program Files\nodejs;$env:Path"
-.\.toolchains\bin\wails.exe build
-.\build\bin\axia.exe
+$env:Path = "$PWD\.toolchains\go1.23.12\bin;$PWD\.toolchains\bin;$PWD\.toolchains\node-v24.14.1-win-x64;$env:Path"
+$env:GOTOOLCHAIN = "go1.26.5"
+.\.toolchains\bin\wails3.exe build
+.\bin\axia.exe
 ```
 
 ## Executar no Fedora
 
-O instalador configura as bibliotecas nativas, Go 1.23.12, Wails 2.12 e Node.js 24 localmente para o projeto:
+O instalador configura as bibliotecas nativas GTK4/WebKitGTK 6.0, Go 1.26.5,
+Wails 3.0.0-beta.12 e Node.js 24 localmente para o projeto:
 
 ```sh
 ./scripts/setup-fedora.sh
@@ -286,12 +287,14 @@ npm run build
 - `frontend/src/services`: integração com workers, imagens, projetos e backend.
 - `frontend/src/workers`: processamento raster fora da thread principal.
 - `frontend/tests`: testes automatizados do motor frontend.
-- `frontend/wailsjs`: bindings TypeScript gerados pelo Wails.
+- `frontend/bindings`: bindings TypeScript tipados gerados pelo Wails v3.
+- `Taskfile.yml`: tarefas de desenvolvimento, bindings, testes e build.
+- `build/config.yml`: metadados e ciclo de desenvolvimento do Wails v3.
 
 ## Tecnologias
 
-- Go 1.23
-- Wails 2.12
+- Go 1.26.5
+- Wails 3.0.0-beta.12
 - Vue 3.5
 - TypeScript 5.9
 - Vite 8

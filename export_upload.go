@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -174,11 +172,16 @@ func (a *App) PrepareExportedImage(suggestedName string, mimeType string) (Expor
 	if !supported {
 		return ExportSaveTarget{}, fmt.Errorf("formato de exportacao nao suportado")
 	}
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           format.Title,
-		DefaultFilename: normalizeExportFilename(suggestedName, format.Extension),
-		Filters:         []runtime.FileFilter{{DisplayName: format.Filter, Pattern: "*" + format.Extension}},
-	})
+	dialog, err := a.newSaveFileDialog(
+		format.Title,
+		normalizeExportFilename(suggestedName, format.Extension),
+		format.Filter,
+		"*"+format.Extension,
+	)
+	if err != nil {
+		return ExportSaveTarget{}, err
+	}
+	path, err := dialog.PromptForSingleSelection()
 	if err != nil || path == "" {
 		return ExportSaveTarget{}, err
 	}

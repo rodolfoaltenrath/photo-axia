@@ -8,7 +8,7 @@ REPO_DIR="repo"
 BUNDLE="dist/flatpak/Axia.flatpak"
 NODE_VERSION="${NODE_VERSION:-24.14.1}"
 NODE_BIN="${NODE_BIN:-${PROJECT_DIR}/.toolchains/node-v${NODE_VERSION}-linux-x64/bin}"
-GO_VERSION="${GO_VERSION:-1.23.12}"
+GO_VERSION="${GO_VERSION:-1.26.5}"
 GO_BIN="${GO_BIN:-${PROJECT_DIR}/.toolchains/go${GO_VERSION}/bin}"
 
 cd "${PROJECT_DIR}"
@@ -37,15 +37,6 @@ flatpak install --user -y flathub \
 PATH="${NODE_BIN}:${PATH}" npm --prefix frontend ci
 PATH="${NODE_BIN}:${PATH}" npm --prefix frontend run build
 PATH="${GO_BIN}:${PATH}" go mod vendor
-
-# go mod vendor regenera vendor/ do zero a cada build, então qualquer correção
-# aplicada direto nos fontes vendorizados (ex: o diálogo de arquivo nativo do
-# GTK no Linux) precisa ser reaplicada aqui, depois da regeneração.
-for patch in patches/*.patch; do
-  [ -e "${patch}" ] || continue
-  echo "Aplicando ${patch}..."
-  git apply "${patch}"
-done
 
 mkdir -p "dist/flatpak"
 
