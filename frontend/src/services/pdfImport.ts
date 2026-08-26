@@ -65,28 +65,44 @@ export function closePDFImport(document: PDFDocumentProxy) {
   return document.loadingTask.destroy()
 }
 
-export async function openPDFImport(sourceUrl: string, password = ''): Promise<OpenedPDFImport> {
+export async function openPDFImport(
+  sourceUrl: string,
+  password = '',
+  signal?: AbortSignal
+): Promise<OpenedPDFImport> {
+  if (signal?.aborted) throw abortError()
   const { getDocument } = await pdfModule()
+  if (signal?.aborted) throw abortError()
   const task = getDocument({ url: sourceUrl, password: password || undefined })
-  let document: PDFDocumentProxy
+  const cancel = () => { void task.destroy() }
+  signal?.addEventListener('abort', cancel, { once: true })
   try {
-    document = await task.promise
+    const document = await task.promise
+    if (signal?.aborted) throw abortError()
+    if (document.numPages > MAX_PDF_PAGES) {
+      throw new Error(`O PDF possui ${document.numPages} páginas. O limite para abrir um documento é ${MAX_PDF_PAGES}.`)
+    }
+    const pages: PDFPageSize[] = []
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
+      if (signal?.aborted) throw abortError()
+      let page: PDFPageProxy | undefined
+      try {
+        page = await document.getPage(pageNumber)
+        if (signal?.aborted) throw abortError()
+        const viewport = page.getViewport({ scale: 1 })
+        pages.push({ pageNumber, widthPoints: viewport.width, heightPoints: viewport.height })
+      } finally {
+        page?.cleanup()
+      }
+    }
+    return { document, pages }
   } catch (error) {
     await task.destroy().catch(() => undefined)
+    if (signal?.aborted) throw abortError()
     throw error
+  } finally {
+    signal?.removeEventListener('abort', cancel)
   }
-  if (document.numPages > MAX_PDF_PAGES) {
-    await closePDFImport(document)
-    throw new Error(`O PDF possui ${document.numPages} páginas. O limite para abrir um documento é ${MAX_PDF_PAGES}.`)
-  }
-  const pages: PDFPageSize[] = []
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
-    const page = await document.getPage(pageNumber)
-    const viewport = page.getViewport({ scale: 1 })
-    pages.push({ pageNumber, widthPoints: viewport.width, heightPoints: viewport.height })
-    page.cleanup()
-  }
-  return { document, pages }
 }
 
 async function renderPageToCanvas(
@@ -129,22 +145,26 @@ async function renderPageToCanvas(
   }
 }
 
-export async function renderPDFThumbnail(page: PDFPageProxy, maximumWidth = 168) {
-  const base = page.getViewport({ scale: 1 })
-  const scale = Math.min(1, maximumWidth / Math.max(1, base.width))
-  const viewport = page.getViewport({ scale })
-  const canvas = await renderPageToCanvas(
-    page,
-    Math.max(1, Math.ceil(viewport.width)),
-    Math.max(1, Math.ceil(viewport.height)),
-    scale,
-    'white'
-  )
+export async function renderPDFThumbnail(page: PDFPageProxy, maximumWidth = 168, signal?: AbortSignal) {
+  let canvas: HTMLCanvasElement | undefined
   try {
+    const base = page.getViewport({ scale: 1 })
+    const scale = Math.min(1, maximumWidth / Math.max(1, base.width))
+    const viewport = page.getViewport({ scale })
+    canvas = await renderPageToCanvas(
+      page,
+      Math.max(1, Math.ceil(viewport.width)),
+      Math.max(1, Math.ceil(viewport.height)),
+      scale,
+      'white',
+      signal
+    )
     return URL.createObjectURL(await canvasBlob(canvas))
   } finally {
-    canvas.width = 1
-    canvas.height = 1
+    if (canvas) {
+      canvas.width = 1
+      canvas.height = 1
+    }
     page.cleanup()
   }
 }
@@ -166,17 +186,21 @@ export async function renderPDFPages(
       const descriptor = request.pageSizes[pageNumber - 1]
       if (!descriptor) throw new Error(`A página ${pageNumber} não está disponível.`)
       const size = pdfPagePixelSize(descriptor, dpi)
-      const page = await request.document.getPage(pageNumber)
-      const canvas = await renderPageToCanvas(
-        page,
-        size.width,
-        size.height,
-        dpi / 72,
-        request.background,
-        signal
-      )
+      let page: PDFPageProxy | undefined
+      let canvas: HTMLCanvasElement | undefined
       try {
+        page = await request.document.getPage(pageNumber)
+        if (signal.aborted) throw abortError()
+        canvas = await renderPageToCanvas(
+          page,
+          size.width,
+          size.height,
+          dpi / 72,
+          request.background,
+          signal
+        )
         const blob = await canvasBlob(canvas)
+        if (signal.aborted) throw abortError()
         images.push({
           id: crypto.randomUUID(),
           name: `${baseName} — página ${pageNumber}`,
@@ -190,9 +214,11 @@ export async function renderPDFPages(
           resolutionSource: 'pdf-render'
         })
       } finally {
-        canvas.width = 1
-        canvas.height = 1
-        page.cleanup()
+        if (canvas) {
+          canvas.width = 1
+          canvas.height = 1
+        }
+        page?.cleanup()
       }
       onProgress?.(index + 1, request.pages.length)
     }

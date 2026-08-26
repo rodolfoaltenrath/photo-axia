@@ -4,6 +4,7 @@ import type { DocumentPoint, TransformHandle } from '../../editor/freeTransform'
 import type { EditorGuide, GuideOrientation, RulerOrigin, RulerUnit } from '../../editor/guides'
 import type { SelectionMode, SelectionPoint, SelectionRegion } from '../../editor/selection'
 import type { SelectionCombineMode } from '../../editor/selectionCombine'
+import type { SmartAlignmentGuide } from '../../editor/smartGuides'
 import type {
   DocumentSpec,
   EditorTool,
@@ -39,6 +40,7 @@ export interface CanvasViewportProps {
   guidesLocked: boolean
   guidesVisible: boolean
   guideSnappingEnabled: boolean
+  smartGuidesEnabled: boolean
   isBusy: boolean
   layers: LayerItem[]
   magicWandContiguous: boolean
@@ -93,8 +95,11 @@ export interface CanvasViewportEmits {
   (event: 'paintBucket', point: SelectionPoint, color: string, selection: SelectionRegion | null): void
   (event: 'selectLayer', layerId: string): void
   (event: 'updateGuide', guide: EditorGuide): void
+  (event: 'moveLayers', updates: Array<{ layerId: string; transform: LayerTransform }>): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
   (event: 'update:autoSelectLayer', enabled: boolean): void
+  (event: 'update:brushColor', color: string): void
+  (event: 'update:brushSize', size: number): void
   (event: 'update:magicWandContiguous', enabled: boolean): void
   (event: 'update:magicWandTolerance', tolerance: number): void
   (event: 'update:paintBucketContiguous', enabled: boolean): void
@@ -104,6 +109,7 @@ export interface CanvasViewportEmits {
   (event: 'update:guidesLocked', enabled: boolean): void
   (event: 'update:guidesVisible', enabled: boolean): void
   (event: 'update:guideSnappingEnabled', enabled: boolean): void
+  (event: 'update:smartGuidesEnabled', enabled: boolean): void
   (event: 'update:rulerOrigin', origin: RulerOrigin): void
   (event: 'update:rulerUnit', unit: RulerUnit): void
   (event: 'update:rulersVisible', enabled: boolean): void
@@ -146,6 +152,7 @@ export interface CanvasSurfaceView {
   selectedGuideId: string | null
   selectionMoveInteraction: SelectionMoveInteraction | null
   selectionMovePreviewStyle?: CSSProperties
+  smartGuides: SmartAlignmentGuide[]
   snappedX?: number
   snappedY?: number
   surfaceStyle: CSSProperties
@@ -205,13 +212,12 @@ export interface OriginInteraction {
 }
 
 export interface LayerDragSession {
-  layerId: string
   pointerId: number
   startX: number
   startY: number
-  transform: LayerTransform
-  preview: LayerTransform
-  target: HTMLElement
+  groupTransform: LayerTransform
+  members: TransformSessionMember[]
+  previews: Record<string, LayerTransform>
 }
 
 export interface TransformSessionMember {
@@ -227,10 +233,8 @@ export interface TransformSession {
 }
 
 export interface KeyboardLayerMoveSession {
-  layerId: string
-  original: LayerTransform
-  draft: LayerTransform
-  target: HTMLElement
+  members: TransformSessionMember[]
+  drafts: Record<string, LayerTransform>
 }
 
 interface TransformInteractionBase {

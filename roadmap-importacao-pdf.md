@@ -37,6 +37,7 @@ nativas adicionais no Windows ou Linux.
 - [x] Rasterização sequencial para limitar picos de memória.
 - [x] PNG com fundo branco ou transparente.
 - [x] Cancelamento da renderização em andamento.
+- [x] Cancelamento também durante abertura, senha e leitura inicial das páginas.
 - [x] Liberação de páginas, canvases, worker e URLs temporárias.
 
 ### 3. Interface Vue
@@ -45,6 +46,7 @@ nativas adicionais no Windows ou Linux.
 - [x] Arrastar e soltar um PDF abre a mesma escolha de página no desktop e no modo web.
 - [x] Suporte equivalente pelo seletor HTML no modo web.
 - [x] Modal com miniaturas e seleção de uma página por importação.
+- [x] Miniaturas carregadas sob demanda conforme entram na área visível, com concorrência limitada.
 - [x] Presets 96, 150 e 300 DPI e valor personalizado de 36 a 600 DPI.
 - [x] Senha para PDFs protegidos.
 - [x] Dimensão final e estimativa de memória em linguagem simples.
@@ -59,6 +61,7 @@ nativas adicionais no Windows ou Linux.
 - [x] Ajuste visual ao documento atual sem descartar o raster original.
 - [x] Previews otimizados e seleção automática da ferramenta Mover.
 - [x] Uma entrada no histórico para a página importada.
+- [x] Rollback completo de camadas, previews e URLs quando a inclusão falha.
 - [x] Limites de 16.384 px, 64 MP e 48 MiB de raster aplicados à página escolhida.
 - [x] Fechamento da janela com página importada respeita a confirmação nativa de alterações não salvas.
 
@@ -71,21 +74,14 @@ nativas adicionais no Windows ou Linux.
 - [x] Estimativa de memória RGBA.
 - [x] Testes Go e frontend.
 - [x] TypeScript estrito e build Vite.
-- [ ] Validação visual manual com PDFs reais no Windows.
-- [ ] Validação visual manual no Linux/GTK4.
+- [x] Validação prática contínua com PDFs reais no Windows pelo mantenedor.
+- [x] Execução e teste da aplicação empacotada como Flatpak no Linux.
 
-## Roteiro de teste manual
+## Estratégia de validação prática
 
-1. Importar um PDF A4 de uma página em 150 DPI e conferir 1240 × 1754 px.
-2. Escolher uma página intermediária de um PDF com várias páginas.
-3. Comparar 96, 150 e 300 DPI em texto pequeno e fotografias.
-4. Testar fundo branco e transparente.
-5. Cancelar no modal e durante a conversão.
-6. Abrir PDF protegido com senha correta e incorreta.
-7. Tentar arquivo renomeado para `.pdf`, PDF corrompido e arquivo acima do limite.
-8. Salvar em `.axia`, fechar, reabrir e conferir pixels, ordem, nomes e DPI.
-9. Desfazer e refazer a importação da página escolhida.
-10. Testar PDFs com páginas rotacionadas e tamanhos diferentes.
+O mantenedor usa o editor diariamente e valida a importação com documentos reais
+durante esse uso. Achados práticos devem virar casos de regressão automatizados quando
+reproduzíveis; não há um roteiro manual separado a manter.
 
 ## Possíveis evoluções posteriores
 

@@ -1,4 +1,4 @@
-import type { LayerItem, LayerStyleGlobalLight } from '../types/editor'
+import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../types/editor'
 import type { HistoryDirection } from './history'
 import type { SelectionRegion } from './selection'
 import type { EditorGuide } from './guides'
@@ -42,6 +42,15 @@ export interface PatchLayerDelta extends SelectionDelta {
   after: Partial<LayerItem>
 }
 
+export interface TransformLayersDelta extends SelectionDelta {
+  type: 'layers:transform'
+  items: Array<{
+    layerId: string
+    before: LayerTransform
+    after: LayerTransform
+  }>
+}
+
 export interface ReorderLayerDelta extends SelectionDelta {
   type: 'layer:reorder'
   layerId: string
@@ -66,6 +75,7 @@ export type EditorHistoryDelta =
   | RemoveLayersDelta
   | ReplaceLayersDelta
   | PatchLayerDelta
+  | TransformLayersDelta
   | ReorderLayerDelta
   | ChangeGuidesDelta
   | ChangeLayerStyleGlobalLightDelta
@@ -143,6 +153,9 @@ export function isEditorHistoryDeltaNoop(delta: EditorHistoryDelta) {
   if (delta.type === 'layer:patch') {
     return JSON.stringify(delta.before) === JSON.stringify(delta.after) &&
       JSON.stringify(delta.selectionBefore) === JSON.stringify(delta.selectionAfter)
+  }
+  if (delta.type === 'layers:transform') {
+    return delta.items.every((item) => JSON.stringify(item.before) === JSON.stringify(item.after))
   }
   if (delta.type === 'layer:reorder') return delta.beforeIndex === delta.afterIndex
   return false
@@ -227,6 +240,12 @@ export function applyEditorHistoryDelta(
       const patch = cloneLayerPatch(redo ? delta.after : delta.before)
       Object.assign(layer, patch)
       if (layer.image && (patch.transform || patch.image || patch.styles)) refreshLayerIds.push(layer.id)
+    }
+  } else if (delta.type === 'layers:transform') {
+    for (const item of delta.items) {
+      const layer = layers.find((candidate) => candidate.id === item.layerId)
+      if (!layer) continue
+      layer.transform = { ...(redo ? item.after : item.before) }
     }
   } else {
     const index = layers.findIndex((layer) => layer.id === delta.layerId)

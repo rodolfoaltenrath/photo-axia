@@ -9,6 +9,7 @@ import {
   screenPositionForDocument,
   snapBoundsTranslation,
   snapDocumentPoint,
+  snapGuidePositionToAlignment,
   snapGuidePositionToLayer,
   snapGuidePositionToTicks,
   snapLayerTranslation
@@ -96,4 +97,19 @@ test('snapping reconhece ponto e limites de uma seleção', () => {
   const moved = snapBoundsTranslation({ x: 10, y: 10, width: 40, height: 20 }, 47, 49, guides, 1)
   assert.equal(moved.deltaX, 50)
   assert.equal(moved.deltaY, 50)
+})
+
+test('guia manual encontra o centro do documento sem mudar a origem da régua', () => {
+  const document = { width: 1000, height: 800 }
+  const near = snapGuidePositionToAlignment(497, 'vertical', document, undefined, 1)
+  assert.equal(near.value, 500)
+  assert.equal(near.source, 'document')
+
+  const far = snapGuidePositionToAlignment(300, 'horizontal', document, undefined, 1)
+  assert.equal(far.value, 300)
+  const forced = snapGuidePositionToAlignment(12, 'horizontal', document, undefined, 1, {
+    forceDocumentCenter: true
+  })
+  assert.equal(forced.value, 400)
+  assert.equal(forced.snappedY, 400)
 })

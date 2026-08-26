@@ -5,14 +5,10 @@ import type { EditorTool, LayerItem, TextLayerContent } from '../types/editor'
 const props = defineProps<{
   activeLayer: LayerItem
   activeTool: EditorTool
-  brushColor: string
-  brushSize: number
   zoom: number
 }>()
 
 const emit = defineEmits<{
-  (event: 'update:brushColor', value: string): void
-  (event: 'update:brushSize', value: number): void
   (event: 'update:text', patch: Partial<TextLayerContent>): void
   (event: 'update:zoom', value: number): void
 }>()
@@ -40,31 +36,10 @@ watch(
     <div class="properties-scroll">
       <div class="property-summary">
         <span>Ferramenta</span>
-        <strong class="property-summary-tool">{{ activeTool }}</strong>
+        <strong class="property-summary-tool">{{ activeTool === 'brush' ? 'Pincel' : activeTool === 'eraser' ? 'Borracha' : activeTool }}</strong>
         <span>Camada</span>
         <strong :title="activeLayer.name">{{ activeLayer.name }}</strong>
       </div>
-
-      <label v-if="activeTool === 'brush' || activeTool === 'eraser'" class="compact-range">
-        <span>Tamanho</span>
-        <input
-          :value="brushSize"
-          max="128"
-          min="1"
-          type="range"
-          @input="$emit('update:brushSize', Number(($event.target as HTMLInputElement).value))"
-        />
-      </label>
-
-      <label v-if="activeTool === 'brush'" class="compact-range">
-        <span>Cor</span>
-        <input
-          class="text-color-input"
-          :value="brushColor"
-          type="color"
-          @input="$emit('update:brushColor', ($event.target as HTMLInputElement).value)"
-        />
-      </label>
 
       <section v-if="activeLayer.kind === 'text' && activeLayer.text" class="property-section text-properties">
         <h3>Texto</h3>
@@ -153,7 +128,10 @@ watch(
         </label>
       </section>
 
-      <section v-if="activeLayer.transform" class="property-section transform-properties">
+      <section
+        v-if="activeLayer.transform && activeTool !== 'brush' && activeTool !== 'eraser'"
+        class="property-section transform-properties"
+      >
         <h3>Transformação</h3>
         <div class="property-grid">
           <label>

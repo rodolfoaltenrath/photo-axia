@@ -1051,6 +1051,11 @@ textarea:focus-visible,
   background: #8edaff;
 }
 
+.document-guide--smart-aligned .document-guide-line {
+  background: #ff4fc8;
+  box-shadow: none;
+}
+
 .guide-position-label {
   position: absolute;
   border: 1px solid #4d9fc9;
@@ -2720,6 +2725,74 @@ textarea:focus-visible,
   padding: 10px 12px;
   transform: translateX(-50%);
   white-space: pre-line;
+}
+
+.smart-alignment-guide {
+  position: absolute;
+  z-index: 1;
+  background: #ff4fc8;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.smart-alignment-guide--vertical {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0.5px;
+}
+
+.smart-alignment-guide--horizontal {
+  right: 0;
+  left: 0;
+  top: 0;
+  height: 0.5px;
+}
+
+.brush-context-options,
+.brush-size-control,
+.brush-color-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-transform: none;
+}
+
+.brush-context-options {
+  gap: 14px;
+}
+
+.brush-size-control input[type='range'] {
+  width: 112px;
+  accent-color: #58c4b3;
+}
+
+.brush-size-control input[type='number'] {
+  width: 54px;
+  height: 28px;
+  border: 1px solid #313944;
+  border-radius: 5px;
+  background: #1b2129;
+  color: #e8edf2;
+  padding: 0 6px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.brush-color-control input[type='color'] {
+  width: 34px;
+  height: 28px;
+  border: 1px solid #313944;
+  border-radius: 5px;
+  background: #1b2129;
+  padding: 3px;
+  cursor: pointer;
+}
+
+.brush-context-hint {
+  color: #8794a1;
+  font-size: 12px;
+  text-transform: none;
 }
 
 .tool-bar button img.toolbar-raster-icon {

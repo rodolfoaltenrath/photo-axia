@@ -202,6 +202,7 @@ defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
         :selected-guide-id="view.selectedGuideId"
         :snapped-x="view.snappedX"
         :snapped-y="view.snappedY"
+        :smart-guides="view.smartGuides"
         :unit="view.rulerUnit"
         :visible="view.guidesVisible"
         @start-move="actions.startGuideMove"

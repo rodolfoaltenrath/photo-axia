@@ -33,6 +33,7 @@ const emit = defineEmits<{
 
 const dialog = ref<HTMLElement | null>(null)
 const dpiInput = ref<HTMLSelectElement | null>(null)
+const pageGrid = ref<HTMLElement | null>(null)
 const pdf = shallowRef<PDFDocumentProxy>()
 const pages = ref<Awaited<ReturnType<typeof openPDFImport>>['pages']>([])
 const thumbnails = ref<string[]>([])
@@ -46,6 +47,11 @@ const loading = ref(false)
 const errorText = ref('')
 let loadGeneration = 0
 let handedOff = false
+let loadController: AbortController | undefined
+let thumbnailObserver: IntersectionObserver | undefined
+let activeThumbnailRenders = 0
+const thumbnailQueue: number[] = []
+const queuedThumbnails = new Set<number>()
 
 const effectiveDpi = computed(() => normalizePDFDPI(dpiMode.value === 'custom' ? customDpi.value : Number(dpiMode.value)))
 const controlsBusy = computed(() => props.busy || loading.value)
@@ -84,8 +90,77 @@ function releaseThumbnails() {
   thumbnails.value = []
 }
 
+function resetThumbnailLoading() {
+  thumbnailObserver?.disconnect()
+  thumbnailObserver = undefined
+  thumbnailQueue.length = 0
+  queuedThumbnails.clear()
+  activeThumbnailRenders = 0
+}
+
+function pumpThumbnailQueue(generation: number, controller: AbortController) {
+  while (activeThumbnailRenders < 2 && thumbnailQueue.length) {
+    const pageNumber = thumbnailQueue.shift()!
+    queuedThumbnails.delete(pageNumber)
+    activeThumbnailRenders++
+    void (async () => {
+      try {
+        const document = pdf.value
+        if (!document || generation !== loadGeneration || controller.signal.aborted) return
+        const page = await document.getPage(pageNumber)
+        const thumbnail = await renderPDFThumbnail(page, 168, controller.signal)
+        if (generation !== loadGeneration || controller.signal.aborted) {
+          URL.revokeObjectURL(thumbnail)
+          return
+        }
+        const previous = thumbnails.value[pageNumber - 1]
+        if (previous) URL.revokeObjectURL(previous)
+        thumbnails.value[pageNumber - 1] = thumbnail
+        thumbnails.value = [...thumbnails.value]
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.warn(`Não foi possível gerar a miniatura da página ${pageNumber}.`, error)
+        }
+      } finally {
+        if (generation !== loadGeneration) return
+        activeThumbnailRenders = Math.max(0, activeThumbnailRenders - 1)
+        if (!controller.signal.aborted) pumpThumbnailQueue(generation, controller)
+      }
+    })()
+  }
+}
+
+function enqueueThumbnail(pageNumber: number, generation: number, controller: AbortController) {
+  if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pages.value.length) return
+  if (thumbnails.value[pageNumber - 1] || queuedThumbnails.has(pageNumber)) return
+  queuedThumbnails.add(pageNumber)
+  thumbnailQueue.push(pageNumber)
+  pumpThumbnailQueue(generation, controller)
+}
+
+function observeVisibleThumbnails(generation: number, controller: AbortController) {
+  const grid = pageGrid.value
+  if (!grid) return
+  const cards = Array.from(grid.querySelectorAll<HTMLElement>('[data-pdf-page]'))
+  if (typeof IntersectionObserver === 'undefined') {
+    for (const card of cards) enqueueThumbnail(Number(card.dataset.pdfPage), generation, controller)
+    return
+  }
+  thumbnailObserver = new IntersectionObserver((entries, observer) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue
+      observer.unobserve(entry.target)
+      enqueueThumbnail(Number((entry.target as HTMLElement).dataset.pdfPage), generation, controller)
+    }
+  }, { root: grid, rootMargin: '220px 0px' })
+  for (const card of cards) thumbnailObserver.observe(card)
+}
+
 async function cleanup() {
   loadGeneration++
+  loadController?.abort()
+  loadController = undefined
+  resetThumbnailLoading()
   releaseThumbnails()
   const current = pdf.value
   pdf.value = undefined
@@ -99,14 +174,18 @@ async function loadDocument() {
   const source = props.source
   if (!source) return
   const generation = ++loadGeneration
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
   loading.value = true
   errorText.value = ''
   passwordRequired.value = false
+  resetThumbnailLoading()
   releaseThumbnails()
   if (pdf.value) await closePDFImport(pdf.value).catch(() => undefined)
   pdf.value = undefined
   try {
-    const opened = await openPDFImport(source.sourceUrl, password.value)
+    const opened = await openPDFImport(source.sourceUrl, password.value, controller.signal)
     if (generation !== loadGeneration) {
       await closePDFImport(opened.document)
       return
@@ -118,25 +197,16 @@ async function loadDocument() {
     loading.value = false
     await nextTick()
     dpiInput.value?.focus()
-
-    for (let pageNumber = 1; pageNumber <= opened.document.numPages; pageNumber++) {
-      if (generation !== loadGeneration || props.busy) return
-      const page = await opened.document.getPage(pageNumber)
-      const thumbnail = await renderPDFThumbnail(page)
-      if (generation !== loadGeneration) {
-        URL.revokeObjectURL(thumbnail)
-        return
-      }
-      thumbnails.value[pageNumber - 1] = thumbnail
-      thumbnails.value = [...thumbnails.value]
-    }
+    observeVisibleThumbnails(generation, controller)
   } catch (error) {
     if (generation !== loadGeneration) return
+    if (error instanceof DOMException && error.name === 'AbortError') return
     passwordRequired.value = isPDFPasswordError(error)
     errorText.value = passwordRequired.value
       ? 'Este PDF é protegido. Digite a senha para continuar.'
       : error instanceof Error ? error.message : 'Não foi possível abrir o PDF.'
   } finally {
+    if (loadController === controller && !pdf.value) loadController = undefined
     if (generation === loadGeneration) loading.value = false
   }
 }
@@ -146,12 +216,15 @@ function selectPage(pageNumber: number) {
 }
 
 function cancel() {
-  if (!loading.value) emit('cancel')
+  loadController?.abort()
+  emit('cancel')
 }
 
 function confirm() {
   if (controlsBusy.value || validationError.value || !pdf.value || !props.source) return
   loadGeneration++
+  loadController?.abort()
+  loadController = undefined
   handedOff = true
   emit('import', {
     background: background.value,
@@ -210,7 +283,7 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
           <h2 id="pdf-import-title">Importar página do PDF</h2>
           <span>{{ source?.name }}<template v-if="pages.length"> · {{ pages.length }} {{ pages.length === 1 ? 'página' : 'páginas' }}</template></span>
         </div>
-        <button :disabled="loading" type="button" title="Fechar" aria-label="Fechar" @click="cancel">×</button>
+        <button type="button" title="Fechar" aria-label="Fechar" @click="cancel">×</button>
       </header>
 
       <div v-if="loading" class="pdf-import-loading" role="status">Lendo páginas e preparando miniaturas…</div>
@@ -247,13 +320,14 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
           <header>
             <strong>Escolha uma página</strong>
           </header>
-          <div class="pdf-page-grid">
+          <div ref="pageGrid" class="pdf-page-grid">
             <button
               v-for="page in pages"
               :key="page.pageNumber"
               :aria-pressed="selectedPage === page.pageNumber"
               :class="{ 'pdf-page-card--selected': selectedPage === page.pageNumber }"
               :disabled="props.busy"
+              :data-pdf-page="page.pageNumber"
               type="button"
               @click="selectPage(page.pageNumber)"
             >
@@ -269,7 +343,7 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
         <p v-if="validationError" class="form-error pdf-import-error">{{ validationError }}</p>
         <p v-if="props.busy" class="pdf-import-progress" role="status">{{ progress }}</p>
         <footer class="dialog-actions pdf-import-actions">
-          <button :disabled="loading" type="button" @click="cancel">{{ props.busy ? 'Cancelar importação' : 'Cancelar' }}</button>
+          <button type="button" @click="cancel">{{ props.busy ? 'Cancelar importação' : 'Cancelar' }}</button>
           <button class="primary-button" :disabled="controlsBusy || Boolean(validationError)" type="submit">
             {{ props.busy ? 'Importando…' : 'Importar página' }}
           </button>

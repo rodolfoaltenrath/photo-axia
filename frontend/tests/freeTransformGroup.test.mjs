@@ -7,7 +7,10 @@ import {
   applyGroupRotate,
   groupBoundsFromRects
 } from '../src/editor/groupTransform.ts'
-import { createTransformSessionRef } from '../src/components/canvas/composables/useFreeTransform.ts'
+import {
+  createTransformSessionRef,
+  layerDragIds
+} from '../src/components/canvas/composables/useFreeTransform.ts'
 
 function approxEqual(actual, expected, tolerance = 0.01) {
   assert.ok(
@@ -15,6 +18,15 @@ function approxEqual(actual, expected, tolerance = 0.01) {
     `esperado ${actual} próximo de ${expected}`
   )
 }
+
+test('arrastar uma camada já selecionada preserva todo o grupo selecionado', () => {
+  assert.deepEqual(layerDragIds(['a', 'b'], 'b'), ['a', 'b'])
+  assert.deepEqual(layerDragIds(['a', 'a', 'b'], 'a'), ['a', 'b'])
+})
+
+test('arrastar uma camada fora da seleção troca o alvo para somente ela', () => {
+  assert.deepEqual(layerDragIds(['a', 'b'], 'c'), ['c'])
+})
 
 test('caixa de grupo com uma camada reproduz o retângulo original, com rotação', () => {
   const rect = { x: 10, y: 20, width: 100, height: 50, rotation: 25 }

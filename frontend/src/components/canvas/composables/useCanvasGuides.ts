@@ -1,13 +1,14 @@
 import { computed, onBeforeUnmount, onMounted, shallowRef, ref, watch, type Ref } from 'vue'
 import type { DocumentPoint } from '../../../editor/freeTransform'
 import {
-  snapGuidePositionToLayer,
+  snapGuidePositionToAlignment,
   snapGuidePositionToTicks,
   type EditorGuide,
   type GuideOrientation,
   type RulerOrigin,
   type RulerUnit
 } from '../../../editor/guides'
+import type { SmartAlignmentGuide } from '../../../editor/smartGuides'
 import type { LayerTransform } from '../../../types/editor'
 import type { GuideInteraction, OriginInteraction } from '../canvas.types'
 
@@ -26,6 +27,7 @@ interface CanvasGuideOptions {
   document: () => { width: number; height: number; resolutionDpi: number }
   guideIds: () => string[]
   guideSnappingEnabled: () => boolean
+  smartGuidesEnabled: () => boolean
   guidesLocked: () => boolean
   rulersVisible: () => boolean
   rulerOrigin: () => RulerOrigin
@@ -40,6 +42,7 @@ interface CanvasGuideOptions {
   deleteGuide: (guideId: string) => void
   updateGuidesVisible: (visible: boolean) => void
   updateRulerOrigin: (origin: RulerOrigin) => void
+  setSmartAlignmentGuides: (guides: SmartAlignmentGuide[]) => void
 }
 
 export function useCanvasGuides(options: CanvasGuideOptions) {
@@ -52,17 +55,32 @@ export function useCanvasGuides(options: CanvasGuideOptions) {
 
   function guideAtPointer(
     interaction: GuideInteraction,
-    event: Pick<PointerEvent, 'clientX' | 'clientY' | 'altKey' | 'shiftKey'>
+    event: Pick<PointerEvent, 'clientX' | 'clientY' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>
   ) {
     const point = options.documentPointFromClient(event.clientX, event.clientY)
-    if (!point) return { guide: interaction.guide, snapped: {} }
+    if (!point) return { guide: interaction.guide, snapped: {}, smart: [] }
     const orientation: GuideOrientation = event.altKey
       ? interaction.initialOrientation === 'horizontal' ? 'vertical' : 'horizontal'
       : interaction.initialOrientation
     const origin = orientation === 'vertical' ? displayedRulerOrigin.value.x : displayedRulerOrigin.value.y
     let position = orientation === 'vertical' ? point.x : point.y
+    const document = options.document()
+    if (event.ctrlKey || event.metaKey) {
+      const result = snapGuidePositionToAlignment(
+        position,
+        orientation,
+        document,
+        undefined,
+        options.scale(),
+        { forceDocumentCenter: true }
+      )
+      return {
+        guide: { ...interaction.guide, orientation, position: result.value },
+        snapped: { x: result.snappedX, y: result.snappedY },
+        smart: [{ orientation, position: result.value, source: 'document' as const }]
+      }
+    }
     if (event.shiftKey) {
-      const document = options.document()
       position = snapGuidePositionToTicks(
         position,
         options.scale(),
@@ -70,20 +88,24 @@ export function useCanvasGuides(options: CanvasGuideOptions) {
         document.resolutionDpi,
         origin
       )
-    } else if (options.guideSnappingEnabled()) {
+    } else if (options.guideSnappingEnabled() || options.smartGuidesEnabled()) {
       const transform = options.activeSnapTransform()
-      if (transform) {
-        const result = snapGuidePositionToLayer(position, orientation, transform, options.scale())
-        if (result.snappedX !== undefined || result.snappedY !== undefined) {
-          return {
-            guide: { ...interaction.guide, orientation, position: result.value },
-            snapped: { x: result.snappedX, y: result.snappedY }
-          }
+      const result = snapGuidePositionToAlignment(position, orientation, document, transform, options.scale(), {
+        includeDocumentCenter: options.smartGuidesEnabled(),
+        includeLayer: options.guideSnappingEnabled()
+      })
+      if (result.snappedX !== undefined || result.snappedY !== undefined) {
+        return {
+          guide: { ...interaction.guide, orientation, position: result.value },
+          snapped: { x: result.snappedX, y: result.snappedY },
+          smart: result.source
+            ? [{ orientation, position: result.value, source: result.source }]
+            : []
         }
       }
     }
     if (options.rulerUnit() === 'px' && !event.shiftKey) position = Math.round(position)
-    return { guide: { ...interaction.guide, orientation, position }, snapped: {} }
+    return { guide: { ...interaction.guide, orientation, position }, snapped: {}, smart: [] }
   }
 
   function pointerCaptureTarget(event: PointerEvent) {
@@ -104,6 +126,7 @@ export function useCanvasGuides(options: CanvasGuideOptions) {
     if (event.button !== 0) return
     event.preventDefault()
     snappedGuides.value = {}
+    options.setSmartAlignmentGuides([])
     options.updateGuidesVisible(true)
     const guide: EditorGuide = { id: crypto.randomUUID(), orientation, position: 0 }
     const interaction: GuideInteraction = {
@@ -116,6 +139,7 @@ export function useCanvasGuides(options: CanvasGuideOptions) {
     const initial = guideAtPointer(interaction, event)
     interaction.guide = initial.guide
     snappedGuides.value = initial.snapped
+    options.setSmartAlignmentGuides(initial.smart)
     guideInteraction.value = interaction
     selectedGuideId.value = guide.id
   }
@@ -124,6 +148,7 @@ export function useCanvasGuides(options: CanvasGuideOptions) {
     if (event.button !== 0 || options.guidesLocked() || options.activeTool() !== 'move') return
     event.preventDefault()
     snappedGuides.value = {}
+    options.setSmartAlignmentGuides([])
     guideInteraction.value = {
       pointerId: event.pointerId,
       pointerTarget: pointerCaptureTarget(event),
@@ -166,6 +191,7 @@ export function useCanvasGuides(options: CanvasGuideOptions) {
         if (guideInteraction.value?.pointerId !== event.pointerId) return
         guideInteraction.value = { ...guideInteraction.value, guide: result.guide }
         snappedGuides.value = result.snapped
+        options.setSmartAlignmentGuides(result.smart)
       })
       return
     }
@@ -200,6 +226,7 @@ export function useCanvasGuides(options: CanvasGuideOptions) {
       releaseGuidePointer(guideDrag)
       guideInteraction.value = null
       snappedGuides.value = {}
+      options.setSmartAlignmentGuides([])
       return
     }
     const originDrag = originInteraction.value
@@ -245,6 +272,7 @@ export function useCanvasGuides(options: CanvasGuideOptions) {
     guideInteraction.value = null
     originInteraction.value = null
     snappedGuides.value = {}
+    options.setSmartAlignmentGuides([])
     return true
   }
 

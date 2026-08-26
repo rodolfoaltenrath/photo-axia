@@ -3,6 +3,11 @@ import type { LayerTransform } from '../types/editor'
 
 type BrushContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 export type BrushOperation = 'paint' | 'erase'
+export const MAX_BRUSH_SIZE = 128
+
+export function normalizeBrushSize(value: number) {
+  return Number.isFinite(value) ? Math.max(1, Math.min(MAX_BRUSH_SIZE, Math.round(value))) : 1
+}
 
 export interface BrushPreviewSize {
   width: number

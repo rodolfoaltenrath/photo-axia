@@ -15,6 +15,7 @@ export const AXIA_PROJECT_MAX_LAYERS = 10_000
 export interface AxiaProjectViewState {
   activeLayerId: string
   guideSnappingEnabled: boolean
+  smartGuidesEnabled: boolean
   guidesLocked: boolean
   guidesVisible: boolean
   rulerOrigin: RulerOrigin
@@ -452,6 +453,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
     view: {
       activeLayerId,
       guideSnappingEnabled: view?.guideSnappingEnabled !== false,
+      smartGuidesEnabled: view?.smartGuidesEnabled !== false,
       guidesLocked: view?.guidesLocked === true,
       guidesVisible: view?.guidesVisible !== false,
       rulerOrigin: { x: originX, y: originY },

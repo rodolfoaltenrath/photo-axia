@@ -180,6 +180,7 @@ const rulersVisible = ref(initialRulersVisibility())
 const guidesVisible = ref(true)
 const guidesLocked = ref(false)
 const guideSnappingEnabled = ref(true)
+const smartGuidesEnabled = ref(true)
 const rulerUnit = ref<RulerUnit>('px')
 const rulerOrigin = ref<RulerOrigin>({ x: 0, y: 0 })
 const selectionMode = ref<SelectionMode>('rectangle')
@@ -268,6 +269,7 @@ interface SmartLayerEditSession {
   parentDocument: DocumentSpec
   parentDirty: boolean
   parentGuideSnappingEnabled: boolean
+  parentSmartGuidesEnabled: boolean
   parentGuides: EditorGuide[]
   parentGuidesLocked: boolean
   parentGuidesVisible: boolean
@@ -1625,6 +1627,40 @@ function updateLayerTransform(layerId: string, transform: LayerTransform) {
   if (sizeChanged) void refreshLayerPreview(layer)
 }
 
+function moveLayerTransforms(updates: Array<{ layerId: string; transform: LayerTransform }>) {
+  const items: Array<{ layerId: string; before: LayerTransform; after: LayerTransform }> = []
+  for (const update of updates) {
+    const layer = layers.value.find((item) => item.id === update.layerId)
+    const previous = layer?.transform
+    if (!layer || !previous) continue
+    const transform = update.transform
+    const onlyPositionChanged =
+      previous.width === transform.width &&
+      previous.height === transform.height &&
+      (previous.rotation ?? 0) === (transform.rotation ?? 0)
+    if (!onlyPositionChanged || (previous.x === transform.x && previous.y === transform.y)) continue
+    items.push({
+      layerId: layer.id,
+      before: { ...previous },
+      after: { ...transform }
+    })
+  }
+  if (!items.length) return
+
+  if (items.some((item) => floatingSelectionSession.value?.layerId === item.layerId)) {
+    clearFloatingSelectionSession()
+  }
+  for (const item of items) {
+    const layer = layers.value.find((candidate) => candidate.id === item.layerId)
+    if (layer) layer.transform = { ...item.after }
+  }
+  recordHistory(items.length === 1 ? 'Mover camada' : 'Mover camadas', {
+    type: 'layers:transform',
+    items
+  })
+  statusText.value = items.length === 1 ? 'Camada movida' : `${items.length} camadas movidas`
+}
+
 // Bakes run one at a time: a multi-layer group rotate (Ctrl+T with several
 // layers selected) commits each member synchronously in the same tick, and
 // bakeLayerRotation shares global mutable state (isBusy, transientObjectUrls,
@@ -1948,6 +1984,7 @@ function restoreSmartLayerParent(session: SmartLayerEditSession) {
   guidesVisible.value = session.parentGuidesVisible
   guidesLocked.value = session.parentGuidesLocked
   guideSnappingEnabled.value = session.parentGuideSnappingEnabled
+  smartGuidesEnabled.value = session.parentSmartGuidesEnabled
   rulerOrigin.value = session.parentRulerOrigin
   rulerUnit.value = session.parentRulerUnit
   rulersVisible.value = session.parentRulersVisible
@@ -1997,6 +2034,7 @@ async function editSmartLayerContent(layerId = activeLayerId.value) {
     parentDocument: activeDocument.value,
     parentDirty: documentDirty.value,
     parentGuideSnappingEnabled: guideSnappingEnabled.value,
+    parentSmartGuidesEnabled: smartGuidesEnabled.value,
     parentGuides: guides.value,
     parentGuidesLocked: guidesLocked.value,
     parentGuidesVisible: guidesVisible.value,
@@ -2024,6 +2062,7 @@ async function editSmartLayerContent(layerId = activeLayerId.value) {
     guidesVisible.value = true
     guidesLocked.value = false
     guideSnappingEnabled.value = true
+    smartGuidesEnabled.value = true
     rulerOrigin.value = { x: 0, y: 0 }
     rulerUnit.value = 'px'
     history.clear('Conteúdo inteligente aberto')
@@ -2159,37 +2198,61 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
       },
       transform: imageTransform(image)
     }))
+    const importedIds = new Set(imageLayers.map((layer) => layer.id))
+    const activeBefore = activeLayerId.value
+    const toolBefore = activeTool.value
+    const selectionBefore = selection.value
+    let inserted = false
     trackLayerAssets(imageLayers)
     previewLayerCountHint = imageLayers.length + layers.value.filter((layer) => layer.visible && layer.image).length
+    try {
+      for (const [index, layer] of imageLayers.entries()) {
+        statusText.value =
+          imageLayers.length === 1
+            ? 'Otimizando imagem para edição…'
+            : `Otimizando imagem ${index + 1} de ${imageLayers.length}…`
+        await refreshLayerPreview(layer, true, true, index === 0)
+      }
 
-    for (const [index, layer] of imageLayers.entries()) {
-      statusText.value =
-        imageLayers.length === 1
-          ? 'Otimizando imagem para edição…'
-          : `Otimizando imagem ${index + 1} de ${imageLayers.length}…`
-      await refreshLayerPreview(layer, true, true, index === 0)
+      layers.value = [...imageLayers, ...layers.value]
+      inserted = true
+      previewLayerCountHint = 0
+      activeLayerId.value = imageLayers[0]!.id
+      activeTool.value = 'move'
+      selection.value = null
+      selectionGeneration++
+      statusText.value = images.length === 1 ? 'Sincronizando preview…' : 'Sincronizando previews…'
+      await nextTick()
+      await canvasViewport.value?.waitForLayerImages(imageLayers.map((layer) => ({
+        layerId: layer.id,
+        source: layer.image?.previewUrl ?? layer.image!.sourceUrl
+      })))
+      recordHistory(images.length === 1 ? 'Importar imagem' : 'Importar imagens', {
+        type: 'layers:add',
+        items: imageLayers.map((layer, index) => ({ index, layer: cloneLayerHistoryState(layer) })),
+        activeBefore,
+        activeAfter: activeLayerId.value
+      })
+      statusText.value = images.length === 1 ? 'Imagem importada' : `${images.length} imagens importadas`
+    } catch (error) {
+      previewLayerCountHint = 0
+      for (const layer of imageLayers) previewControllers.get(layer.id)?.abort()
+      if (inserted) {
+        layers.value = layers.value.filter((layer) => !importedIds.has(layer.id))
+        activeLayerId.value = activeBefore
+        activeTool.value = toolBefore
+        selection.value = selectionBefore
+        selectionGeneration++
+        await nextTick()
+      }
+      for (const layer of imageLayers) {
+        for (const source of [layer.image?.previewUrl, layer.image?.sourceUrl]) {
+          if (source) releasePreparedImage(source)
+        }
+      }
+      collectUnusedObjectUrls()
+      throw error
     }
-
-    const activeBefore = activeLayerId.value
-    layers.value = [...imageLayers, ...layers.value]
-    previewLayerCountHint = 0
-    activeLayerId.value = imageLayers[0]!.id
-    activeTool.value = 'move'
-    selection.value = null
-    selectionGeneration++
-    statusText.value = images.length === 1 ? 'Sincronizando preview…' : 'Sincronizando previews…'
-    await nextTick()
-    await canvasViewport.value?.waitForLayerImages(imageLayers.map((layer) => ({
-      layerId: layer.id,
-      source: layer.image?.previewUrl ?? layer.image!.sourceUrl
-    })))
-    recordHistory(images.length === 1 ? 'Importar imagem' : 'Importar imagens', {
-      type: 'layers:add',
-      items: imageLayers.map((layer, index) => ({ index, layer: cloneLayerHistoryState(layer) })),
-      activeBefore,
-      activeAfter: activeLayerId.value
-    })
-    statusText.value = images.length === 1 ? 'Imagem importada' : `${images.length} imagens importadas`
   }
 
   errorText.value = errors.join('\n')
@@ -3063,6 +3126,7 @@ async function saveProject(saveAs = false) {
       view: {
         activeLayerId: activeLayerId.value,
         guideSnappingEnabled: guideSnappingEnabled.value,
+        smartGuidesEnabled: smartGuidesEnabled.value,
         guidesLocked: guidesLocked.value,
         guidesVisible: guidesVisible.value,
         rulerOrigin: rulerOrigin.value,
@@ -3152,6 +3216,7 @@ async function openProject(recentPath = '') {
     guidesVisible.value = restored.view.guidesVisible
     guidesLocked.value = restored.view.guidesLocked
     guideSnappingEnabled.value = restored.view.guideSnappingEnabled
+    smartGuidesEnabled.value = restored.view.smartGuidesEnabled
     rulerOrigin.value = restored.view.rulerOrigin
     rulerUnit.value = restored.view.rulerUnit
     layers.value = restored.layers
@@ -3785,6 +3850,7 @@ onBeforeUnmount(() => {
         :guides-locked="guidesLocked"
         :guides-visible="guidesVisible"
         :guide-snapping-enabled="guideSnappingEnabled"
+        :smart-guides-enabled="smartGuidesEnabled"
         :is-busy="isBusy"
         :layers="layers"
         :magic-wand-contiguous="magicWandContiguous"
@@ -3811,10 +3877,13 @@ onBeforeUnmount(() => {
         @paint-bucket="commitPaintBucket"
         @update:gradient-reversed="gradientReversed = $event"
         @update:gradient-type="gradientType = $event"
+        @update:brush-color="brushColor = $event"
+        @update:brush-size="brushSize = $event"
         @sample-color="sampleColor"
         @update-guide="updateGuide"
         @create-text="addTextLayer"
         @select-layer="selectSingleLayer"
+        @move-layers="moveLayerTransforms"
         @update:magic-wand-contiguous="magicWandContiguous = $event"
         @update:magic-wand-tolerance="magicWandTolerance = $event"
         @update:paint-bucket-contiguous="paintBucketContiguous = $event"
@@ -3822,6 +3891,7 @@ onBeforeUnmount(() => {
         @update:guides-locked="guidesLocked = $event"
         @update:guides-visible="guidesVisible = $event"
         @update:guide-snapping-enabled="guideSnappingEnabled = $event"
+        @update:smart-guides-enabled="smartGuidesEnabled = $event"
         @update:ruler-origin="rulerOrigin = $event"
         @update:ruler-unit="rulerUnit = $event"
         @update:rulers-visible="rulersVisible = $event"
@@ -3838,11 +3908,7 @@ onBeforeUnmount(() => {
         <PropertiesPanel
           :active-layer="activeLayer"
           :active-tool="activeTool"
-          :brush-color="brushColor"
-          :brush-size="brushSize"
           :zoom="zoom"
-          @update:brush-color="brushColor = $event"
-          @update:brush-size="brushSize = $event"
           @update:text="updateTextLayer(activeLayer.id, $event)"
           @update:zoom="setZoom"
         />

@@ -188,10 +188,14 @@ export function snapGuidePositionToLayer(
   orientation: GuideOrientation,
   transform: LayerTransform,
   scale: number,
-  thresholdScreenPixels = 8
+  thresholdScreenPixels = 8,
+  maximumDocumentPixels = Number.POSITIVE_INFINITY
 ): SnapResult<number> {
   const bounds = transformedLayerBounds(transform)
-  const threshold = thresholdScreenPixels / Math.max(0.0001, scale)
+  const threshold = Math.min(
+    thresholdScreenPixels / Math.max(0.0001, scale),
+    maximumDocumentPixels
+  )
   const candidates = orientation === 'vertical'
     ? [bounds.x, bounds.x + bounds.width / 2, bounds.x + bounds.width]
     : [bounds.y, bounds.y + bounds.height / 2, bounds.y + bounds.height]
@@ -210,6 +214,61 @@ export function snapGuidePositionToLayer(
     snappedX: orientation === 'vertical' ? target : undefined,
     snappedY: orientation === 'horizontal' ? target : undefined
   }
+}
+
+export function snapGuidePositionToAlignment(
+  position: number,
+  orientation: GuideOrientation,
+  document: { width: number; height: number },
+  transform: LayerTransform | undefined,
+  scale: number,
+  options: {
+    forceDocumentCenter?: boolean
+    includeDocumentCenter?: boolean
+    includeLayer?: boolean
+    maximumDocumentPixels?: number
+    thresholdScreenPixels?: number
+  } = {}
+): SnapResult<number> & { source?: 'document' | 'layer' } {
+  const documentCenter = orientation === 'vertical' ? document.width / 2 : document.height / 2
+  if (options.forceDocumentCenter) {
+    return {
+      value: documentCenter,
+      snappedX: orientation === 'vertical' ? documentCenter : undefined,
+      snappedY: orientation === 'horizontal' ? documentCenter : undefined,
+      source: 'document'
+    }
+  }
+
+  const thresholdScreenPixels = options.thresholdScreenPixels ?? 4
+  const maximumDocumentPixels = options.maximumDocumentPixels ?? 12
+  const threshold = Math.min(
+    thresholdScreenPixels / Math.max(0.0001, scale),
+    maximumDocumentPixels
+  )
+  if (options.includeDocumentCenter !== false && Math.abs(position - documentCenter) <= threshold) {
+    return {
+      value: documentCenter,
+      snappedX: orientation === 'vertical' ? documentCenter : undefined,
+      snappedY: orientation === 'horizontal' ? documentCenter : undefined,
+      source: 'document'
+    }
+  }
+
+  if (options.includeLayer !== false && transform) {
+    const layerResult = snapGuidePositionToLayer(
+      position,
+      orientation,
+      transform,
+      scale,
+      thresholdScreenPixels,
+      maximumDocumentPixels
+    )
+    if (layerResult.snappedX !== undefined || layerResult.snappedY !== undefined) {
+      return { ...layerResult, source: 'layer' }
+    }
+  }
+  return { value: position }
 }
 
 export function snapLayerTranslation(

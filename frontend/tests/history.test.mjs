@@ -276,6 +276,38 @@ test('desfazer uma transformação preserva o asset visual da camada', () => {
   assert.deepEqual(layers[0].transform, transform.before.transform)
 })
 
+test('desfaz e refaz a movimentação de várias camadas como uma ação atômica', () => {
+  const first = { x: 10, y: 20, width: 100, height: 80, rotation: 0 }
+  const second = { x: 220, y: 40, width: 60, height: 90, rotation: 15 }
+  const layers = [
+    { id: 'first', name: 'Primeira', visible: true, opacity: 100, kind: 'image', transform: { ...first } },
+    { id: 'second', name: 'Segunda', visible: true, opacity: 100, kind: 'text', transform: { ...second } }
+  ]
+  const delta = {
+    type: 'layers:transform',
+    items: [
+      { layerId: 'first', before: first, after: { ...first, x: 35, y: 5 } },
+      { layerId: 'second', before: second, after: { ...second, x: 245, y: 25 } }
+    ]
+  }
+
+  const history = useHistory({
+    estimateBytes: estimateEditorHistoryBytes,
+    isNoop: isEditorHistoryDeltaNoop,
+    merge: mergeEditorHistoryDelta
+  })
+  history.record('Mover camadas', delta)
+  applyEditorHistoryDelta(layers, 'second', delta, 'redo', ['first', 'second'])
+  assert.deepEqual(layers.map((layer) => layer.transform), delta.items.map((item) => item.after))
+
+  const transition = history.undo()
+  assert.equal(transition.steps.length, 1)
+  assert.equal(transition.steps[0].delta.items.length, 2)
+  applyEditorHistoryDelta(layers, 'second', transition.steps[0].delta, transition.steps[0].direction, ['first', 'second'])
+  assert.deepEqual(layers.map((layer) => layer.transform), [first, second])
+  assert.equal(isEditorHistoryDeltaNoop(delta), false)
+})
+
 test('desfaz e refaz o modo de mesclagem sem tocar no raster', () => {
   const image = { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:blend' }
   const layers = [{

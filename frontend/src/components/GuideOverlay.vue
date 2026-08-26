@@ -7,6 +7,7 @@ import {
   type RulerOrigin,
   type RulerUnit
 } from '../editor/guides'
+import type { SmartAlignmentGuide } from '../editor/smartGuides'
 
 const props = defineProps<{
   documentOffsetX: number
@@ -20,6 +21,7 @@ const props = defineProps<{
   selectedGuideId: string | null
   snappedX?: number
   snappedY?: number
+  smartGuides: SmartAlignmentGuide[]
   unit: RulerUnit
   visible: boolean
 }>()
@@ -44,7 +46,7 @@ const guideLabels = computed(() => new Map(
   ])
 ))
 
-function guideStyle(guide: EditorGuide) {
+function guideStyle(guide: Pick<EditorGuide, 'orientation' | 'position'>) {
   const rawPosition = guide.orientation === 'vertical'
     ? screenPositionForDocument(guide.position, props.documentOffsetX, props.scale)
     : screenPositionForDocument(guide.position, props.documentOffsetY, props.scale)
@@ -64,8 +66,14 @@ function isSnapped(guide: EditorGuide) {
     : props.snappedY === guide.position
 }
 
+function isSmartAligned(guide: EditorGuide) {
+  return props.smartGuides.some((candidate) =>
+    candidate.orientation === guide.orientation && candidate.position === guide.position
+  )
+}
+
 function updateViewportOffsets(offsetX: number, offsetY: number) {
-  const elements = root.value?.querySelectorAll<HTMLElement>('.document-guide')
+  const elements = root.value?.querySelectorAll<HTMLElement>('.document-guide, .smart-alignment-guide')
   elements?.forEach((element) => {
     const position = Number(element.dataset.guidePosition)
     if (!Number.isFinite(position)) return
@@ -87,6 +95,16 @@ defineExpose({ updateViewportOffsets })
 <template>
   <div ref="root" class="guide-overlay" aria-label="Guias do documento">
     <div
+      v-for="(guide, index) in smartGuides"
+      :key="`smart:${guide.orientation}:${guide.position}:${guide.sourceId ?? index}`"
+      aria-hidden="true"
+      class="smart-alignment-guide"
+      :class="`smart-alignment-guide--${guide.orientation}`"
+      :data-guide-orientation="guide.orientation"
+      :data-guide-position="guide.position"
+      :style="guideStyle(guide)"
+    ></div>
+    <div
       v-for="guide in visibleGuides"
       :key="guide.id"
       class="document-guide"
@@ -96,6 +114,7 @@ defineExpose({ updateViewportOffsets })
           'document-guide--interactive': interactive,
           'document-guide--selected': selectedGuideId === guide.id,
           'document-guide--snapped': isSnapped(guide),
+          'document-guide--smart-aligned': isSmartAligned(guide),
           'document-guide--draft': draftGuide?.id === guide.id
         }
       ]"

@@ -30,9 +30,14 @@ import type { DocumentPoint } from '../editor/freeTransform'
 import {
   documentPositionFromScreen,
   snapDocumentPoint,
-  snapLayerTranslation,
   transformedLayerBounds
 } from '../editor/guides'
+import {
+  createAlignmentTargets,
+  snapTransformToAlignmentTargets,
+  type AlignmentTarget,
+  type SmartAlignmentGuide
+} from '../editor/smartGuides'
 import {
   selectionIsEmpty
 } from '../editor/selection'
@@ -51,10 +56,12 @@ const scrollArea = ref<HTMLDivElement | null>(null)
 const surface = ref<HTMLDivElement | null>(null)
 const canvasRulers = ref<CanvasRulersApi | null>(null)
 const guideOverlay = ref<GuideOverlayApi | null>(null)
+const smartAlignmentGuides = ref<SmartAlignmentGuide[]>([])
 const isPanning = ref(false)
 const panStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0, pointerId: -1 })
 let interactionFrame = 0
 let pendingInteractionFrame: (() => void) | undefined
+let alignmentTargetCache: { key: string; targets: AlignmentTarget[] } | undefined
 let colorSampleFrame = 0
 let pendingColorSample: { point: DocumentPoint; target: ColorSampleTarget } | undefined
 let colorSamplePointer: {
@@ -131,6 +138,7 @@ const {
   flushInteractionFrame,
   discardInteractionFrame,
   selectLayer: (layerId) => emit('selectLayer', layerId),
+  moveLayers: (updates) => emit('moveLayers', updates),
   updateTransform: (layerId, transform) => emit('updateTransform', layerId, transform)
 })
 
@@ -181,6 +189,7 @@ const {
   document: () => props.document,
   guideIds: () => props.guides.map((guide) => guide.id),
   guideSnappingEnabled: () => props.guideSnappingEnabled,
+  smartGuidesEnabled: () => props.smartGuidesEnabled,
   guidesLocked: () => props.guidesLocked,
   rulersVisible: () => props.rulersVisible,
   rulerOrigin: () => props.rulerOrigin,
@@ -194,7 +203,8 @@ const {
   updateGuide: (guide) => emit('updateGuide', guide),
   deleteGuide: (guideId) => emit('deleteGuide', guideId),
   updateGuidesVisible: (visible) => emit('update:guidesVisible', visible),
-  updateRulerOrigin: (origin) => emit('update:rulerOrigin', origin)
+  updateRulerOrigin: (origin) => emit('update:rulerOrigin', origin),
+  setSmartAlignmentGuides: (guides) => { smartAlignmentGuides.value = guides }
 })
 
 function layerIntersectsDocument(layer: LayerItem) {
@@ -438,6 +448,7 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
   selectedGuideId: selectedGuideId.value,
   selectionMoveInteraction: selectionMoveInteraction.value,
   selectionMovePreviewStyle: selectionMovePreviewStyle.value,
+  smartGuides: smartAlignmentGuides.value,
   snappedX: snappedGuides.value.x,
   snappedY: snappedGuides.value.y,
   surfaceStyle: surfaceStyle.value,
@@ -605,12 +616,13 @@ function flushColorSample() {
   if (pending) emit('sampleColor', pending.point, pending.target)
 }
 
-function snappingActive(event: Pick<PointerEvent, 'ctrlKey' | 'metaKey'>) {
+function manualGuideSnappingActive(event: Pick<PointerEvent, 'ctrlKey' | 'metaKey'>) {
   return props.guideSnappingEnabled && props.guidesVisible && props.guides.length > 0 && !event.ctrlKey && !event.metaKey
 }
 
 function snapPointForInteraction(point: DocumentPoint, event: PointerEvent) {
-  if (!snappingActive(event)) {
+  smartAlignmentGuides.value = []
+  if (!manualGuideSnappingActive(event)) {
     setSnappedGuides({})
     return point
   }
@@ -619,13 +631,39 @@ function snapPointForInteraction(point: DocumentPoint, event: PointerEvent) {
   return result.value
 }
 
-function snapTransformForInteraction(transform: LayerTransform, event: PointerEvent) {
-  if (!snappingActive(event)) {
+function snapTransformForInteraction(
+  transform: LayerTransform,
+  event: PointerEvent,
+  movingLayerIds: readonly string[] = props.selectedLayerIds
+) {
+  const manualSnapping = manualGuideSnappingActive(event)
+  if (event.ctrlKey || event.metaKey || (!manualSnapping && !props.smartGuidesEnabled)) {
     setSnappedGuides({})
+    smartAlignmentGuides.value = []
     return transform
   }
-  const result = snapLayerTranslation(transform, props.guides, scale.value)
+  const cacheKey = [
+    manualSnapping ? 'manual' : '',
+    props.smartGuidesEnabled ? 'smart' : '',
+    ...movingLayerIds
+  ].join('\u0000')
+  if (alignmentTargetCache?.key !== cacheKey) {
+    alignmentTargetCache = {
+      key: cacheKey,
+      targets: createAlignmentTargets({
+        document: props.document,
+        excludedLayerIds: movingLayerIds,
+        guides: manualSnapping ? props.guides : [],
+        includeDocument: props.smartGuidesEnabled,
+        includeLayers: props.smartGuidesEnabled,
+        layers: props.layers
+      })
+    }
+  }
+  const targets = alignmentTargetCache.targets
+  const result = snapTransformToAlignmentTargets(transform, targets, scale.value)
   setSnappedGuides({ x: result.snappedX, y: result.snappedY })
+  smartAlignmentGuides.value = result.lines
   return result.value
 }
 
@@ -857,6 +895,8 @@ function stopPointer(event: PointerEvent) {
     panStart.value.pointerId = -1
   }
   setSnappedGuides({})
+  smartAlignmentGuides.value = []
+  alignmentTargetCache = undefined
 }
 
 function handleLostPointerCapture(event: PointerEvent) {
@@ -894,6 +934,7 @@ defineExpose({
     <CanvasContextBar
       :active-tool="activeTool"
       :auto-select-layer="autoSelectLayer"
+      :brush-color="brushColor"
       :brush-size="brushSize"
       :capture-rotation-output="captureTransformRotationOutput"
       :document="document"
@@ -901,6 +942,7 @@ defineExpose({
       :gradient-reversed="gradientReversed"
       :gradient-type="gradientType"
       :guide-snapping-enabled="guideSnappingEnabled"
+      :smart-guides-enabled="smartGuidesEnabled"
       :guides-locked="guidesLocked"
       :guides-visible="guidesVisible"
       :has-selection="Boolean(visibleSelection)"
@@ -923,7 +965,10 @@ defineExpose({
       @delete-selection="emit('deleteSelection')"
       @fit-document="fitDocument"
       @update-auto-select-layer="emit('update:autoSelectLayer', $event)"
+      @update-brush-color="emit('update:brushColor', $event)"
+      @update-brush-size="emit('update:brushSize', $event)"
       @update-guide-snapping-enabled="emit('update:guideSnappingEnabled', $event)"
+      @update-smart-guides-enabled="emit('update:smartGuidesEnabled', $event)"
       @update-gradient-reversed="emit('update:gradientReversed', $event)"
       @update-gradient-type="emit('update:gradientType', $event)"
       @update-guides-locked="emit('update:guidesLocked', $event)"

@@ -6,7 +6,7 @@
 
 ## Metadados
 
-- Última atualização: 2026-08-23
+- Última atualização: 2026-08-26
 - Estado geral: Fases 1 e 2 implementadas, aguardando validação prática; continuidade antes do teste de fogo autorizada pelo mantenedor
 - Ordem aprovada: Degradê linear -> Degradê radial -> Varinha Mágica -> Balde de Tinta
 - Plataformas obrigatórias: Windows e Linux
@@ -489,8 +489,22 @@ da fase e não declarar validação completa.
 | 2026-08-23 | Degradê usa principal no início e secundária no fim | Semântica direta para as duas amostras já existentes |
 | 2026-08-23 | Sem seleção, Degradê cobre o documento | Resultado previsível para rasters compactos e coerente com uma ferramenta de preenchimento |
 | 2026-08-24 | Continuar as fases antes do teste de fogo | O mantenedor optou por validar a família de ferramentas em conjunto e corrigir bugs práticos depois da implementação completa |
+| 2026-08-26 | Pincel e Borracha usam opções na barra contextual | Segue o padrão de ferramentas do Photoshop e evita controles duplicados ou transformações imutáveis no painel lateral |
 
 ## Registro de evolução
+
+### 2026-08-26 — Opções contextuais de Pincel e Borracha
+
+- Tamanho de Pincel/Borracha foi movido do painel Propriedades para a barra superior,
+  com slider e entrada numérica sincronizados entre 1 e 128 px.
+- A cor do Pincel passou a ser editada na mesma barra e continua ligada à amostra
+  principal global; a Borracha mostra sua semântica de apagar para transparência.
+- O painel Propriedades deixou de repetir essas opções e não exibe a transformação
+  somente leitura enquanto Pincel ou Borracha estiverem ativos.
+- Contratos de props e eventos foram propagados por `CanvasContextBar`,
+  `CanvasViewport`, `canvas.types.ts` e `App.vue`.
+- Validações concluídas: 266 testes frontend, testes e `vet` do Go, TypeScript
+  estrito, build Vite de produção e `git diff --check` aprovados.
 
 ### 2026-08-23 — Base matemática do Degradê linear
 

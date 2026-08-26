@@ -9,9 +9,17 @@ import {
   brushPreviewUsesLayerSpace,
   brushStrokeGeometry,
   drawBrushPoints,
+  normalizeBrushSize,
   stableEraserPreviewSize
 } from '../src/editor/brush.ts'
 import { clipContextToSelection } from '../src/editor/selection.ts'
+
+test('normaliza o tamanho informado pela barra contextual', () => {
+  assert.equal(normalizeBrushSize(Number.NaN), 1)
+  assert.equal(normalizeBrushSize(0), 1)
+  assert.equal(normalizeBrushSize(24.6), 25)
+  assert.equal(normalizeBrushSize(999), 128)
+})
 
 test('filtra amostras redundantes sem perder o ponto final', () => {
   const points = [{ x: 0, y: 0 }]

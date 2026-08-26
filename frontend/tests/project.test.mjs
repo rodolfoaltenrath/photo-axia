@@ -53,6 +53,7 @@ function projectState() {
     view: {
       activeLayerId: 'image-a',
       guideSnappingEnabled: true,
+      smartGuidesEnabled: true,
       guidesLocked: false,
       guidesVisible: true,
       rulerOrigin: { x: 12, y: 8 },
@@ -91,12 +92,14 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
   assert.equal(restored.layers[2].transform.rotation, -5)
   assert.deepEqual(restored.guides, projectState().guides)
   assert.equal(restored.view.activeLayerId, 'image-a')
+  assert.equal(restored.view.smartGuidesEnabled, true)
   assert.equal(restored.view.zoom, 68.89)
 })
 
 test('projetos antigos sem mesclagem são restaurados em modo normal', () => {
   const { manifest } = createAxiaProjectManifest(projectState())
   manifest.version = 1
+  delete manifest.view.smartGuidesEnabled
   delete manifest.document.layerStyleGlobalLight
   for (const layer of manifest.layers) {
     delete layer.blendMode
@@ -108,6 +111,7 @@ test('projetos antigos sem mesclagem são restaurados em modo normal', () => {
   assert.ok(restored.layers.every((layer) => layer.blendMode === 'normal'))
   assert.ok(restored.layers.every((layer) => layer.styles.fillOpacity === 100))
   assert.deepEqual(restored.document.layerStyleGlobalLight, { angle: 120, altitude: 30 })
+  assert.equal(restored.view.smartGuidesEnabled, true)
 })
 
 test('persiste estilos, luz global e padrões sem gravar URLs transitórias no manifesto', () => {

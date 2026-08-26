@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  constrainedTranslationDelta,
   layerTransformStyle,
+  layerTransformOnlyMoved,
   layerTransformsMatch,
   moveLayerTransform,
   resizeLayerTransform,
@@ -21,10 +23,25 @@ test('gera posicionamento visual sem arredondar a geometria da camada', () => {
   )
 })
 
+test('Shift restringe o deslocamento da camada a incrementos de 45 graus', () => {
+  assert.deepEqual(constrainedTranslationDelta(30, 4, true), { x: 30.27, y: 0 })
+  const diagonal = constrainedTranslationDelta(20, 16, true)
+  assert.equal(diagonal.x, diagonal.y)
+  assert.deepEqual(constrainedTranslationDelta(20, 16, false), { x: 20, y: 16 })
+})
+
 test('considera rotacao ausente equivalente a zero', () => {
   const base = { x: 2, y: 3, width: 100, height: 80 }
   assert.equal(layerTransformsMatch(base, { ...base, rotation: 0 }), true)
   assert.equal(layerTransformsMatch(base, { ...base, x: 2.01 }), false)
+})
+
+test('distingue movimento puro de redimensionamento ou rotação', () => {
+  const original = { x: 2, y: 3, width: 100, height: 80, rotation: 10 }
+  assert.equal(layerTransformOnlyMoved(original, { ...original, x: 20, y: -4 }), true)
+  assert.equal(layerTransformOnlyMoved(original, { ...original }), false)
+  assert.equal(layerTransformOnlyMoved(original, { ...original, width: 120 }), false)
+  assert.equal(layerTransformOnlyMoved(original, { ...original, rotation: 20 }), false)
 })
 
 test('move a camada no espaço do documento preservando tamanho e rotação', () => {

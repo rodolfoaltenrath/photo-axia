@@ -44,6 +44,13 @@ export function layerTransformsMatch(first: LayerTransform, second: LayerTransfo
     (first.rotation ?? 0) === (second.rotation ?? 0)
 }
 
+export function layerTransformOnlyMoved(first: LayerTransform, second: LayerTransform) {
+  return (first.x !== second.x || first.y !== second.y) &&
+    first.width === second.width &&
+    first.height === second.height &&
+    (first.rotation ?? 0) === (second.rotation ?? 0)
+}
+
 export function layerTransformStyle(transform: LayerTransform) {
   return {
     left: '0',
@@ -68,6 +75,21 @@ export function moveLayerTransform(
     ...initial,
     x: Math.round((initial.x + pointer.x - start.x) * 100) / 100,
     y: Math.round((initial.y + pointer.y - start.y) * 100) / 100
+  }
+}
+
+export function constrainedTranslationDelta(deltaX: number, deltaY: number, constrain = false) {
+  let x = deltaX
+  let y = deltaY
+  if (constrain && (x || y)) {
+    const distance = Math.hypot(x, y)
+    const angle = Math.round(Math.atan2(y, x) / (Math.PI / 4)) * (Math.PI / 4)
+    x = Math.cos(angle) * distance
+    y = Math.sin(angle) * distance
+  }
+  return {
+    x: Math.round(x * 100) / 100,
+    y: Math.round(y * 100) / 100
   }
 }
 

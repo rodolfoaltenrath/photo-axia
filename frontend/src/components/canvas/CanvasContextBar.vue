@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { formatZoom } from '../../editor/viewport'
+import { MAX_BRUSH_SIZE, normalizeBrushSize } from '../../editor/brush'
 import type { RulerUnit } from '../../editor/guides'
 import type { SelectionMode } from '../../editor/selection'
 import type { SelectionCombineMode } from '../../editor/selectionCombine'
@@ -9,12 +10,14 @@ import type { DocumentSpec, EditorTool } from '../../types/editor'
 defineProps<{
   activeTool: EditorTool
   autoSelectLayer: boolean
+  brushColor: string
   brushSize: number
   document: DocumentSpec
   guideCount: number
   gradientReversed: boolean
   gradientType: GradientType
   guideSnappingEnabled: boolean
+  smartGuidesEnabled: boolean
   guidesLocked: boolean
   guidesVisible: boolean
   hasSelection: boolean
@@ -41,7 +44,10 @@ const emit = defineEmits<{
   (event: 'deleteSelection'): void
   (event: 'fitDocument'): void
   (event: 'updateAutoSelectLayer', enabled: boolean): void
+  (event: 'updateBrushColor', color: string): void
+  (event: 'updateBrushSize', size: number): void
   (event: 'updateGuideSnappingEnabled', enabled: boolean): void
+  (event: 'updateSmartGuidesEnabled', enabled: boolean): void
   (event: 'updateGradientReversed', reversed: boolean): void
   (event: 'updateGradientType', type: GradientType): void
   (event: 'updateGuidesLocked', enabled: boolean): void
@@ -57,6 +63,10 @@ const emit = defineEmits<{
   (event: 'zoomIn'): void
   (event: 'zoomOut'): void
 }>()
+
+function updateBrushSize(value: number) {
+  emit('updateBrushSize', normalizeBrushSize(value))
+}
 </script>
 
 <template>
@@ -155,7 +165,38 @@ const emit = defineEmits<{
       />
       <span>Seleção automática</span>
     </label>
-    <span v-if="activeTool === 'brush' || activeTool === 'eraser'">{{ brushSize }} px</span>
+    <div v-if="activeTool === 'brush' || activeTool === 'eraser'" class="brush-context-options">
+      <label class="brush-size-control">
+        <span>Tamanho</span>
+        <input
+          :value="brushSize"
+          aria-label="Tamanho do pincel em pixels"
+          :max="MAX_BRUSH_SIZE"
+          min="1"
+          type="range"
+          @input="updateBrushSize(Number(($event.target as HTMLInputElement).value))"
+        />
+        <input
+          :value="brushSize"
+          aria-label="Tamanho do pincel"
+          :max="MAX_BRUSH_SIZE"
+          min="1"
+          type="number"
+          @input="updateBrushSize(Number(($event.target as HTMLInputElement).value))"
+        />
+        <span>px</span>
+      </label>
+      <label v-if="activeTool === 'brush'" class="brush-color-control">
+        <span>Cor</span>
+        <input
+          :value="brushColor"
+          aria-label="Cor do pincel"
+          type="color"
+          @input="emit('updateBrushColor', ($event.target as HTMLInputElement).value)"
+        />
+      </label>
+      <span v-else class="brush-context-hint">Apaga para transparência</span>
+    </div>
     <div v-if="activeTool === 'gradient'" class="gradient-options">
       <div class="gradient-mode-control" role="group" aria-label="Tipo de degradê">
         <button
@@ -233,6 +274,14 @@ const emit = defineEmits<{
             @change="emit('updateGuideSnappingEnabled', ($event.target as HTMLInputElement).checked)"
           />
           Encaixar nas guias
+        </label>
+        <label>
+          <input
+            :checked="smartGuidesEnabled"
+            type="checkbox"
+            @change="emit('updateSmartGuidesEnabled', ($event.target as HTMLInputElement).checked)"
+          />
+          Guias inteligentes
         </label>
         <label>
           <input
