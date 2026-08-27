@@ -9,7 +9,8 @@ import {
 } from '../src/editor/groupTransform.ts'
 import {
   createTransformSessionRef,
-  layerDragIds
+  layerDragIds,
+  shouldSelectClickedLayer
 } from '../src/components/canvas/composables/useFreeTransform.ts'
 
 function approxEqual(actual, expected, tolerance = 0.01) {
@@ -26,6 +27,12 @@ test('arrastar uma camada já selecionada preserva todo o grupo selecionado', ()
 
 test('arrastar uma camada fora da seleção troca o alvo para somente ela', () => {
   assert.deepEqual(layerDragIds(['a', 'b'], 'c'), ['c'])
+})
+
+test('Ctrl ativa temporariamente a seleção automática sem alterar a preferência', () => {
+  assert.equal(shouldSelectClickedLayer(true, false), true)
+  assert.equal(shouldSelectClickedLayer(false, false), false)
+  assert.equal(shouldSelectClickedLayer(false, true), true)
 })
 
 test('caixa de grupo com uma camada reproduz o retângulo original, com rotação', () => {

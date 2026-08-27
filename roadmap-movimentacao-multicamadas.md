@@ -53,3 +53,21 @@ suas posições relativas, dimensões e rotações individuais.
 - [x] Build de produção do frontend com Vite 8.
 - [x] `go test ./...` e `go vet ./...` com Go 1.26.5.
 - [ ] Validação manual no aplicativo instalado.
+
+## Preferência e seleção temporária — 2026-08-27
+
+1. A opção `Seleção automática` passou a ser uma preferência global persistida no
+   armazenamento local do aplicativo, usando a chave `axia:auto-select-layer`.
+2. Na primeira execução, ou se o armazenamento estiver indisponível, o comportamento
+   continua sendo ligado por padrão.
+3. Trocar de documento ou entrar em conteúdo inteligente não redefine mais a opção;
+   a última decisão do usuário permanece ativa também após fechar e reabrir o Axia.
+4. Com a opção desligada, o clique normal continua movendo a camada ativa.
+5. `Ctrl+clique` ativa a seleção automática somente durante aquele gesto: escolhe a
+   camada visível atingida pelo ponteiro e permite arrastá-la sem marcar a preferência.
+6. Se houver uma seleção de pixels, `Ctrl+clique` prioriza a escolha da camada; o clique
+   normal continua reservado ao movimento dos pixels selecionados.
+7. Foram adicionados testes para valor padrão, restauração, gravação, armazenamento
+   bloqueado e seleção automática temporária pelo modificador `Ctrl`.
+8. Validação automática concluída com 302 testes frontend, verificação TypeScript,
+   build Vite de produção, `go test ./...`, `go vet ./...` e `git diff --check`.

@@ -63,6 +63,10 @@ export function layerDragIds(selectedLayerIds: readonly string[], targetLayerId:
   return uniqueSelection.includes(targetLayerId) ? uniqueSelection : [targetLayerId]
 }
 
+export function shouldSelectClickedLayer(autoSelectLayer: boolean, controlKey: boolean) {
+  return autoSelectLayer || controlKey
+}
+
 export function useFreeTransform(options: FreeTransformOptions) {
   const freeTransformBox = ref<HTMLElement | null>(null)
   const transformRotationOutput = ref<HTMLElement | null>(null)
@@ -474,7 +478,9 @@ export function useFreeTransform(options: FreeTransformOptions) {
   function startLayerDrag(event: PointerEvent, clickedLayer: LayerItem) {
     event.stopPropagation()
     event.preventDefault()
-    const targetLayer = options.autoSelectLayer() ? clickedLayer : options.activeLayer()
+    const targetLayer = shouldSelectClickedLayer(options.autoSelectLayer(), event.ctrlKey)
+      ? clickedLayer
+      : options.activeLayer()
     if (!targetLayer?.visible) return true
     const selectedLayerIds = options.selectedLayerIds()
     if (!selectedLayerIds.includes(targetLayer.id)) options.selectLayer(targetLayer.id)

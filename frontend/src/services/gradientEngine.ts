@@ -3,7 +3,13 @@ import {
   renderGradientRasterRows,
   type GradientRasterState
 } from '../editor/gradientRaster'
-import { gradientIsDegenerate, type GradientConfig, type GradientGeometry } from '../editor/gradient'
+import {
+  gradientIsDegenerate,
+  normalizeGradientStopsConfig,
+  type GradientConfigInput,
+  type GradientGeometry,
+  type GradientStopsConfig
+} from '../editor/gradient'
 import { cloneSelection, selectionIsEmpty, type SelectionRegion } from '../editor/selection'
 import type { ImageAsset, LayerTransform } from '../types/editor'
 
@@ -98,7 +104,7 @@ async function encodeGradientResult(
   const canvas = makeCanvas(state.geometry.width, state.geometry.height)
   const context = canvasContext(canvas)
   context.putImageData(
-    new ImageData(new Uint8ClampedArray(state.pixels), state.geometry.width, state.geometry.height),
+    new ImageData(state.pixels, state.geometry.width, state.geometry.height),
     0,
     0
   )
@@ -149,7 +155,7 @@ async function fallbackGradient(
   asset: ImageAsset,
   transform: LayerTransform,
   geometry: GradientGeometry,
-  config: GradientConfig,
+  config: GradientStopsConfig,
   selection: SelectionRegion | null,
   previewWidth: number,
   previewHeight: number,
@@ -179,9 +185,10 @@ async function fallbackGradient(
     config,
     selection,
     documentWidth,
-    documentHeight
+    documentHeight,
+    reuseSourceBuffer: true
   })
-  const rowsPerChunk = 32
+  const rowsPerChunk = 128
   for (let row = 0; row < state.geometry.height; row += rowsPerChunk) {
     throwIfAborted(signal)
     renderGradientRasterRows(state, row, row + rowsPerChunk)
@@ -194,7 +201,7 @@ export async function applyGradient(
   asset: ImageAsset,
   transform: LayerTransform,
   geometry: GradientGeometry,
-  config: GradientConfig,
+  config: GradientConfigInput,
   selection: SelectionRegion | null,
   previewWidth: number,
   previewHeight: number,
@@ -216,7 +223,7 @@ export async function applyGradient(
     start: { ...geometry.start },
     end: { ...geometry.end }
   }
-  const workerConfig: GradientConfig = { ...config }
+  const workerConfig = normalizeGradientStopsConfig(config)
   const workerSelection = cloneSelection(activeSelection)
   const worker = gradientWorkerInstance()
   if (!worker) {

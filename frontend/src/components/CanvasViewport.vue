@@ -287,6 +287,7 @@ const {
 const {
   cancelGradient,
   captureGradientPreviewCanvas,
+  gradientPreviewHidesLayer,
   gradientInteraction,
   gradientPreviewDimensions,
   gradientPreviewStyle,
@@ -298,18 +299,14 @@ const {
   updateGradientPointer
 } = useGradientInteraction({
   activeTool: () => props.activeTool,
-  config: () => ({
-    type: props.gradientType,
-    foregroundColor: props.foregroundColor,
-    backgroundColor: props.backgroundColor,
-    reversed: props.gradientReversed
-  }),
+  config: () => props.gradientConfig,
   document: () => props.document,
   isBusy: () => props.isBusy,
   paintableLayer: () => paintableLayer.value,
   scale: () => scale.value,
   selection: () => props.selection,
   scrollArea,
+  surface,
   documentPointFromPointer: pointerToDocument,
   scheduleInteractionFrame,
   discardInteractionFrame,
@@ -461,6 +458,7 @@ const canvasSurfaceActions: CanvasSurfaceActions = {
   brushPreviewHidesLayer,
   captureBrushPreviewCanvas,
   captureGradientPreviewCanvas,
+  gradientPreviewHidesLayer,
   captureCanvasRulers,
   captureFreeTransformBox,
   captureGuideOverlay,
@@ -810,7 +808,8 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
   commitKeyboardLayerMove()
   if (isTransforming.value) commitFreeTransform()
 
-  if (props.selection && !selectionIsEmpty(props.selection)) {
+  const temporaryAutoSelect = !props.autoSelectLayer && event.ctrlKey
+  if (props.selection && !selectionIsEmpty(props.selection) && !temporaryAutoSelect) {
     event.stopPropagation()
     event.preventDefault()
     const point = pointerToDocument(event)
@@ -939,8 +938,7 @@ defineExpose({
       :capture-rotation-output="captureTransformRotationOutput"
       :document="document"
       :guide-count="guides.length"
-      :gradient-reversed="gradientReversed"
-      :gradient-type="gradientType"
+      :gradient-config="gradientConfig"
       :guide-snapping-enabled="guideSnappingEnabled"
       :smart-guides-enabled="smartGuidesEnabled"
       :guides-locked="guidesLocked"
@@ -969,8 +967,7 @@ defineExpose({
       @update-brush-size="emit('update:brushSize', $event)"
       @update-guide-snapping-enabled="emit('update:guideSnappingEnabled', $event)"
       @update-smart-guides-enabled="emit('update:smartGuidesEnabled', $event)"
-      @update-gradient-reversed="emit('update:gradientReversed', $event)"
-      @update-gradient-type="emit('update:gradientType', $event)"
+      @update-gradient-config="emit('update:gradientConfig', $event)"
       @update-guides-locked="emit('update:guidesLocked', $event)"
       @update-guides-visible="emit('update:guidesVisible', $event)"
       @update-magic-wand-contiguous="emit('update:magicWandContiguous', $event)"

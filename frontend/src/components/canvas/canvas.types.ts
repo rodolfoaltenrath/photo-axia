@@ -1,5 +1,5 @@
 import type { BrushOperation } from '../../editor/brush'
-import type { GradientConfig, GradientGeometry, GradientType } from '../../editor/gradient'
+import type { GradientGeometry, GradientStopsConfig } from '../../editor/gradient'
 import type { DocumentPoint, TransformHandle } from '../../editor/freeTransform'
 import type { EditorGuide, GuideOrientation, RulerOrigin, RulerUnit } from '../../editor/guides'
 import type { SelectionMode, SelectionPoint, SelectionRegion } from '../../editor/selection'
@@ -33,8 +33,7 @@ export interface CanvasViewportProps {
   brushSize: number
   foregroundColor: string
   backgroundColor: string
-  gradientReversed: boolean
-  gradientType: GradientType
+  gradientConfig: GradientStopsConfig
   document: DocumentSpec
   guides: EditorGuide[]
   guidesLocked: boolean
@@ -89,7 +88,7 @@ export interface CanvasViewportEmits {
   (
     event: 'gradientGesture',
     geometry: GradientGeometry,
-    config: GradientConfig,
+    config: GradientStopsConfig,
     selection: SelectionRegion | null
   ): void
   (event: 'paintBucket', point: SelectionPoint, color: string, selection: SelectionRegion | null): void
@@ -104,8 +103,7 @@ export interface CanvasViewportEmits {
   (event: 'update:magicWandTolerance', tolerance: number): void
   (event: 'update:paintBucketContiguous', enabled: boolean): void
   (event: 'update:paintBucketTolerance', tolerance: number): void
-  (event: 'update:gradientReversed', reversed: boolean): void
-  (event: 'update:gradientType', type: GradientType): void
+  (event: 'update:gradientConfig', config: GradientStopsConfig): void
   (event: 'update:guidesLocked', enabled: boolean): void
   (event: 'update:guidesVisible', enabled: boolean): void
   (event: 'update:guideSnappingEnabled', enabled: boolean): void
@@ -163,6 +161,7 @@ export interface CanvasSurfaceView {
 
 export interface CanvasSurfaceActions {
   brushPreviewHidesLayer: (layerId: string) => boolean
+  gradientPreviewHidesLayer: (layerId: string) => boolean
   captureBrushPreviewCanvas: (element: unknown) => void
   captureGradientPreviewCanvas: (element: unknown) => void
   captureCanvasRulers: (element: unknown) => void
@@ -278,7 +277,7 @@ export interface GradientInteraction {
   pointerId: number
   layerId: string
   geometry: GradientGeometry
-  config: GradientConfig
+  config: GradientStopsConfig
   selection: SelectionRegion | null
 }
 

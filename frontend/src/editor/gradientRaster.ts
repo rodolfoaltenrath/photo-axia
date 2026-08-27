@@ -1,7 +1,10 @@
 import {
-  parseGradientColor,
-  type GradientConfig,
-  type GradientGeometry
+  createGradientInterpolator,
+  normalizeGradientStopsConfig,
+  type GradientConfigInput,
+  type GradientGeometry,
+  type GradientInterpolator,
+  type GradientType
 } from './gradient.ts'
 import {
   invertMatrix,
@@ -32,21 +35,21 @@ export interface GradientRasterRequest {
   sourceHeight: number
   transform: LayerTransform
   geometry: GradientGeometry
-  config: GradientConfig
+  config: GradientConfigInput
   selection: SelectionRegion | null
   documentWidth: number
   documentHeight: number
+  reuseSourceBuffer?: boolean
 }
 
 export interface GradientRasterState {
-  pixels: Uint8ClampedArray
+  pixels: Uint8ClampedArray<ArrayBuffer>
   geometry: GradientRasterGeometry
   outputToDocument: Matrix2D
-  startColor: readonly [number, number, number]
-  endColor: readonly [number, number, number]
+  writeGradient: GradientInterpolator['write']
   contains: (x: number, y: number) => boolean
   gradient: GradientGeometry
-  gradientType: GradientConfig['type']
+  gradientType: GradientType
 }
 
 function normalizedDocumentBounds(width: number, height: number): SelectionBounds {
@@ -202,11 +205,23 @@ export function createGradientRasterState(request: GradientRasterRequest): Gradi
     true,
     expansionBounds
   )
-  const pixels = new Uint8ClampedArray(geometry.width * geometry.height * 4)
-  for (let row = 0; row < request.sourceHeight; row++) {
-    const sourceStart = row * request.sourceWidth * 4
-    const targetStart = ((row - geometry.originY) * geometry.width - geometry.originX) * 4
-    pixels.set(request.sourcePixels.subarray(sourceStart, sourceStart + request.sourceWidth * 4), targetStart)
+  const canReuseSource = request.reuseSourceBuffer === true &&
+    request.sourcePixels instanceof Uint8ClampedArray &&
+    request.sourcePixels.buffer instanceof ArrayBuffer &&
+    request.sourcePixels.byteLength === expectedLength &&
+    geometry.originX === 0 &&
+    geometry.originY === 0 &&
+    geometry.width === request.sourceWidth &&
+    geometry.height === request.sourceHeight
+  const pixels: Uint8ClampedArray<ArrayBuffer> = canReuseSource
+    ? request.sourcePixels as Uint8ClampedArray<ArrayBuffer>
+    : new Uint8ClampedArray(geometry.width * geometry.height * 4)
+  if (!canReuseSource) {
+    for (let row = 0; row < request.sourceHeight; row++) {
+      const sourceStart = row * request.sourceWidth * 4
+      const targetStart = ((row - geometry.originY) * geometry.width - geometry.originX) * 4
+      pixels.set(request.sourcePixels.subarray(sourceStart, sourceStart + request.sourceWidth * 4), targetStart)
+    }
   }
   const sourceToDocument = layerSourceToDocumentMatrix(
     request.transform,
@@ -221,17 +236,15 @@ export function createGradientRasterState(request: GradientRasterRequest): Gradi
     sourceToDocument[0] * geometry.originX + sourceToDocument[2] * geometry.originY + sourceToDocument[4],
     sourceToDocument[1] * geometry.originX + sourceToDocument[3] * geometry.originY + sourceToDocument[5]
   ]
-  const foreground = parseGradientColor(request.config.foregroundColor)
-  const background = parseGradientColor(request.config.backgroundColor)
+  const config = normalizeGradientStopsConfig(request.config)
   return {
     pixels,
     geometry,
     outputToDocument,
-    startColor: request.config.reversed ? background : foreground,
-    endColor: request.config.reversed ? foreground : background,
+    writeGradient: createGradientInterpolator(config).write,
     contains: selectionPredicate(request.selection, request.documentWidth, request.documentHeight),
     gradient: request.geometry,
-    gradientType: request.config.type
+    gradientType: config.type
   }
 }
 
@@ -245,9 +258,6 @@ export function renderGradientRasterRows(state: GradientRasterState, startRow: n
     ? Math.sqrt(deltaX * deltaX + deltaY * deltaY)
     : deltaX * deltaX + deltaY * deltaY
   const validDivisor = Number.isFinite(divisor) && divisor > Number.EPSILON
-  const redDelta = state.endColor[0] - state.startColor[0]
-  const greenDelta = state.endColor[1] - state.startColor[1]
-  const blueDelta = state.endColor[2] - state.startColor[2]
   for (let y = firstRow; y < lastRow; y++) {
     let documentX = matrix[0] * 0.5 + matrix[2] * (y + 0.5) + matrix[4]
     let documentY = matrix[1] * 0.5 + matrix[3] * (y + 0.5) + matrix[5]
@@ -263,10 +273,7 @@ export function renderGradientRasterRows(state: GradientRasterState, startRow: n
           progress = Math.min(1, Math.max(0, rawProgress))
         }
         const offset = (y * state.geometry.width + x) * 4
-        state.pixels[offset] = Math.round(state.startColor[0] + redDelta * progress)
-        state.pixels[offset + 1] = Math.round(state.startColor[1] + greenDelta * progress)
-        state.pixels[offset + 2] = Math.round(state.startColor[2] + blueDelta * progress)
-        state.pixels[offset + 3] = 255
+        state.writeGradient(state.pixels, offset, progress)
       }
       documentX += matrix[0]
       documentY += matrix[1]

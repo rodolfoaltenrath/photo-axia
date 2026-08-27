@@ -76,6 +76,7 @@ import { MutationBarrier } from './editor/mutationBarrier'
 import type { ExportSettings } from './editor/exportSettings'
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
+import { readAutoSelectLayerPreference, writeAutoSelectLayerPreference } from './editor/preferences'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
 import { moveLayerBy, moveLayerRelativeTo } from './editor/layerOrder'
 import { layerCanRasterize, layerSupportsRotationBaking, rasterizedLayerPatch } from './editor/layerRasterization'
@@ -131,7 +132,8 @@ import {
   seedSmartLayerRender
 } from './services/smartLayerRenderer'
 import type { BrushOperation } from './editor/brush'
-import type { GradientConfig, GradientGeometry, GradientType } from './editor/gradient'
+import type { GradientGeometry, GradientStopsConfig } from './editor/gradient'
+import { createGradientToolConfig, syncSimpleGradientColors } from './editor/gradientToolState'
 import { gradientResultTransform } from './editor/gradientRaster'
 import {
   disposeSelectionMoveEngine,
@@ -167,14 +169,25 @@ function initialRulersVisibility() {
   return true
 }
 
+function browserPreferenceStorage() {
+  if (typeof window === 'undefined') return undefined
+  try {
+    return window.localStorage
+  } catch {
+    return undefined
+  }
+}
+
 const activeTool = ref<EditorTool>('move')
-const autoSelectLayer = ref(true)
+const autoSelectLayer = ref(readAutoSelectLayerPreference(browserPreferenceStorage()))
 const zoom = ref(100)
 const brushSize = ref(24)
 const brushColor = ref('#000000')
 const backgroundColor = ref('#ffffff')
-const gradientReversed = ref(false)
-const gradientType = ref<GradientType>('linear')
+const gradientConfig = ref<GradientStopsConfig>(createGradientToolConfig(
+  brushColor.value,
+  backgroundColor.value
+))
 const guides = ref<EditorGuide[]>([])
 const rulersVisible = ref(initialRulersVisibility())
 const guidesVisible = ref(true)
@@ -265,7 +278,6 @@ interface SmartLayerEditSession {
   targetLayerName: string
   parentActiveLayerId: string
   parentActiveTool: EditorTool
-  parentAutoSelectLayer: boolean
   parentDocument: DocumentSpec
   parentDirty: boolean
   parentGuideSnappingEnabled: boolean
@@ -437,6 +449,14 @@ watch(rulersVisible, (visible) => {
   } catch {
     // A preferencia em memoria ainda funciona quando o armazenamento e bloqueado.
   }
+})
+
+watch(autoSelectLayer, (enabled) => {
+  writeAutoSelectLayerPreference(browserPreferenceStorage(), enabled)
+})
+
+watch([brushColor, backgroundColor], ([foreground, background]) => {
+  gradientConfig.value = syncSimpleGradientColors(gradientConfig.value, foreground, background)
 })
 
 function createBackgroundLayer(): LayerItem {
@@ -1990,7 +2010,6 @@ function restoreSmartLayerParent(session: SmartLayerEditSession) {
   rulersVisible.value = session.parentRulersVisible
   zoom.value = session.parentZoom
   activeTool.value = session.parentActiveTool
-  autoSelectLayer.value = session.parentAutoSelectLayer
   activeLayerId.value = session.parentActiveLayerId
   selectedLayerIds.value = session.parentSelectedLayerIds
   layerSelectionAnchorId.value = session.parentLayerSelectionAnchorId
@@ -2030,7 +2049,6 @@ async function editSmartLayerContent(layerId = activeLayerId.value) {
     targetLayerName: layer.name,
     parentActiveLayerId: activeLayerId.value,
     parentActiveTool: activeTool.value,
-    parentAutoSelectLayer: autoSelectLayer.value,
     parentDocument: activeDocument.value,
     parentDirty: documentDirty.value,
     parentGuideSnappingEnabled: guideSnappingEnabled.value,
@@ -2067,7 +2085,6 @@ async function editSmartLayerContent(layerId = activeLayerId.value) {
     rulerUnit.value = 'px'
     history.clear('Conteúdo inteligente aberto')
     activeTool.value = 'move'
-    autoSelectLayer.value = true
     activeLayerId.value = editLayers[0]!.id
     selectedLayerIds.value = [editLayers[0]!.id]
     layerSelectionAnchorId.value = editLayers[0]!.id
@@ -2751,7 +2768,7 @@ function commitBrushStroke(
 
 async function performGradient(
   geometry: GradientGeometry,
-  config: GradientConfig,
+  config: GradientStopsConfig,
   gradientSelection: SelectionRegion | null,
   signal: AbortSignal
 ) {
@@ -2847,7 +2864,7 @@ async function performGradient(
 
 function commitGradient(
   geometry: GradientGeometry,
-  config: GradientConfig,
+  config: GradientStopsConfig,
   gradientSelection: SelectionRegion | null
 ) {
   if (rasterMutationBarrier.isPending) return
@@ -3843,8 +3860,7 @@ onBeforeUnmount(() => {
         :brush-size="brushSize"
         :foreground-color="brushColor"
         :background-color="backgroundColor"
-        :gradient-reversed="gradientReversed"
-        :gradient-type="gradientType"
+        :gradient-config="gradientConfig"
         :document="activeDocument"
         :guides="guides"
         :guides-locked="guidesLocked"
@@ -3875,8 +3891,7 @@ onBeforeUnmount(() => {
         @paint-stroke="commitBrushStroke"
         @gradient-gesture="commitGradient"
         @paint-bucket="commitPaintBucket"
-        @update:gradient-reversed="gradientReversed = $event"
-        @update:gradient-type="gradientType = $event"
+        @update:gradient-config="gradientConfig = $event"
         @update:brush-color="brushColor = $event"
         @update:brush-size="brushSize = $event"
         @sample-color="sampleColor"

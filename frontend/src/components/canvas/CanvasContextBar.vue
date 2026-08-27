@@ -1,21 +1,23 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
+import GradientStopsEditor from '../GradientStopsEditor.vue'
 import { formatZoom } from '../../editor/viewport'
 import { MAX_BRUSH_SIZE, normalizeBrushSize } from '../../editor/brush'
 import type { RulerUnit } from '../../editor/guides'
 import type { SelectionMode } from '../../editor/selection'
 import type { SelectionCombineMode } from '../../editor/selectionCombine'
-import type { GradientType } from '../../editor/gradient'
+import type { GradientStopsConfig } from '../../editor/gradient'
+import { gradientStripBackground } from '../../editor/gradientEditor'
 import type { DocumentSpec, EditorTool } from '../../types/editor'
 
-defineProps<{
+const props = defineProps<{
   activeTool: EditorTool
   autoSelectLayer: boolean
   brushColor: string
   brushSize: number
   document: DocumentSpec
   guideCount: number
-  gradientReversed: boolean
-  gradientType: GradientType
+  gradientConfig: GradientStopsConfig
   guideSnappingEnabled: boolean
   smartGuidesEnabled: boolean
   guidesLocked: boolean
@@ -48,8 +50,7 @@ const emit = defineEmits<{
   (event: 'updateBrushSize', size: number): void
   (event: 'updateGuideSnappingEnabled', enabled: boolean): void
   (event: 'updateSmartGuidesEnabled', enabled: boolean): void
-  (event: 'updateGradientReversed', reversed: boolean): void
-  (event: 'updateGradientType', type: GradientType): void
+  (event: 'updateGradientConfig', config: GradientStopsConfig): void
   (event: 'updateGuidesLocked', enabled: boolean): void
   (event: 'updateGuidesVisible', enabled: boolean): void
   (event: 'updateMagicWandContiguous', enabled: boolean): void
@@ -67,6 +68,11 @@ const emit = defineEmits<{
 function updateBrushSize(value: number) {
   emit('updateBrushSize', normalizeBrushSize(value))
 }
+
+const gradientEditorOpen = ref(false)
+watch(() => props.activeTool, (tool) => {
+  if (tool !== 'gradient') gradientEditorOpen.value = false
+})
 </script>
 
 <template>
@@ -156,7 +162,7 @@ function updateBrushSize(value: number) {
     <label
       v-else-if="activeTool === 'move'"
       class="auto-select-control"
-      title="Ao desativar, clicar no documento mantém e move a camada selecionada"
+      title="Ao desativar, o clique normal mantém a camada atual; use Ctrl+clique para escolher temporariamente outra camada"
     >
       <input
         :checked="autoSelectLayer"
@@ -198,27 +204,47 @@ function updateBrushSize(value: number) {
       <span v-else class="brush-context-hint">Apaga para transparência</span>
     </div>
     <div v-if="activeTool === 'gradient'" class="gradient-options">
+      <div class="gradient-editor-control">
+        <button
+          class="gradient-editor-trigger"
+          type="button"
+          :aria-expanded="gradientEditorOpen"
+          aria-haspopup="dialog"
+          @click="gradientEditorOpen = !gradientEditorOpen"
+        >
+          <span class="gradient-editor-trigger-checker">
+            <span :style="{ backgroundImage: gradientStripBackground(gradientConfig) }"></span>
+          </span>
+          Editar degradê
+        </button>
+        <GradientStopsEditor
+          v-if="gradientEditorOpen"
+          :config="gradientConfig"
+          @close="gradientEditorOpen = false"
+          @update:config="emit('updateGradientConfig', $event)"
+        />
+      </div>
       <div class="gradient-mode-control" role="group" aria-label="Tipo de degradê">
         <button
-          :class="{ active: gradientType === 'linear' }"
-          :aria-pressed="gradientType === 'linear'"
+          :class="{ active: gradientConfig.type === 'linear' }"
+          :aria-pressed="gradientConfig.type === 'linear'"
           type="button"
-          @click="emit('updateGradientType', 'linear')"
+          @click="emit('updateGradientConfig', { ...gradientConfig, type: 'linear' })"
         >Linear</button>
         <button
-          :class="{ active: gradientType === 'radial' }"
-          :aria-pressed="gradientType === 'radial'"
+          :class="{ active: gradientConfig.type === 'radial' }"
+          :aria-pressed="gradientConfig.type === 'radial'"
           type="button"
-          @click="emit('updateGradientType', 'radial')"
+          @click="emit('updateGradientConfig', { ...gradientConfig, type: 'radial' })"
         >Radial</button>
       </div>
       <button
         class="gradient-reverse-button"
         type="button"
-        :aria-pressed="gradientReversed"
+        :aria-pressed="gradientConfig.reversed"
         title="Inverter sentido das cores"
         aria-label="Inverter sentido das cores do degradê"
-        @click="emit('updateGradientReversed', !gradientReversed)"
+        @click="emit('updateGradientConfig', { ...gradientConfig, reversed: !gradientConfig.reversed })"
       >
         ↔
       </button>

@@ -1,5 +1,5 @@
 import { createGradientRasterState, renderGradientRasterRows } from '../editor/gradientRaster'
-import type { GradientConfig, GradientGeometry } from '../editor/gradient'
+import type { GradientGeometry, GradientStopsConfig } from '../editor/gradient'
 import type { SelectionRegion } from '../editor/selection'
 import type { LayerTransform } from '../types/editor'
 
@@ -10,7 +10,7 @@ interface GradientRequest {
   assetHeight: number
   transform: LayerTransform
   geometry: GradientGeometry
-  config: GradientConfig
+  config: GradientStopsConfig
   selection: SelectionRegion | null
   previewWidth: number
   previewHeight: number
@@ -71,9 +71,12 @@ self.onmessage = async (event: MessageEvent<GradientRequest | GradientCancelRequ
       config: request.config,
       selection: request.selection,
       documentWidth: request.documentWidth,
-      documentHeight: request.documentHeight
+      documentHeight: request.documentHeight,
+      reuseSourceBuffer: true
     })
-    const rowsPerChunk = 64
+    sourceCanvas.width = 1
+    sourceCanvas.height = 1
+    const rowsPerChunk = 256
     for (let row = 0; row < state.geometry.height; row += rowsPerChunk) {
       if (requestWasCancelled(request.id)) return
       renderGradientRasterRows(state, row, row + rowsPerChunk)
@@ -84,7 +87,7 @@ self.onmessage = async (event: MessageEvent<GradientRequest | GradientCancelRequ
     const context = canvas.getContext('2d', { alpha: true })
     if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
     context.putImageData(
-      new ImageData(new Uint8ClampedArray(state.pixels), state.geometry.width, state.geometry.height),
+      new ImageData(state.pixels, state.geometry.width, state.geometry.height),
       0,
       0
     )

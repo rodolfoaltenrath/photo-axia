@@ -83,6 +83,18 @@ Consulte [docs/axia-format.md](docs/axia-format.md) para detalhes do formato de 
 - Amostragem sincronizada com commits raster pendentes e limitada ao pixel mais recente.
 - Cache de imagens decodificadas e filtragem espacial das camadas durante a coleta.
 
+### Degradê e preenchimento
+
+- Degradês lineares e radiais com até 32 pontos de cor e 32 pontos de opacidade.
+- Editor visual unificado sobre fundo xadrez: cada ponto reúne cor, visibilidade e
+  posição, enquanto o motor preserva a interpolação independente internamente.
+- Clique na faixa adiciona outra cor; `Alt+arrastar` duplica um ponto para criar novas
+  transições. A opção “Sem cor (transparente)” cria alfa zero sem expor detalhes técnicos.
+- A ferramenta respeita seleções retangulares, elípticas, por laço e pela varinha
+  mágica, com preview interativo antes da aplicação.
+- Balde de tinta com tolerância e modos contíguo ou global, também limitado pela
+  seleção ativa.
+
 ### Texto
 
 - Criação e edição de camadas de texto.
@@ -127,6 +139,8 @@ Consulte [docs/axia-format.md](docs/axia-format.md) para detalhes do formato de 
 - `B`: Pincel.
 - `E`: Borracha.
 - `I`: Conta-gotas.
+- `G`: Degradê.
+- `Shift+G`: Balde de tinta.
 - `C`: Recorte e seleção.
 - `T`: Texto.
 - `H`: Mão.

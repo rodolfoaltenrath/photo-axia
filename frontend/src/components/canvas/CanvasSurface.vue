@@ -6,9 +6,15 @@ import SelectionOverlay from '../SelectionOverlay.vue'
 import { layerCompositingStyle } from '../../editor/blendModes'
 import { RULER_SIZE } from '../../editor/guides'
 import { TRANSFORM_HANDLES } from '../../editor/freeTransform'
+import { interpolateGradientStops, type GradientStopsConfig } from '../../editor/gradient'
 import type { CanvasSurfaceActions, CanvasSurfaceView } from './canvas.types'
 
 defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
+
+function gradientControlColor(config: GradientStopsConfig, progress: number) {
+  const [red, green, blue, alpha] = interpolateGradientStops(config, progress)
+  return `rgb(${red} ${green} ${blue} / ${alpha / 255})`
+}
 </script>
 
 <template>
@@ -61,7 +67,7 @@ defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
         >
           <CanvasLayer
             :active="layer.id === view.activeLayerId"
-            :content-hidden="actions.selectionMoveHidesLayer(layer.id) || actions.brushPreviewHidesLayer(layer.id)"
+            :content-hidden="actions.selectionMoveHidesLayer(layer.id) || actions.brushPreviewHidesLayer(layer.id) || actions.gradientPreviewHidesLayer(layer.id)"
             grouped
             :layer="layer"
             :layer-style-global-light="view.layerStyleGlobalLight"
@@ -116,12 +122,8 @@ defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
       class="gradient-controls"
       :viewBox="`0 0 ${view.documentWidth} ${view.documentHeight}`"
       :style="{
-        '--gradient-start-color': view.gradientInteraction.config.reversed
-          ? view.gradientInteraction.config.backgroundColor
-          : view.gradientInteraction.config.foregroundColor,
-        '--gradient-end-color': view.gradientInteraction.config.reversed
-          ? view.gradientInteraction.config.foregroundColor
-          : view.gradientInteraction.config.backgroundColor
+        '--gradient-start-color': gradientControlColor(view.gradientInteraction.config, 0),
+        '--gradient-end-color': gradientControlColor(view.gradientInteraction.config, 1)
       }"
       aria-hidden="true"
     >
