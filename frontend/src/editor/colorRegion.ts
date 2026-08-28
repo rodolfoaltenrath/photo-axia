@@ -3,6 +3,11 @@ import type { PackedPixelSpans, PixelSpan, PixelSpans, SelectionBounds } from '.
 export interface ColorRegionResult { spans: PixelSpans; bounds: SelectionBounds; pixelCount: number }
 export interface ColorRegionOptions { contiguous: boolean; startX: number; startY: number; tolerance: number }
 export interface ColorRegionSummary { bounds: SelectionBounds; pixelCount: number; spanCount: number }
+export interface CooperativeColorRegionOptions {
+  spansPerChunk?: number
+  throwIfCancelled?: () => void
+  yieldControl: () => Promise<void>
+}
 export type ColorRegionSpanVisitor = (y: number, x0: number, x1: number) => void
 export type ColorRegionSpanTuple = readonly [y: number, x0: number, x1: number]
 
@@ -121,4 +126,96 @@ export function colorRegionSpans(pixels: Uint8ClampedArray | Uint8Array, width: 
   const spans: PixelSpan[] = []
   visitColorRegionSpans(pixels, width, height, options, (y, x0, x1) => spans.push({ y, x0, x1 }))
   return resultFromSpans(spans)
+}
+
+export async function colorRegionSpansCooperatively(
+  pixels: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  options: ColorRegionOptions,
+  cooperative: CooperativeColorRegionOptions
+): Promise<ColorRegionResult> {
+  const objectLimit = 20_000
+  const objectSpans: PixelSpan[] = []
+  let packedData: Int32Array<ArrayBuffer> | undefined
+  let spanCount = 0
+  let pixelCount = 0
+  let minX = width, maxX = 0, minY = height, maxY = 0
+  const workUnitsPerChunk = Math.max(1, Math.floor(cooperative.spansPerChunk ?? 128))
+
+  const ensurePackedCapacity = (requiredValues: number) => {
+    if (packedData && packedData.length >= requiredValues) return
+    const next = new Int32Array(Math.max(requiredValues, packedData ? packedData.length * 2 : objectLimit * 6))
+    if (packedData) next.set(packedData)
+    else for (let index = 0; index < objectSpans.length; index++) {
+      const span = objectSpans[index]!, offset = index * 3
+      next[offset] = span.y; next[offset + 1] = span.x0; next[offset + 2] = span.x1
+    }
+    packedData = next
+  }
+
+  const appendSpan = (y: number, x0: number, x1: number) => {
+    if (options.contiguous || (!packedData && spanCount < objectLimit)) objectSpans.push({ y, x0, x1 })
+    else {
+      ensurePackedCapacity((spanCount + 1) * 3)
+      const offset = spanCount * 3
+      packedData![offset] = y; packedData![offset + 1] = x0; packedData![offset + 2] = x1
+    }
+    spanCount += 1
+    pixelCount += x1 - x0
+    minX = Math.min(minX, x0); maxX = Math.max(maxX, x1)
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y + 1)
+  }
+
+  const yieldAndCheck = async () => {
+    cooperative.throwIfCancelled?.()
+    await cooperative.yieldControl()
+    cooperative.throwIfCancelled?.()
+  }
+
+  cooperative.throwIfCancelled?.()
+  if (!options.contiguous) {
+    if (width > 0 && height > 0 && pixels.length >= width * height * 4) {
+      const startX = Math.max(0, Math.min(width - 1, Math.floor(options.startX)))
+      const startY = Math.max(0, Math.min(height - 1, Math.floor(options.startY)))
+      const targetOffset = (startY * width + startX) * 4
+      const target = [
+        pixels[targetOffset]!,
+        pixels[targetOffset + 1]!,
+        pixels[targetOffset + 2]!,
+        pixels[targetOffset + 3]!
+      ] as const
+      const threshold = Math.max(0, Math.min(255, Math.round(options.tolerance)))
+      for (let row = 0; row < height; row++) {
+        let runStart = -1
+        for (let column = 0; column <= width; column++) {
+          const selected = column < width && colorMatches(pixels, row * width + column, target, threshold)
+          if (selected && runStart < 0) runStart = column
+          if (!selected && runStart >= 0) {
+            appendSpan(row, runStart, column)
+            runStart = -1
+          }
+        }
+        if ((row + 1) % workUnitsPerChunk === 0) await yieldAndCheck()
+      }
+    }
+  } else {
+    let processedSpans = 0
+    for (const [y, x0, x1] of colorRegionSpanIterator(pixels, width, height, options)) {
+      appendSpan(y, x0, x1)
+      processedSpans += 1
+      if (processedSpans % workUnitsPerChunk === 0) await yieldAndCheck()
+    }
+    objectSpans.sort((first, second) => first.y - second.y || first.x0 - second.x0)
+  }
+  cooperative.throwIfCancelled?.()
+  const bounds = spanCount
+    ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+    : { x: 0, y: 0, width: 0, height: 0 }
+  if (!packedData) return { spans: objectSpans, bounds, pixelCount }
+  return {
+    spans: { kind: 'packed-spans', data: packedData.slice(0, spanCount * 3), length: spanCount },
+    bounds,
+    pixelCount
+  }
 }

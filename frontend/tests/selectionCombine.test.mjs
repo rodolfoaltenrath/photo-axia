@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   combineSelections,
+  combineSelectionsCooperatively,
   resolveSelectionCombineMode
 } from '../src/editor/selectionCombine.ts'
 import { forEachPixelSpan } from '../src/editor/selection.ts'
@@ -190,6 +191,57 @@ test('documento enorme processa somente os bounds envolvidos', () => {
   const result = combineSelections(first, second, 'intersect', { width: 1_000_000, height: 1_000_000 })
   assert.equal(result.pixelCount, 9)
   assert.deepEqual(result.bounds, { x: 999_992, y: 999_992, width: 3, height: 3 })
+})
+
+test('fallback cooperativo combina pixels rotacionados sem alterar a máscara', async () => {
+  const rotatedPixels = {
+    kind: 'pixels',
+    sourceWidth: 3,
+    sourceHeight: 2,
+    sourceToDocument: [0, 1, -1, 0, 5, 1],
+    spans: [{ y: 0, x0: 0, x1: 3 }, { y: 1, x0: 0, x1: 2 }],
+    bounds: { x: 0, y: 0, width: 3, height: 2 },
+    pixelCount: 5
+  }
+  const rectangle = { kind: 'rectangle', bounds: { x: 2, y: 1, width: 3, height: 3 } }
+  const expected = combineSelections(rotatedPixels, rectangle, 'intersect', documentSize)
+  const actual = await combineSelectionsCooperatively(
+    rotatedPixels,
+    rectangle,
+    'intersect',
+    documentSize,
+    { rowsPerChunk: 1, yieldControl: async () => {} }
+  )
+  assert.deepEqual(actual, expected)
+})
+
+test('fallback cooperativo da combinação observa cancelamento entre linhas', async () => {
+  const rotatedPixels = {
+    kind: 'pixels',
+    sourceWidth: 40,
+    sourceHeight: 40,
+    sourceToDocument: [0, 1, -1, 0, 40, 0],
+    spans: Array.from({ length: 40 }, (_, y) => ({ y, x0: 0, x1: 40 })),
+    bounds: { x: 0, y: 0, width: 40, height: 40 },
+    pixelCount: 1600
+  }
+  let cancelled = false
+  await assert.rejects(
+    combineSelectionsCooperatively(
+      rotatedPixels,
+      { kind: 'rectangle', bounds: { x: 0, y: 0, width: 40, height: 40 } },
+      'intersect',
+      { width: 40, height: 40 },
+      {
+        rowsPerChunk: 2,
+        throwIfCancelled: () => {
+          if (cancelled) throw new DOMException('cancelada', 'AbortError')
+        },
+        yieldControl: async () => { cancelled = true }
+      }
+    ),
+    { name: 'AbortError' }
+  )
 })
 
 test('combina retângulos em documento 4K por intervalos sem rasterizar pixel a pixel', () => {

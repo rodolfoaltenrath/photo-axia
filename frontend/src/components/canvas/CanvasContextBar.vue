@@ -70,6 +70,21 @@ function updateBrushSize(value: number) {
 }
 
 const gradientEditorOpen = ref(false)
+const toolLabels: Record<EditorTool, string> = {
+  move: 'Mover',
+  brush: 'Pincel',
+  eraser: 'Borracha',
+  gradient: 'Degradê',
+  'paint-bucket': 'Balde de Tinta',
+  eyedropper: 'Conta-gotas',
+  crop: 'Seleção',
+  'object-selection': 'Seleção de Objeto',
+  'quick-selection': 'Seleção Rápida',
+  'magic-wand': 'Varinha Mágica',
+  text: 'Texto',
+  hand: 'Mão',
+  zoom: 'Zoom'
+}
 watch(() => props.activeTool, (tool) => {
   if (tool !== 'gradient') gradientEditorOpen.value = false
 })
@@ -77,10 +92,9 @@ watch(() => props.activeTool, (tool) => {
 
 <template>
   <div class="context-bar">
-    <span>{{ activeTool }}</span>
-    <div v-if="activeTool === 'crop'" class="selection-options">
+    <span>{{ toolLabels[activeTool] }}</span>
+    <div v-if="activeTool === 'crop' || activeTool === 'magic-wand'" class="selection-options">
       <div
-        v-if="selectionMode !== 'magic-wand'"
         class="selection-combine-control"
         role="group"
         aria-label="Combinação da seleção"
@@ -114,7 +128,7 @@ watch(() => props.activeTool, (tool) => {
           @click="emit('updateSelectionCombineMode', 'intersect')"
         ><span class="selection-combine-icon selection-combine-icon--intersect"></span></button>
       </div>
-      <label>
+      <label v-if="activeTool === 'crop'">
         Modo
         <select
           :value="selectionMode"
@@ -126,11 +140,10 @@ watch(() => props.activeTool, (tool) => {
           </optgroup>
           <optgroup label="Compatibilidade">
             <option value="lasso">Laço livre</option>
-            <option value="magic-wand">Varinha mágica</option>
           </optgroup>
         </select>
       </label>
-      <label v-if="selectionMode === 'magic-wand'" class="selection-tolerance">
+      <label v-if="activeTool === 'magic-wand'" class="selection-tolerance">
         Tolerância
         <input
           :value="magicWandTolerance"
@@ -141,7 +154,7 @@ watch(() => props.activeTool, (tool) => {
         />
         <output>{{ magicWandTolerance }}</output>
       </label>
-      <label v-if="selectionMode === 'magic-wand'" class="selection-contiguous">
+      <label v-if="activeTool === 'magic-wand'" class="selection-contiguous">
         <input
           :checked="magicWandContiguous"
           type="checkbox"

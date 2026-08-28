@@ -41,6 +41,7 @@ import {
 import {
   selectionIsEmpty
 } from '../editor/selection'
+import { resolveSelectionCombineMode } from '../editor/selectionCombine'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
 import {
   colorSampleButtonIsPressed,
@@ -163,7 +164,6 @@ const {
   snapPoint: snapPointForInteraction,
   scheduleInteractionFrame,
   discardInteractionFrame,
-  magicWandSelect: (point) => emit('magicWandSelect', point),
   updateSelection: (selection) => emit('update:selection', selection)
 })
 
@@ -400,7 +400,7 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--selection':
     props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser' ||
-    props.activeTool === 'gradient' || props.activeTool === 'paint-bucket',
+    props.activeTool === 'gradient' || props.activeTool === 'paint-bucket' || props.activeTool === 'magic-wand',
   'canvas-scroll--eyedropper': props.activeTool === 'eyedropper',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
@@ -702,6 +702,19 @@ function startViewportPointer(event: PointerEvent) {
   if (props.activeTool === 'move' && props.selection && !isSpacePressed.value) {
     const point = pointerToDocument(event)
     if (point && startSelectionMove(event, point, props.selection)) return
+  }
+
+  if (props.activeTool === 'magic-wand' && !props.isBusy && !isSpacePressed.value && event.button === 0) {
+    const point = pointerToDocument(event)
+    if (!point || point.x < 0 || point.y < 0 || point.x >= props.document.width || point.y >= props.document.height) return
+    event.preventDefault()
+    event.stopPropagation()
+    emit(
+      'magicWandSelect',
+      point,
+      resolveSelectionCombineMode(props.selectionCombineMode, event)
+    )
+    return
   }
 
   if (props.activeTool === 'crop' && !isSpacePressed.value) {

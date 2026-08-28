@@ -6,6 +6,12 @@ import {
   type MarqueeSelectionMode
 } from '../editor/marqueeSelection'
 import type { SelectionMode } from '../editor/selection'
+import {
+  availableIntelligentSelectionTool,
+  isIntelligentSelectionTool,
+  isIntelligentSelectionToolEnabled,
+  type IntelligentSelectionTool
+} from '../editor/intelligentSelectionTools'
 import brushIcon from '../assets/icons/brush.svg'
 import eraserIcon from '../assets/icons/eraser.svg'
 import eyedropperIcon from '../assets/icons/eyedropper.svg'
@@ -17,6 +23,9 @@ import textIcon from '../assets/icons/text.svg'
 import zoomIcon from '../assets/icons/zoom.svg'
 import marqueeRectangleIcon from '../assets/icons/marquee-rectangle.svg'
 import marqueeEllipseIcon from '../assets/icons/marquee-ellipse.svg'
+import objectSelectionIcon from '../assets/icons/object-selection.svg'
+import quickSelectionIcon from '../assets/icons/quick-selection.svg'
+import magicWandIcon from '../assets/icons/magic-wand.svg'
 
 const props = defineProps<{ selectionMode: SelectionMode }>()
 const activeTool = defineModel<EditorTool>('activeTool', { required: true })
@@ -56,10 +65,25 @@ const marqueeTools: Array<{ mode: MarqueeSelectionMode; icon: string; label: str
   { mode: 'ellipse', icon: marqueeEllipseIcon, label: 'Seleção Elíptica (Shift+M)' }
 ]
 
+const intelligentSelectionTools: Array<{
+  id: IntelligentSelectionTool
+  icon: string
+  label: string
+  enabled: boolean
+}> = [
+  { id: 'object-selection', icon: objectSelectionIcon, label: 'Seleção de Objeto (Em breve)', enabled: isIntelligentSelectionToolEnabled('object-selection') },
+  { id: 'quick-selection', icon: quickSelectionIcon, label: 'Seleção Rápida (Em breve)', enabled: isIntelligentSelectionToolEnabled('quick-selection') },
+  { id: 'magic-wand', icon: magicWandIcon, label: 'Varinha Mágica (W)', enabled: isIntelligentSelectionToolEnabled('magic-wand') }
+]
+
 const rememberedColorTool = ref<'gradient' | 'paint-bucket'>('gradient')
 const rememberedMarqueeMode = ref<MarqueeSelectionMode>('rectangle')
+const rememberedIntelligentSelectionTool = ref<IntelligentSelectionTool>('magic-wand')
 watch(activeTool, (tool) => {
   if (tool === 'gradient' || tool === 'paint-bucket') rememberedColorTool.value = tool
+  if (isIntelligentSelectionTool(tool)) {
+    rememberedIntelligentSelectionTool.value = availableIntelligentSelectionTool(tool)
+  }
 }, { immediate: true })
 watch(() => props.selectionMode, (mode) => {
   if (marqueeTools.some((tool) => tool.mode === mode)) rememberedMarqueeMode.value = mode as MarqueeSelectionMode
@@ -82,6 +106,18 @@ function selectMarqueeTool(mode: MarqueeSelectionMode, event?: Event) {
 
 function marqueeTool(mode: MarqueeSelectionMode) {
   return marqueeTools.find((tool) => tool.mode === mode) ?? marqueeTools[0]!
+}
+
+function selectIntelligentSelectionTool(tool: IntelligentSelectionTool, event?: Event) {
+  if (!isIntelligentSelectionToolEnabled(tool)) return
+  rememberedIntelligentSelectionTool.value = tool
+  activeTool.value = tool
+  const details = (event?.currentTarget as HTMLElement | null)?.closest('details')
+  if (details) details.open = false
+}
+
+function intelligentSelectionTool(tool: IntelligentSelectionTool) {
+  return intelligentSelectionTools.find((candidate) => candidate.id === tool) ?? intelligentSelectionTools[2]!
 }
 
 function openToolFlyout(event: MouseEvent) {
@@ -213,6 +249,38 @@ function resetColors() {
             type="button"
             role="menuitem"
             @click="selectMarqueeTool(tool.mode, $event)"
+          >
+            <img alt="" :src="tool.icon" />
+            <span>{{ tool.label }}</span>
+          </button>
+        </div>
+      </details>
+    </div>
+
+    <div class="toolbar-tool-group" :class="{ active: isIntelligentSelectionTool(activeTool) }">
+      <button
+        :aria-label="intelligentSelectionTool(rememberedIntelligentSelectionTool).label"
+        :aria-pressed="isIntelligentSelectionTool(activeTool)"
+        :title="intelligentSelectionTool(rememberedIntelligentSelectionTool).label"
+        type="button"
+        @click="selectIntelligentSelectionTool(rememberedIntelligentSelectionTool)"
+        @contextmenu="openToolFlyout"
+      >
+        <img alt="" :src="intelligentSelectionTool(rememberedIntelligentSelectionTool).icon" />
+      </button>
+      <details>
+        <summary aria-label="Mostrar ferramentas de seleção inteligente" title="Mostrar ferramentas do grupo W">▷</summary>
+        <div class="toolbar-tool-flyout" role="menu" aria-label="Ferramentas do grupo W">
+          <button
+            v-for="tool in intelligentSelectionTools"
+            :key="tool.id"
+            :aria-disabled="!tool.enabled"
+            :aria-pressed="activeTool === tool.id"
+            :disabled="!tool.enabled"
+            :title="tool.label"
+            type="button"
+            role="menuitem"
+            @click="selectIntelligentSelectionTool(tool.id, $event)"
           >
             <img alt="" :src="tool.icon" />
             <span>{{ tool.label }}</span>

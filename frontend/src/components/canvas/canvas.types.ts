@@ -65,7 +65,7 @@ export interface CanvasViewportEmits {
   (event: 'pdfDropped', file: File, errors: string[]): void
   (event: 'sampleColor', point: DocumentPoint, target: 'foreground' | 'background'): void
   (event: 'deleteSelection'): void
-  (event: 'magicWandSelect', point: SelectionPoint): void
+  (event: 'magicWandSelect', point: SelectionPoint, combineMode: SelectionCombineMode): void
   (
     event: 'moveSelection',
     originalSelection: SelectionRegion,
@@ -253,7 +253,7 @@ export type TransformInteraction =
 
 export interface SelectionInteraction {
   pointerId: number
-  mode: Exclude<SelectionMode, 'magic-wand'>
+  mode: SelectionMode
   start: SelectionPoint
   points: SelectionPoint[]
   parentSelection: SelectionRegion | null

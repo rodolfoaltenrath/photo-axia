@@ -35,7 +35,6 @@ interface SelectionInteractionOptions {
   snapPoint: (point: DocumentPoint, event: PointerEvent) => DocumentPoint
   scheduleInteractionFrame: (callback: () => void) => void
   discardInteractionFrame: () => void
-  magicWandSelect: (point: SelectionPoint) => void
   updateSelection: (selection: SelectionRegion | null) => void
 }
 
@@ -68,17 +67,9 @@ export function useSelectionInteraction(options: SelectionInteractionOptions) {
   function startSelectionPointer(event: PointerEvent, rawPoint: SelectionPoint) {
     const scroll = options.scrollArea.value
     if (!scroll || event.button !== 0) return false
-    const document = options.document()
-    const pointIsInsideDocument = rawPoint.x >= 0 && rawPoint.y >= 0 &&
-      rawPoint.x < document.width && rawPoint.y < document.height
     event.preventDefault()
     event.stopPropagation()
     const mode = options.selectionMode()
-    if (mode === 'magic-wand') {
-      if (!pointIsInsideDocument) return false
-      options.magicWandSelect(rawPoint)
-      return true
-    }
 
     const point = mode === 'rectangle' || mode === 'ellipse'
       ? options.snapPoint(rawPoint, event)

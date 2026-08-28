@@ -14,17 +14,35 @@ import {
   type SelectionRegion,
   type WandResult
 } from '../editor/selection'
-import { colorRegionSpans } from '../editor/colorRegion'
+import { colorRegionSpansCooperatively } from '../editor/colorRegion'
 import type { ImageAsset, LayerTransform } from '../types/editor'
 
 interface PendingWand {
   resolve: (result: WandResult) => void
-  reject: (error: Error) => void
+  reject: (error: Error | DOMException) => void
+  signal?: AbortSignal
+  abortHandler?: () => void
 }
 
 let wandWorker: Worker | undefined
 let nextRequestId = 1
 const pendingWands = new Map<number, PendingWand>()
+
+function cleanupPendingWand(pending: PendingWand) {
+  if (pending.signal && pending.abortHandler) {
+    pending.signal.removeEventListener('abort', pending.abortHandler)
+  }
+}
+
+function stopWandWorker(error: Error | DOMException) {
+  wandWorker?.terminate()
+  wandWorker = undefined
+  for (const pending of pendingWands.values()) {
+    cleanupPendingWand(pending)
+    pending.reject(error)
+  }
+  pendingWands.clear()
+}
 
 export interface EraseSelectionResult {
   blob: Blob
@@ -104,51 +122,78 @@ function eraseWorkerInstance() {
 function workerInstance() {
   if (typeof Worker === 'undefined') return undefined
   if (wandWorker) return wandWorker
-  wandWorker = new Worker(new URL('../workers/magicWand.worker.ts', import.meta.url), { type: 'module' })
-  wandWorker.onmessage = (event: MessageEvent<{ id: number; result?: WandResult; error?: string }>) => {
+  const worker = new Worker(new URL('../workers/magicWand.worker.ts', import.meta.url), { type: 'module' })
+  wandWorker = worker
+  worker.onmessage = (event: MessageEvent<{ id: number; result?: WandResult; error?: string }>) => {
     const pending = pendingWands.get(event.data.id)
     if (!pending) return
     pendingWands.delete(event.data.id)
+    cleanupPendingWand(pending)
     if (event.data.error) pending.reject(new Error(event.data.error))
     else if (event.data.result) pending.resolve(event.data.result)
     else pending.reject(new Error('A varinha retornou uma seleção inválida.'))
   }
-  wandWorker.onerror = () => {
-    for (const pending of pendingWands.values()) pending.reject(new Error('A varinha mágica foi interrompida.'))
-    pendingWands.clear()
-    wandWorker?.terminate()
-    wandWorker = undefined
+  worker.onerror = () => {
+    if (wandWorker !== worker) return
+    stopWandWorker(new Error('A varinha mágica foi interrompida.'))
   }
-  return wandWorker
+  return worker
 }
 
-async function fallbackWand(blob: Blob, x: number, y: number, tolerance: number, contiguous: boolean) {
+async function fallbackWand(blob: Blob, x: number, y: number, tolerance: number, contiguous: boolean, signal?: AbortSignal) {
+  signal?.throwIfAborted()
   const bitmap = await createImageBitmap(blob)
+  if (signal?.aborted) {
+    bitmap.close()
+    signal.throwIfAborted()
+  }
   const canvas = document.createElement('canvas')
   canvas.width = bitmap.width
   canvas.height = bitmap.height
   const context = canvas.getContext('2d', { willReadFrequently: true })
-  if (!context) throw new Error('O sistema não disponibilizou leitura de pixels.')
+  if (!context) {
+    bitmap.close()
+    throw new Error('O sistema não disponibilizou leitura de pixels.')
+  }
   context.drawImage(bitmap, 0, 0)
   bitmap.close()
   const image = context.getImageData(0, 0, canvas.width, canvas.height)
   canvas.width = 1
   canvas.height = 1
-  return colorRegionSpans(image.data, image.width, image.height, {
-    startX: x,
-    startY: y,
-    tolerance,
-    contiguous
-  })
+  signal?.throwIfAborted()
+  return colorRegionSpansCooperatively(
+    image.data,
+    image.width,
+    image.height,
+    { startX: x, startY: y, tolerance, contiguous },
+    {
+      throwIfCancelled: () => signal?.throwIfAborted(),
+      yieldControl: () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+  )
 }
 
-async function runWand(blob: Blob, x: number, y: number, tolerance: number, contiguous: boolean) {
+async function runWand(blob: Blob, x: number, y: number, tolerance: number, contiguous: boolean, signal?: AbortSignal) {
+  signal?.throwIfAborted()
   const worker = workerInstance()
-  if (!worker) return fallbackWand(blob, x, y, tolerance, contiguous)
+  if (!worker) return fallbackWand(blob, x, y, tolerance, contiguous, signal)
   const id = nextRequestId++
   return new Promise<WandResult>((resolve, reject) => {
-    pendingWands.set(id, { resolve, reject })
-    worker.postMessage({ id, blob, x, y, tolerance, contiguous })
+    const abortHandler = () => stopWandWorker(new DOMException('Seleção cancelada.', 'AbortError'))
+    const pending: PendingWand = { resolve, reject, signal, abortHandler }
+    pendingWands.set(id, pending)
+    signal?.addEventListener('abort', abortHandler, { once: true })
+    if (signal?.aborted) {
+      abortHandler()
+      return
+    }
+    try {
+      worker.postMessage({ id, blob, x, y, tolerance, contiguous })
+    } catch (error) {
+      pendingWands.delete(id)
+      cleanupPendingWand(pending)
+      reject(error instanceof Error ? error : new Error('Não foi possível iniciar a Varinha Mágica.'))
+    }
   })
 }
 
@@ -158,16 +203,19 @@ export async function createMagicWandSelection(
   transform: LayerTransform,
   documentPoint: SelectionPoint,
   tolerance: number,
-  contiguous: boolean
+  contiguous: boolean,
+  signal?: AbortSignal
 ): Promise<PixelSelection> {
+  signal?.throwIfAborted()
   const sourceToDocument = layerSourceToDocumentMatrix(transform, asset.width, asset.height)
   const sourcePoint = transformSelectionPoint(invertMatrix(sourceToDocument), documentPoint)
   if (sourcePoint.x < 0 || sourcePoint.y < 0 || sourcePoint.x >= asset.width || sourcePoint.y >= asset.height) {
     throw new Error('Clique dentro dos pixels da camada ativa.')
   }
-  const response = await fetch(asset.sourceUrl)
+  const response = await fetch(asset.sourceUrl, { signal })
   if (!response.ok) throw new Error('Não foi possível carregar os pixels da camada ativa.')
-  const result = await runWand(await response.blob(), sourcePoint.x, sourcePoint.y, tolerance, contiguous)
+  const result = await runWand(await response.blob(), sourcePoint.x, sourcePoint.y, tolerance, contiguous, signal)
+  signal?.throwIfAborted()
   return {
     kind: 'pixels',
     sourceLayerId: layerId,
@@ -365,10 +413,7 @@ export async function extractImageSelection(
 }
 
 export function disposeSelectionEngine() {
-  wandWorker?.terminate()
-  wandWorker = undefined
-  for (const pending of pendingWands.values()) pending.reject(new Error('Seleção cancelada.'))
-  pendingWands.clear()
+  stopWandWorker(new DOMException('Seleção cancelada.', 'AbortError'))
   eraseWorker?.terminate()
   eraseWorker = undefined
   for (const pending of pendingErases.values()) pending.reject(new Error('Apagar cancelado.'))

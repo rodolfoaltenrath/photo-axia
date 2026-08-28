@@ -116,11 +116,18 @@ import {
 } from './editor/marqueeSelection'
 import type { SelectionCombineMode } from './editor/selectionCombine'
 import {
+  availableIntelligentSelectionTool,
+  isIntelligentSelectionTool,
+  nextIntelligentSelectionTool,
+  type IntelligentSelectionTool
+} from './editor/intelligentSelectionTools'
+import {
   createMagicWandSelection,
   disposeSelectionEngine,
   eraseImageSelection,
   extractImageSelection
 } from './services/selectionEngine'
+import { combineSelectionsAsync, disposeSelectionCombineEngine } from './services/selectionCombineEngine'
 import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
 import { applyGradient, disposeGradientEngine } from './services/gradientEngine'
 import { applyPaintBucket, applySolidFill, disposePaintBucketEngine } from './services/paintBucketEngine'
@@ -179,6 +186,7 @@ function browserPreferenceStorage() {
 }
 
 const activeTool = ref<EditorTool>('move')
+const lastIntelligentSelectionTool = ref<IntelligentSelectionTool>('magic-wand')
 const autoSelectLayer = ref(readAutoSelectLayerPreference(browserPreferenceStorage()))
 const zoom = ref(100)
 const brushSize = ref(24)
@@ -414,10 +422,23 @@ let pendingBrushCommit: {
 } | undefined
 let pendingGradientCommit: AbortController | undefined
 let pendingPaintBucketCommit: AbortController | undefined
+let pendingMagicWandSelection: AbortController | undefined
+
+function cancelMagicWandSelection() {
+  if (!pendingMagicWandSelection) return
+  const controller = pendingMagicWandSelection
+  pendingMagicWandSelection = undefined
+  selectionGeneration++
+  controller.abort()
+}
 
 watch(
   [activeTool, activeLayerId, () => activeDocument.value.id],
   () => {
+    cancelMagicWandSelection()
+    if (isIntelligentSelectionTool(activeTool.value)) {
+      lastIntelligentSelectionTool.value = availableIntelligentSelectionTool(activeTool.value)
+    }
     if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient' || activeTool.value === 'paint-bucket') {
       void ensureRasterLayerPaintable()
     }
@@ -2286,16 +2307,24 @@ async function addDroppedImages(images: ImportedImage[], errors: string[]) {
   }
 }
 
-async function selectWithMagicWand(point: SelectionPoint) {
+async function selectWithMagicWand(point: SelectionPoint, combineMode: SelectionCombineMode) {
   if (isBusy.value) return
   clearFloatingSelectionSession()
   const layer = activeLayer.value
+  if (!layer.visible) {
+    showError(new Error('Torne a camada ativa visível antes de usar a Varinha Mágica.'), 'Seleção indisponível.')
+    return
+  }
   if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
     showError(new Error('A varinha mágica precisa de uma camada de imagem ativa.'), 'Seleção indisponível.')
     return
   }
 
   const generation = ++selectionGeneration
+  const controller = new AbortController()
+  pendingMagicWandSelection = controller
+  const parentSelection = cloneSelection(selection.value)
+  const document = { width: activeDocument.value.width, height: activeDocument.value.height }
   pendingSelectionTasks++
   isBusy.value = true
   errorText.value = ''
@@ -2307,26 +2336,44 @@ async function selectWithMagicWand(point: SelectionPoint) {
       layer.transform,
       point,
       magicWandTolerance.value,
-      magicWandContiguous.value
+      magicWandContiguous.value,
+      controller.signal
     )
     if (generation !== selectionGeneration) return
-    selection.value = result
-    statusText.value = `${result.pixelCount.toLocaleString('pt-BR')} pixels selecionados`
+    const combined = await combineSelectionsAsync(
+      parentSelection,
+      result,
+      combineMode,
+      document,
+      controller.signal,
+      true
+    )
+    if (generation !== selectionGeneration) return
+    selection.value = combined && !selectionIsEmpty(combined) ? combined : null
+    statusText.value = selection.value
+      ? `${result.pixelCount.toLocaleString('pt-BR')} pixels encontrados · seleção atualizada`
+      : 'A combinação resultou em uma seleção vazia'
   } catch (error) {
-    if (generation === selectionGeneration) showError(error, 'Não foi possível criar a seleção.')
+    if (
+      generation === selectionGeneration &&
+      !(error instanceof DOMException && error.name === 'AbortError')
+    ) showError(error, 'Não foi possível criar a seleção.')
   } finally {
+    if (pendingMagicWandSelection === controller) pendingMagicWandSelection = undefined
     pendingSelectionTasks--
     if (pendingSelectionTasks === 0) isBusy.value = false
   }
 }
 
 function setSelectionMode(mode: SelectionMode) {
+  cancelMagicWandSelection()
   selectionGeneration++
   selectionMode.value = mode
   if (isMarqueeSelectionMode(mode)) lastMarqueeMode.value = mode
 }
 
 function updateSelection(value: SelectionRegion | null) {
+  cancelMagicWandSelection()
   selectionGeneration++
   selection.value = selectionIsEmpty(value) ? null : value
   if (selection.value) statusText.value = 'Seleção criada — pressione Delete para apagar os pixels'
@@ -3673,6 +3720,16 @@ function handleShortcut(event: KeyboardEvent) {
     return
   }
 
+  if (event.code === 'KeyW') {
+    event.preventDefault()
+    const tool = event.shiftKey
+      ? nextIntelligentSelectionTool(lastIntelligentSelectionTool.value)
+      : availableIntelligentSelectionTool(lastIntelligentSelectionTool.value)
+    lastIntelligentSelectionTool.value = tool
+    activeTool.value = tool
+    return
+  }
+
   const toolsByKey: Record<string, EditorTool> = {
     v: 'move',
     b: 'brush',
@@ -3718,8 +3775,10 @@ onBeforeUnmount(() => {
   pendingGradientCommit = undefined
   pendingPaintBucketCommit?.abort()
   pendingPaintBucketCommit = undefined
+  cancelMagicWandSelection()
   rasterMutationBarrier.discard()
   disposeSelectionEngine()
+  disposeSelectionCombineEngine()
   disposeBrushEngine()
   disposeGradientEngine()
   disposePaintBucketEngine()

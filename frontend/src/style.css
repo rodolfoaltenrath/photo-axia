@@ -78,7 +78,8 @@ select {
 
 .top-menu {
   position: relative;
-  z-index: 50;
+  /* Keep application menus above contextual bars without overtaking dialogs. */
+  z-index: 90;
   display: grid;
   grid-template-columns: 172px 1fr auto;
   align-items: center;

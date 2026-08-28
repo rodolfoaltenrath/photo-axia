@@ -7,7 +7,6 @@ export type SelectionMode =
   | 'single-row'
   | 'single-column'
   | 'lasso'
-  | 'magic-wand'
 
 export interface SelectionPoint {
   x: number

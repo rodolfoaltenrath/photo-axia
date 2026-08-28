@@ -19,7 +19,8 @@ const pending = new Map<number, PendingBucket>()
 function abortError() { return new DOMException('Preenchimento cancelado.', 'AbortError') }
 function throwIfAborted(signal?: AbortSignal) { if (signal?.aborted) throw abortError() }
 
-function terminateWorker(error: Error = abortError()) {
+function terminateWorker(error: Error | DOMException = abortError(), expectedWorker?: Worker) {
+  if (expectedWorker && worker !== expectedWorker) return
   worker?.terminate()
   worker = undefined
   for (const request of pending.values()) { request.cleanup(); request.reject(error) }
@@ -29,8 +30,9 @@ function terminateWorker(error: Error = abortError()) {
 function workerInstance() {
   if (typeof Worker === 'undefined') return undefined
   if (worker) return worker
-  worker = new Worker(new URL('../workers/paintBucket.worker.ts', import.meta.url), { type: 'module' })
-  worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+  const activeWorker = new Worker(new URL('../workers/paintBucket.worker.ts', import.meta.url), { type: 'module' })
+  worker = activeWorker
+  activeWorker.onmessage = (event: MessageEvent<WorkerResponse>) => {
     const request = pending.get(event.data.id)
     if (!request) return
     pending.delete(event.data.id)
@@ -39,8 +41,8 @@ function workerInstance() {
     else if (event.data.result) request.resolve(event.data.result)
     else request.reject(new Error('O Balde de Tinta retornou um resultado inválido.'))
   }
-  worker.onerror = () => terminateWorker(new Error('O Balde de Tinta foi interrompido.'))
-  return worker
+  activeWorker.onerror = () => terminateWorker(new Error('O Balde de Tinta foi interrompido.'), activeWorker)
+  return activeWorker
 }
 
 function makeCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas {
@@ -141,11 +143,17 @@ export async function applyPaintBucket(
   const id = nextId++
   return new Promise<PaintBucketResult>((resolve, reject) => {
     const cleanup = () => signal?.removeEventListener('abort', cancel)
-    const cancel = () => { if (pending.has(id)) terminateWorker() }
+    const cancel = () => { if (pending.has(id)) terminateWorker(abortError(), activeWorker) }
     pending.set(id, { resolve, reject, cleanup })
     signal?.addEventListener('abort', cancel, { once: true })
     if (signal?.aborted) { cancel(); return }
-    activeWorker.postMessage({ id, mode: 'bucket', sourceBlob, assetWidth: asset.width, assetHeight: asset.height, transform: { ...transform }, point: { ...point }, color, tolerance, contiguous, selection: activeSelection, previewWidth, previewHeight })
+    try {
+      activeWorker.postMessage({ id, mode: 'bucket', sourceBlob, assetWidth: asset.width, assetHeight: asset.height, transform: { ...transform }, point: { ...point }, color, tolerance, contiguous, selection: activeSelection, previewWidth, previewHeight })
+    } catch (error) {
+      pending.delete(id)
+      cleanup()
+      reject(error instanceof Error ? error : new Error('Não foi possível iniciar o Balde de Tinta.'))
+    }
   })
 }
 
@@ -163,14 +171,20 @@ export async function applySolidFill(
   const id = nextId++
   return new Promise<PaintBucketResult>((resolve, reject) => {
     const cleanup = () => signal?.removeEventListener('abort', cancel)
-    const cancel = () => { if (pending.has(id)) terminateWorker() }
+    const cancel = () => { if (pending.has(id)) terminateWorker(abortError(), activeWorker) }
     pending.set(id, { resolve, reject, cleanup })
     signal?.addEventListener('abort', cancel, { once: true })
     if (signal?.aborted) { cancel(); return }
-    activeWorker.postMessage({
-      id, mode: 'solid-fill', sourceBlob, assetWidth: asset.width, assetHeight: asset.height,
-      transform: { ...transform }, color, selection: activeSelection, previewWidth, previewHeight
-    })
+    try {
+      activeWorker.postMessage({
+        id, mode: 'solid-fill', sourceBlob, assetWidth: asset.width, assetHeight: asset.height,
+        transform: { ...transform }, color, selection: activeSelection, previewWidth, previewHeight
+      })
+    } catch (error) {
+      pending.delete(id)
+      cleanup()
+      reject(error instanceof Error ? error : new Error('Não foi possível iniciar o preenchimento.'))
+    }
   })
 }
 

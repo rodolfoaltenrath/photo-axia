@@ -28,6 +28,12 @@ export interface SelectionDocumentSize {
   height: number
 }
 
+export interface CooperativeSelectionCombineOptions {
+  rowsPerChunk?: number
+  throwIfCancelled?: () => void
+  yieldControl: () => Promise<void>
+}
+
 export function resolveSelectionCombineMode(
   configured: SelectionCombineMode,
   modifiers: SelectionCombineModifiers
@@ -331,5 +337,63 @@ export function combineSelections(
       }
     }
   }
+  return spans.result(document)
+}
+
+export async function combineSelectionsCooperatively(
+  previous: SelectionRegion | null,
+  incoming: SelectionRegion | null,
+  mode: SelectionCombineMode,
+  document: SelectionDocumentSize,
+  cooperative: CooperativeSelectionCombineOptions
+): Promise<SelectionRegion | null> {
+  const first = selectionIsEmpty(previous) ? null : previous
+  const second = selectionIsEmpty(incoming) ? null : incoming
+  if (mode === 'replace') return cloneSelection(second)
+  if (!first) return mode === 'add' ? cloneSelection(second) : null
+  if (!second) return mode === 'intersect' ? null : cloneSelection(first)
+
+  const firstBounds = selectionDocumentBounds(first)
+  const secondBounds = selectionDocumentBounds(second)
+  const operationBounds = mode === 'add'
+    ? unionBounds(firstBounds, secondBounds)
+    : mode === 'subtract'
+      ? firstBounds
+      : intersectBounds(firstBounds, secondBounds)
+  const scan = scanBounds(operationBounds, document)
+  if (scan.x1 <= scan.x0 || scan.y1 <= scan.y0) return mode === 'subtract' ? cloneSelection(first) : null
+
+  const firstRows = selectionRows(first, scan)
+  const secondRows = selectionRows(second, scan)
+  const containsFirst = firstRows && secondRows ? undefined : selectionTester(first)
+  const containsSecond = firstRows && secondRows ? undefined : selectionTester(second)
+  const spans = new PixelSpanBuilder()
+  const rowsPerChunk = Math.max(1, Math.floor(cooperative.rowsPerChunk ?? 32))
+  cooperative.throwIfCancelled?.()
+  for (let y = scan.y0; y < scan.y1; y++) {
+    if (firstRows && secondRows) {
+      for (const [x0, x1] of combineIntervals(firstRows(y), secondRows(y), mode)) spans.append(y, x0, x1)
+    } else {
+      let runStart = -1
+      for (let x = scan.x0; x <= scan.x1; x++) {
+        const selected = x < scan.x1 && pixelIncluded(
+          mode,
+          containsFirst!({ x: x + 0.5, y: y + 0.5 }),
+          containsSecond!({ x: x + 0.5, y: y + 0.5 })
+        )
+        if (selected && runStart < 0) runStart = x
+        if (!selected && runStart >= 0) {
+          spans.append(y, runStart, x)
+          runStart = -1
+        }
+      }
+    }
+    if ((y - scan.y0 + 1) % rowsPerChunk === 0) {
+      cooperative.throwIfCancelled?.()
+      await cooperative.yieldControl()
+      cooperative.throwIfCancelled?.()
+    }
+  }
+  cooperative.throwIfCancelled?.()
   return spans.result(document)
 }

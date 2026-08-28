@@ -6,11 +6,11 @@
 
 ## Metadados
 
-- Última atualização: 2026-08-26
+- Última atualização: 2026-08-28
 - Estado geral: Fases 1 e 2 implementadas, aguardando validação prática; continuidade antes do teste de fogo autorizada pelo mantenedor
 - Ordem aprovada: Degradê linear -> Degradê radial -> Varinha Mágica -> Balde de Tinta
 - Plataformas obrigatórias: Windows e Linux
-- Stack atual: Go 1.23, Wails 2.12, Vue 3, TypeScript e Vite
+- Stack atual: Go 1.26.5, Wails 3.0.0-beta.12, Vue 3.5, TypeScript 5.9 e Vite 8
 
 ## Objetivo
 
@@ -64,7 +64,7 @@ Registrar a nova decisão em **Registro de decisões** e explicar o motivo.
 | Conta-gotas contínuo | `CONCLUÍDO` | Usar como referência para pointer capture e coalescência |
 | Degradê linear | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Executar teste de fogo no Wails após completar as ferramentas planejadas |
 | Degradê radial | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar preview, commit e cancelamento no Windows/Linux no teste de fogo |
-| Auditoria e aceite da Varinha Mágica | `EM ANDAMENTO` | Extrair e validar o contrato neutro de análise de regiões |
+| Auditoria e aceite da Varinha Mágica | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar a ferramenta dedicada e suas combinações no Wails |
 | Balde de Tinta | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar fluxo completo no Windows/Linux e corrigir achados práticos |
 
 ## Baseline confirmado em 2026-08-23
@@ -776,3 +776,33 @@ da fase e não declarar validação completa.
   buffer duplo de `CanvasLayer` prepara a textura por dois frames. A prévia agora é
   removida pelo evento real de ativação do novo buffer; um timeout de segurança cobre
   somente falhas e commits sem troca de imagem.
+
+### 2026-08-28 — Varinha promovida ao grupo W
+
+- A Varinha saiu do modo experimental da ferramenta geométrica e passou a ser uma
+  ferramenta dedicada no grupo `W`, mantendo tolerância 32, Contíguo habilitado e
+  amostragem exclusiva da camada ativa como defaults.
+- Os quatro modos de combinação e seus modificadores temporários foram conectados ao
+  resultado da Varinha sem alterar o contrato consumido pelo Balde de Tinta.
+- Cancelamento por troca de ferramenta, camada ou documento agora interrompe o worker
+  real; o fallback também cede controle e observa o sinal entre lotes de spans.
+- `colorRegion.ts` permanece como núcleo único. A suíte confirmou equivalência entre
+  caminhos, normalização de tolerância, transparência e regressão do Balde.
+- Validação automatizada: 325 testes frontend, TypeScript, Vite desenvolvimento e
+  produção, testes Go e build Wails Windows/amd64 aprovados. A validação manual da
+  Varinha no Windows e Linux permanece pendente.
+
+### 2026-08-28 — Auditoria de desempenho e equivalência da Varinha
+
+- A combinação de máscaras raster transformadas saiu da thread principal e ganhou Worker
+  cancelável próprio. O algoritmo `combineSelections` permanece único e pixel-exato.
+- Casos triviais evitam Worker e cópias; combinações pesadas transferem buffers compactos
+  pertencentes à tarefa para reduzir pressão de memória sem tocar na seleção publicada.
+- O fallback da combinação tornou-se cooperativo. Em fixture 4K rotacionada, preservou
+  pixels e bounds, cedendo a thread 67 vezes durante aproximadamente 799 ms de trabalho.
+- O fallback global de análise de cor agora verifica cancelamento por linhas, inclusive
+  em imagens esparsas, e o caminho contíguo passou a ordenar spans como o Worker.
+- A Varinha recusa camada invisível e o Worker compartilhado do Balde recebeu proteções
+  de ciclo de vida e `postMessage`; o núcleo e o resultado do preenchimento não mudaram.
+- A matriz de regressão cresceu para 332 testes frontend aprovados, incluindo equivalência
+  síncrona/cooperativa, cancelamento, ownership de buffers, tolerâncias e Balde.

@@ -7,13 +7,13 @@
 ## Metadados
 
 - Criado em: 2026-08-24
-- Última atualização: 2026-08-24
-- Estado geral: Fases 0 e 1 implementadas, aguardando validação; Fase 2 é o próximo incremento
+- Última atualização: 2026-08-28
+- Estado geral: Fases 0, 1 e 2 implementadas, aguardando validação manual
 - Grupo Marquee: Retangular, Elíptica, Linha única e Coluna única
 - Grupo inteligente: Seleção de Objeto, Seleção Rápida e Varinha Mágica no slot `W`
 - Ordem inicial: infraestrutura comum -> grupo Marquee -> grupo `W` e Varinha -> Seleção Rápida -> Seleção de Objeto -> homologação
 - Plataformas obrigatórias: Windows e Linux
-- Stack atual: Go 1.23, Wails 2.12, Vue 3, TypeScript e Vite
+- Stack atual: Go 1.26.5, Wails 3.0.0-beta.12, Vue 3.5, TypeScript 5.9 e Vite 8
 
 ## Objetivo
 
@@ -124,10 +124,10 @@ decisão ao registro e explicar o motivo.
 
 | Entrega | Estado | Próximo passo verificável |
 | --- | --- | --- |
-| Contrato e UX do grupo `W` | `EM ANDAMENTO` | Conectar os identificadores já criados ao slot visual na Fase 2 |
+| Contrato e UX do grupo `W` | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar flyout e atalho no Wails em Windows e Linux |
 | Operações de máscara compartilhadas | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Integrar às ferramentas conforme cada fase avançar |
 | Grupo Marquee fiel ao Photoshop | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar manualmente no Wails em Windows e Linux |
-| Varinha Mágica no grupo `W` | `NÃO INICIADO` | Migrar a implementação existente sem reescrever o motor |
+| Varinha Mágica no grupo `W` | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Executar teste de fogo com combinações, cancelamento e camadas transformadas |
 | Seleção Rápida | `NÃO INICIADO` | Executar spike comparativo do algoritmo de bordas |
 | Seleção de Objeto | `NÃO INICIADO` | Avaliar segmentação por ROI Retângulo/Laço e dependência apropriada |
 | Integração e homologação | `NÃO INICIADO` | Iniciar depois das três ferramentas estarem integradas |
@@ -414,7 +414,9 @@ o sistema de `SelectionRegion` existente.
 
 ## Fase 2 — Grupo `W` e Varinha Mágica
 
-Estado: `NÃO INICIADO`
+Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+
+Início: 2026-08-28
 
 ### Objetivo
 
@@ -433,6 +435,15 @@ receberá as outras duas ferramentas.
 - Preservar `colorRegion.ts` e o comportamento do Balde.
 - Não criar novo algoritmo de flood fill.
 
+### Decisão de entrega incremental
+
+- O slot visual já apresentará as três ferramentas na ordem aprovada.
+- Nesta fase, somente a Varinha Mágica ficará habilitada. Seleção de Objeto e Seleção
+  Rápida serão identificadas como `Em breve` até seus respectivos motores serem entregues.
+- Enquanto houver somente uma ferramenta funcional no grupo, `W` e `Shift+W` ativam a
+  Varinha. O ciclo completo na ordem Objeto -> Rápida -> Varinha será habilitado pelas
+  fases seguintes, sem expor ao usuário uma ferramenta que ainda não realiza nenhuma ação.
+
 ### Testes mínimos
 
 - Clique em camada normal, compacta, escalada e rotacionada.
@@ -447,11 +458,11 @@ receberá as outras duas ferramentas.
 
 ### Critérios de aceite
 
-- [ ] Varinha aparece no grupo `W` e não permanece duplicada no dropdown antigo.
+- [x] Varinha aparece no grupo `W` e não permanece duplicada no dropdown antigo.
 - [ ] Flyout funciona por mouse e teclado sem sobreposição.
-- [ ] Seleção anterior é preservada em erro ou cancelamento.
-- [ ] Combinações e modificadores funcionam.
-- [ ] Balde não sofre regressão.
+- [x] Seleção anterior é preservada em erro ou cancelamento.
+- [x] Combinações e modificadores funcionam.
+- [x] Balde não sofre regressão.
 - [ ] Windows e Linux validados manualmente.
 
 ## Fase 3 — Seleção Rápida
@@ -873,3 +884,97 @@ Não incluir esses itens no MVP sem decisão explícita e atualização deste ro
   com seus testes, para compatibilidade e possível reativação futura.
 - Caso um estado antigo ainda indique um dos modos ocultos, a toolbar apresenta a
   Seleção Retangular como fallback seguro.
+
+### 2026-08-28 — Grupo W e Varinha Mágica dedicados
+
+- Criado o slot `W` com ícones originais para Seleção de Objeto, Seleção Rápida e
+  Varinha Mágica. As duas ferramentas de fases futuras aparecem como `Em breve` e
+  permanecem desabilitadas; a Varinha é a ferramenta funcional e lembrada do grupo.
+- `W` e `Shift+W` ativam a Varinha nesta entrega incremental. O helper de ciclo já
+  preserva a ordem Objeto -> Rápida -> Varinha para quando as fases seguintes forem
+  habilitadas, sem expor hoje ferramentas que não realizariam nenhuma ação.
+- A Varinha deixou de ser um `SelectionMode` da ferramenta geométrica e foi removida
+  do dropdown antigo. Tolerância, Contíguo e os quatro modos de combinação agora
+  aparecem na barra contextual da ferramenta dedicada.
+- O modo efetivo de combinação é capturado no clique: `Shift` adiciona, `Alt` subtrai
+  e `Shift+Alt` intersecta. A combinação aceita seleção vetorial ou por pixels e só
+  publica o resultado completo.
+- A seleção anterior é clonada antes da tarefa e permanece intacta em erro ou
+  cancelamento. Trocar ferramenta, camada, documento ou fechar o editor aborta a
+  requisição; a geração continua como defesa secundária contra respostas obsoletas.
+- No worker, o cancelamento encerra efetivamente o processamento. O fallback sem
+  Worker passou a processar spans cooperativamente, cedendo a thread e verificando o
+  sinal entre lotes, com a mesma compactação automática acima de 20 mil spans.
+- `colorRegion.ts` continua sendo o único núcleo de análise compartilhado. Testes de
+  regressão confirmam os mesmos spans no caminho síncrono/cooperativo, tolerâncias
+  0/32/255, contíguo/global, transparência e o comportamento do Balde.
+- Adicionados testes do contrato do grupo W, ordem futura, entrega incremental,
+  equivalência e cancelamento do fallback. Validação automatizada: 325 testes
+  frontend, TypeScript, builds Vite de desenvolvimento e produção, testes Go,
+  build Wails Windows/amd64 e `git diff --check` aprovados.
+- Validação manual do flyout e teste de fogo no Wails em Windows e Linux permanecem
+  pendentes; por isso a Fase 2 não foi marcada como concluída.
+- Próximo passo após a validação manual: iniciar o gate de algoritmo da Fase 3,
+  Seleção Rápida, sem alterar o motor estável da Varinha/Balde.
+
+### 2026-08-28 — Correção de empilhamento dos menus do aplicativo
+
+- A validação manual da Varinha revelou que sua barra contextual (`z-index: 60`)
+  aparecia sobre o menu Arquivo. O `z-index` interno do dropdown não resolvia o caso,
+  pois ele estava limitado pelo contexto de empilhamento do cabeçalho (`z-index: 50`).
+- O cabeçalho do aplicativo passou para `z-index: 90`: acima da toolbar e das barras
+  contextuais, mas ainda abaixo dos diálogos (`100`), popovers globais e alertas.
+- A mudança corrige Arquivo e também previne a mesma sobreposição nos menus Editar,
+  Camada, Selecionar e Janela, independentemente da ferramenta ativa.
+
+### 2026-08-28 — Auditoria pós-validação da Fase 2
+
+- A máscara produzida pela Varinha permanece correta, mas a combinação posterior ainda
+  ocorre na thread principal. Benchmark com uma máscara raster rotacionada em documento
+  3840 × 2160 mediu aproximadamente 739 ms, suficiente para congelar a interface.
+- Decisão: mover somente a combinação pesada para um Worker dedicado, reutilizando
+  `combineSelections` sem aproximar, simplificar ou alterar qualquer pixel do resultado.
+- O fallback cooperativo atual cede controle a cada lote de spans. Em modo global,
+  imagens grandes com poucas correspondências podem examinar muitas linhas sem produzir
+  spans e, portanto, sem permitir cancelamento. A cooperação passará a contar linhas
+  examinadas no modo global e continuará contando spans no modo contíguo.
+- O percurso contíguo do flood fill não garante ordem crescente das linhas. O caminho
+  síncrono ordena o resultado, mas o fallback cooperativo ainda não fazia o mesmo. A
+  equivalência será formalizada por teste com semente no centro da imagem.
+- A Varinha ainda aceita camada raster ativa invisível, podendo analisar pixels diferentes
+  do conteúdo que o usuário vê. Ela passará a recusar esse estado, como o Balde já faz.
+- A lista de ferramentas habilitadas do grupo `W` está duplicada entre o contrato puro e
+  a toolbar. A toolbar passará a consultar uma única função de disponibilidade.
+- Ajuste adicional de clareza: a barra contextual deixará de exibir identificadores
+  internos como `magic-wand` e apresentará nomes localizados das ferramentas.
+- Todos os ajustes devem preservar o núcleo `colorRegion.ts`, a qualidade pixel-exata,
+  os defaults atuais e o comportamento já validado manualmente.
+
+### 2026-08-28 — Lacunas da auditoria corrigidas
+
+- Criado `selectionCombine.worker.ts` e um serviço assíncrono cancelável para executar
+  combinações não triviais fora da thread da interface. `replace` e casos com uma das
+  máscaras vazia continuam instantâneos e não inicializam Worker desnecessariamente.
+- Snapshots de spans compactos pertencentes à operação são transferidos, em vez de
+  clonados, reduzindo o pico de memória. A seleção publicada anterior permanece separada
+  e intacta para recuperação em falha ou cancelamento.
+- O fallback da combinação passou a processar linhas cooperativamente. No benchmark 4K
+  rotacionado, o núcleo síncrono levou 759,4 ms; o fallback pixel-idêntico levou 799,3 ms
+  no total, mas cedeu a thread 67 vezes. No caminho normal, esse mesmo cálculo roda no
+  Worker e não bloqueia a interação do editor.
+- O modo global do fallback da Varinha agora cede controle por linhas examinadas, mesmo
+  quando quase nenhuma cor corresponde. O modo contíguo ordena os spans antes de publicar,
+  ficando estruturalmente idêntico ao resultado síncrono usado pelo Worker.
+- Uma matriz determinística adicional cobriu contíguo/global, quatro tolerâncias, três
+  sementes, transparência e cores variadas, comparando os resultados completos dos dois
+  caminhos sem divergência.
+- A Varinha agora recusa camada ativa invisível com orientação recuperável, evitando
+  selecionar um raster diferente do conteúdo apresentado ao usuário.
+- A toolbar passou a consultar a mesma fonte de disponibilidade do grupo `W`; habilitar
+  uma ferramenta futura não exige mais manter duas listas independentes.
+- A barra contextual passou a exibir nomes localizados como `Varinha Mágica` e `Balde de
+  Tinta`, em vez dos identificadores internos usados pelo TypeScript.
+- O ciclo de vida do Worker do Balde foi endurecido contra erro tardio de uma instância
+  encerrada e falha síncrona de `postMessage`, sem alterar pintura, máscara ou qualidade.
+- Validação automatizada: 332 testes frontend, TypeScript, builds Vite de desenvolvimento
+  e produção, testes Go, build Wails Windows/amd64 e `git diff --check` aprovados.
