@@ -72,6 +72,10 @@ export function ReleaseAxiaProjectAssets(): $CancellablePromise<void> {
     return $Call.ByID(2208318215);
 }
 
+export function ReleaseImageImports(ids: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2282562931, ids);
+}
+
 export function ReleasePDFImport(id: string): $CancellablePromise<void> {
     return $Call.ByID(74252529, id);
 }
@@ -86,6 +90,10 @@ export function SaveExportedImage(suggestedName: string, dataURL: string, mimeTy
 
 export function SaveExportedPNG(suggestedName: string, dataURL: string): $CancellablePromise<string> {
     return $Call.ByID(1175754146, suggestedName, dataURL);
+}
+
+export function SelectImageFile(): $CancellablePromise<$models.ImportedImage> {
+    return $Call.ByID(4262026332);
 }
 
 export function SelectImageFiles(): $CancellablePromise<$models.ImportedImage[] | null> {

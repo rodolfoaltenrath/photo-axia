@@ -47,6 +47,8 @@ const emit = defineEmits<{
   (event: 'mergeLayers'): void
   (event: 'newDocument'): void
   (event: 'openLayerStyles'): void
+  (event: 'openImageDocument'): void
+  (event: 'openPdfDocument'): void
   (event: 'openProject'): void
   (event: 'rasterizeLayer'): void
   (event: 'redo'): void
@@ -130,11 +132,14 @@ onBeforeUnmount(() => {
     <nav ref="menuBar" class="menu-actions" aria-label="Menu do aplicativo" role="menubar">
       <div class="application-menu" @pointerenter="switchOpenMenu('file')">
         <button class="application-menu-trigger" type="button" role="menuitem" aria-haspopup="menu" :aria-expanded="openMenu === 'file'" @click="toggleMenu('file')" @keydown.down.prevent="openMenu = 'file'">Arquivo</button>
-        <div v-if="openMenu === 'file'" class="application-menu-popover" role="menu">
-          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('newDocument'))">Novo</button>
-          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openProject'))">Abrir projeto</button>
-          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importImages'))">Importar imagens</button>
-          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importPdf'))">Importar PDF…</button>
+        <div v-if="openMenu === 'file'" class="application-menu-popover application-menu-popover--file" role="menu">
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('newDocument'))">Novo…</button>
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openProject'))">Abrir projeto…</button>
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openImageDocument'))">Abrir imagem como documento…</button>
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openPdfDocument'))">Abrir PDF como documento…</button>
+          <div class="application-menu-separator" role="separator"></div>
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importImages'))">Adicionar imagens como camadas…</button>
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importPdf'))">Adicionar PDF como camada…</button>
           <div class="application-menu-separator" role="separator"></div>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('saveProject'))">Salvar</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('exportDocument'))">Exportar imagem…</button>

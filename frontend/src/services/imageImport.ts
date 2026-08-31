@@ -2,6 +2,12 @@ import type { ImageAsset, ImportedImage, LayerItem } from '../types/editor'
 import { imageResolutionFromHeader } from '../editor/imageResolution.ts'
 
 const supportedTypes = new Set(['image/png', 'image/jpeg', 'image/gif'])
+const imageTypesByExtension: Record<string, string> = {
+  gif: 'image/gif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png'
+}
 const MAX_EDITOR_PREVIEW_PIXELS = 4_194_304
 const PREVIEW_SIZE_QUANTUM = 64
 const IMAGE_HEADER_BYTES = 256 * 1024
@@ -270,6 +276,43 @@ function canvasBlob(canvas: HTMLCanvasElement, mimeType: string, quality?: numbe
   })
 }
 
+function browserImageMimeType(file: File) {
+  if (supportedTypes.has(file.type)) return file.type
+  const extension = file.name.toLowerCase().split('.').at(-1) ?? ''
+  return imageTypesByExtension[extension] ?? ''
+}
+
+async function freezeGIFFirstFrame(file: File) {
+  const canvas = document.createElement('canvas')
+  let bitmap: ImageBitmap | undefined
+  let temporarySource = ''
+  try {
+    if (typeof createImageBitmap === 'function') {
+      bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+      canvas.width = bitmap.width
+      canvas.height = bitmap.height
+      const context = canvas.getContext('2d', { alpha: true })
+      if (!context) throw new Error('O sistema não disponibilizou o renderizador de GIF.')
+      context.drawImage(bitmap, 0, 0)
+    } else {
+      temporarySource = URL.createObjectURL(file)
+      const image = await loadImage(temporarySource)
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d', { alpha: true })
+      if (!context) throw new Error('O sistema não disponibilizou o renderizador de GIF.')
+      context.drawImage(image, 0, 0)
+    }
+    const blob = await canvasBlob(canvas, 'image/png')
+    return { blob, width: canvas.width, height: canvas.height }
+  } finally {
+    bitmap?.close()
+    if (temporarySource) URL.revokeObjectURL(temporarySource)
+    canvas.width = 1
+    canvas.height = 1
+  }
+}
+
 export function imagePreviewSize(asset: Pick<ImageAsset, 'width' | 'height'>, width: number, height: number) {
   return {
     width: Math.max(1, Math.min(asset.width, Math.round(width))),
@@ -359,6 +402,7 @@ export async function createImagePreview(
   try {
     if (sourceBlob) {
       bitmap = await createImageBitmap(sourceBlob, {
+        imageOrientation: 'from-image',
         resizeWidth: target.width,
         resizeHeight: target.height,
         resizeQuality: 'high'
@@ -394,27 +438,41 @@ export async function readBrowserImages(files: FileList | File[]) {
     while (nextIndex < entries.length) {
       const index = nextIndex++
       const file = entries[index]!
-      if (!supportedTypes.has(file.type)) {
+      const mimeType = browserImageMimeType(file)
+      if (!mimeType) {
         errors.push(`${file.name}: formato não suportado`)
         continue
       }
-      const source = URL.createObjectURL(file)
+      let source = ''
       try {
         const header = await file.slice(0, IMAGE_HEADER_BYTES).arrayBuffer()
-        const dimensions = imageDimensionsFromHeader(header, file.type) ?? await readImageDimensions(source)
-        const resolution = imageResolutionFromHeader(header, file.type)
+        const headerDimensions = imageDimensionsFromHeader(header, mimeType)
+        const resolution = imageResolutionFromHeader(header, mimeType)
+        let dimensions = headerDimensions
+        let outputMimeType = mimeType
+        let byteSize = file.size
+        if (mimeType === 'image/gif') {
+          const frozen = await freezeGIFFirstFrame(file)
+          source = URL.createObjectURL(frozen.blob)
+          dimensions = { width: frozen.width, height: frozen.height }
+          outputMimeType = 'image/png'
+          byteSize = frozen.blob.size
+        } else {
+          source = URL.createObjectURL(file)
+          dimensions ??= await readImageDimensions(source)
+        }
         images[index] = {
           id: crypto.randomUUID(),
           name: file.name,
           width: dimensions.width,
           height: dimensions.height,
-          mimeType: file.type,
+          mimeType: outputMimeType,
           sourceUrl: source,
-          byteSize: file.size,
-          ...resolution
+          byteSize,
+          ...(mimeType === 'image/gif' ? {} : resolution)
         }
       } catch (error) {
-        URL.revokeObjectURL(source)
+        if (source) URL.revokeObjectURL(source)
         errors.push(`${file.name}: ${error instanceof Error ? error.message : 'falha ao importar'}`)
       }
     }

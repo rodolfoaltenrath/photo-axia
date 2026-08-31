@@ -93,6 +93,8 @@ export interface CanvasViewportEmits {
   ): void
   (event: 'paintBucket', point: SelectionPoint, color: string, selection: SelectionRegion | null): void
   (event: 'selectLayer', layerId: string): void
+  (event: 'transformCancelled'): void
+  (event: 'transformCommitted'): void
   (event: 'updateGuide', guide: EditorGuide): void
   (event: 'moveLayers', updates: Array<{ layerId: string; transform: LayerTransform }>): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void

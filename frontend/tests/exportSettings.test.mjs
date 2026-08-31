@@ -16,6 +16,8 @@ test('normaliza nome e extensão conforme o formato', () => {
   assert.equal(exportFilename('folha.png', 'jpeg'), 'folha.jpg')
   assert.equal(exportFilename('  ', 'webp'), 'imagem.webp')
   assert.equal(exportFilename('foto.JPEG', 'png'), 'foto.png')
+  assert.equal(exportFilename('contrato.pdf', 'png'), 'contrato.png')
+  assert.equal(exportFilename('animação.gif', 'webp'), 'animação.webp')
 })
 
 test('converte DPI para pixels por metro usados pelo PNG', () => {

@@ -140,7 +140,9 @@ const {
   discardInteractionFrame,
   selectLayer: (layerId) => emit('selectLayer', layerId),
   moveLayers: (updates) => emit('moveLayers', updates),
-  updateTransform: (layerId, transform) => emit('updateTransform', layerId, transform)
+  updateTransform: (layerId, transform) => emit('updateTransform', layerId, transform),
+  onTransformCancelled: () => emit('transformCancelled'),
+  onTransformCommitted: () => emit('transformCommitted')
 })
 
 const {
@@ -698,6 +700,10 @@ function startViewportPointer(event: PointerEvent) {
     target?.closest('.free-transform-box')
   )
     return
+  if (event.button === 0 && isTransforming.value && !isSpacePressed.value) {
+    commitFreeTransform()
+    return
+  }
 
   if (props.activeTool === 'move' && props.selection && !isSpacePressed.value) {
     const point = pointerToDocument(event)
@@ -819,7 +825,10 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
   if (props.activeTool !== 'move') return
 
   commitKeyboardLayerMove()
-  if (isTransforming.value) commitFreeTransform()
+  if (isTransforming.value) {
+    commitFreeTransform()
+    return
+  }
 
   const temporaryAutoSelect = !props.autoSelectLayer && event.ctrlKey
   if (props.selection && !selectionIsEmpty(props.selection) && !temporaryAutoSelect) {
@@ -922,12 +931,14 @@ onBeforeUnmount(() => {
 })
 
 defineExpose({
+  cancelPendingTransform: cancelFreeTransform,
   commitPendingTransform: () => {
     commitKeyboardLayerMove()
     commitFreeTransform()
   },
   discardPendingBrushPreview: clearBrushPreview,
   fitDocument,
+  startFreeTransform,
   waitForLayerImages,
   zoomToActualSize: () => requestZoom(100)
 })

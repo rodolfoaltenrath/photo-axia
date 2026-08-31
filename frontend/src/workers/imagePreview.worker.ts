@@ -12,6 +12,7 @@ const cancelled = new Set<number>()
 async function generatePreview(request: PreviewRequest) {
   if (cancelled.delete(request.id)) return
   const bitmap = await createImageBitmap(request.source, {
+    imageOrientation: 'from-image',
     resizeWidth: request.width,
     resizeHeight: request.height,
     resizeQuality: 'high'

@@ -260,6 +260,7 @@ textarea:focus-visible,
 }
 
 .workspace {
+  position: relative;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr) 320px;
   min-height: 0;
@@ -1052,6 +1053,33 @@ textarea:focus-visible,
 
 .document-guide--draft .document-guide-line {
   background: #8edaff;
+}
+
+.image-placement-banner {
+  position: absolute;
+  top: 50px;
+  left: 50%;
+  z-index: 75;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 7px;
+  background: rgb(27 32 39 / 96%);
+  box-shadow: 0 10px 26px rgb(0 0 0 / 38%);
+  padding: 7px 9px 7px 12px;
+  color: var(--ui-text);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+
+.image-placement-banner button {
+  height: 28px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 5px;
+  background: var(--ui-control);
+  color: var(--ui-text);
+  padding: 0 10px;
 }
 
 .document-guide--smart-aligned .document-guide-line {
@@ -4376,6 +4404,10 @@ input[type='checkbox'] {
   background: var(--ui-surface-raised);
   box-shadow: 0 12px 28px rgb(0 0 0 / 46%);
   padding: 4px;
+}
+
+.application-menu-popover--file {
+  width: 250px;
 }
 
 .menu-actions .application-menu-popover > button {

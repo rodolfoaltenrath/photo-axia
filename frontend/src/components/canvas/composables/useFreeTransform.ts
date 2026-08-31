@@ -46,6 +46,8 @@ interface FreeTransformOptions {
   selectLayer: (layerId: string) => void
   moveLayers: (updates: Array<{ layerId: string; transform: LayerTransform }>) => void
   updateTransform: (layerId: string, transform: LayerTransform) => void
+  onTransformCancelled?: () => void
+  onTransformCommitted?: () => void
 }
 
 export function applyElementTransform(target: HTMLElement, transform: LayerTransform) {
@@ -191,7 +193,8 @@ export function useFreeTransform(options: FreeTransformOptions) {
   }
 
   function startFreeTransform() {
-    if (transformSession.value || options.isBusy()) return
+    if (transformSession.value) return true
+    if (options.isBusy()) return false
     commitKeyboardLayerMove()
     const activeId = options.activeLayerId()
     const requested = options.selectedLayerIds()
@@ -207,7 +210,7 @@ export function useFreeTransform(options: FreeTransformOptions) {
       if (!layer || !target || !transform || !layer.visible) continue
       members.push({ layerId, original: { ...transform, rotation: transform.rotation ?? 0 }, target })
     }
-    if (!members.length) return
+    if (!members.length) return false
 
     cancelPointerInteractions()
     const groupDraft = groupBoundsFromRects(members.map((member) => member.original))
@@ -221,6 +224,7 @@ export function useFreeTransform(options: FreeTransformOptions) {
     }
     for (const member of members) member.target.classList.add('document-layer--transforming')
     options.scrollArea.value?.focus()
+    return true
   }
 
   function commitFreeTransform() {
@@ -253,6 +257,7 @@ export function useFreeTransform(options: FreeTransformOptions) {
     }
     transformInteraction.value = null
     transformSession.value = null
+    if (session) options.onTransformCommitted?.()
   }
 
   function cancelFreeTransform() {
@@ -267,6 +272,7 @@ export function useFreeTransform(options: FreeTransformOptions) {
     }
     transformInteraction.value = null
     transformSession.value = null
+    if (session) options.onTransformCancelled?.()
   }
 
   function currentTransformDraft() {

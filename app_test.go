@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"net/http"
@@ -16,6 +17,94 @@ import (
 	"testing"
 	"time"
 )
+
+func TestManagedImageImportSurvivesOriginalRemovalAndReleasesSnapshot(t *testing.T) {
+	original := filepath.Join(t.TempDir(), "source.png")
+	writeSolidPNG(t, original, 40, 20, color.RGBA{R: 30, G: 170, B: 80, A: 255})
+	app := NewApp()
+	t.Cleanup(func() { app.shutdown(nil) })
+
+	imported, err := app.importImageFile(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedPath := app.imagePaths[imported.ID]
+	if managedPath == original || managedPath == "" {
+		t.Fatalf("expected a managed snapshot, got %q", managedPath)
+	}
+	if err := os.Remove(original); err != nil {
+		t.Fatal(err)
+	}
+	if response := requestPreview(t, app, imported.SourceURL, 10, 5); response.Code != http.StatusOK {
+		t.Fatalf("managed image stopped working after source removal: %d", response.Code)
+	}
+
+	app.ReleaseImageImports([]string{imported.ID})
+	if _, err := os.Stat(managedPath); !os.IsNotExist(err) {
+		t.Fatalf("managed snapshot was not removed: %v", err)
+	}
+	if response := requestPreview(t, app, imported.SourceURL, 10, 5); response.Code != http.StatusNotFound {
+		t.Fatalf("released image route remained available: %d", response.Code)
+	}
+}
+
+func TestManagedGIFImportFreezesFirstFrameAsPNG(t *testing.T) {
+	original := filepath.Join(t.TempDir(), "animated.gif")
+	palette := color.Palette{color.RGBA{R: 220, A: 255}, color.RGBA{B: 220, A: 255}}
+	first := image.NewPaletted(image.Rect(0, 0, 3, 2), palette)
+	second := image.NewPaletted(image.Rect(0, 0, 3, 2), palette)
+	for index := range second.Pix {
+		second.Pix[index] = 1
+	}
+	file, err := os.Create(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gif.EncodeAll(file, &gif.GIF{Image: []*image.Paletted{first, second}, Delay: []int{5, 5}}); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	t.Cleanup(func() { app.shutdown(nil) })
+	imported, err := app.importImageFile(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imported.MimeType != "image/png" || imported.Name != "animated.gif" {
+		t.Fatalf("unexpected frozen GIF metadata: %#v", imported)
+	}
+	managed, err := os.Open(app.imagePaths[imported.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, format, err := image.Decode(managed)
+	managed.Close()
+	if err != nil || format != "png" {
+		t.Fatalf("managed GIF frame is not PNG: %q, %v", format, err)
+	}
+	r, _, b, _ := decoded.At(0, 0).RGBA()
+	if r <= b {
+		t.Fatalf("expected the red first frame, got %v", decoded.At(0, 0))
+	}
+}
+
+func TestEXIFOrientationWrapperRotatesWithoutAllocatingAnotherRaster(t *testing.T) {
+	source := image.NewRGBA(image.Rect(0, 0, 2, 3))
+	source.Set(0, 0, color.RGBA{R: 255, A: 255})
+	source.Set(1, 0, color.RGBA{G: 255, A: 255})
+	source.Set(0, 2, color.RGBA{B: 255, A: 255})
+	oriented := newEXIFOrientedImage(source, 6)
+	if oriented.Bounds().Dx() != 3 || oriented.Bounds().Dy() != 2 {
+		t.Fatalf("orientation 6 did not swap dimensions: %v", oriented.Bounds())
+	}
+	if oriented.At(2, 0) != source.At(0, 0) || oriented.At(2, 1) != source.At(1, 0) {
+		t.Fatal("orientation 6 did not map the rotated top row correctly")
+	}
+}
 
 func TestCloseDialogUsesPlatformButtonIdentifiers(t *testing.T) {
 	confirm, cancel := closeDialogButtonLabels()

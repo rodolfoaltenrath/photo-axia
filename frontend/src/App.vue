@@ -24,12 +24,14 @@ import {
   listRecentProjects,
   recordRecentProject,
   registerNativeFileDrop,
+  releaseDesktopImageImports,
   releaseDesktopPDF,
   releaseAxiaProjectAssets,
   saveExportedImageBlob,
   removeRecentProject,
   setNativeDocumentDirty,
   uploadRecentThumbnail,
+  selectDesktopImage,
   selectDesktopImages,
   selectDesktopPDF
 } from './services/backend'
@@ -76,6 +78,11 @@ import { MutationBarrier } from './editor/mutationBarrier'
 import type { ExportSettings } from './editor/exportSettings'
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
+import {
+  createNativeImageLayer,
+  importedImageDocumentSettings,
+  validateImportedImageDocument
+} from './editor/mediaDocument'
 import { readAutoSelectLayerPreference, writeAutoSelectLayerPreference } from './editor/preferences'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
 import { moveLayerBy, moveLayerRelativeTo } from './editor/layerOrder'
@@ -223,6 +230,7 @@ const showExportImageDialog = ref(false)
 const showImportPdfDialog = ref(false)
 const pdfImportSource = shallowRef<PDFImportSource | null>(null)
 const pdfImportProgress = ref('')
+const pdfImportDestination = ref<'document' | 'layer'>('layer')
 const exportEstimateBusy = ref(false)
 const exportEstimatedBytes = ref<number | null>(null)
 const preparedExport = shallowRef<{ key: string; blob: Blob } | null>(null)
@@ -235,10 +243,23 @@ const showUnsavedChangesDialog = ref(false)
 const showFlattenImageDialog = ref(false)
 const layerStyleDialog = shallowRef<{ layerId: string; before: LayerStyleConfig }>()
 const fileInput = ref<HTMLInputElement | null>(null)
+const documentImageInput = ref<HTMLInputElement | null>(null)
 const pdfFileInput = ref<HTMLInputElement | null>(null)
 const canvasViewport = ref<InstanceType<typeof CanvasViewport> | null>(null)
 const projectPath = ref('')
 const savedHistoryRevision = ref<number | null>(null)
+interface ImagePlacementSession {
+  currentLayerId: string
+  pending: ImportedImage[]
+  previousActiveLayerId: string
+}
+const imagePlacementSession = shallowRef<ImagePlacementSession>()
+let cancellingImagePlacementQueue = false
+const imagePlacementActive = computed(() => Boolean(imagePlacementSession.value))
+const imagePlacementRemaining = computed(() => {
+  const session = imagePlacementSession.value
+  return session ? session.pending.length + (session.currentLayerId ? 1 : 0) : 0
+})
 const activeDocument = ref<DocumentSpec>({
   id: 'draft',
   name: 'Sem título',
@@ -258,6 +279,7 @@ const zoomEventOptions = { capture: true, passive: false }
 const previewGenerations = new Map<string, number>()
 const previewControllers = new Map<string, AbortController>()
 const trackedObjectUrls = new Set<string>()
+const trackedNativeImageIDs = new Set<string>()
 const transientObjectUrls = new Set<string>()
 let selectionGeneration = 0
 let pendingSelectionTasks = 0
@@ -330,6 +352,7 @@ const activeSmartLayerEditSession = computed(() => smartLayerEditSessions.value.
 const smartLayerEditBreadcrumb = computed(() => smartLayerEditSessions.value.map((session) => session.targetLayerName))
 const documentDirty = computed(() => {
   if (!hasOpenDocument.value) return false
+  if (imagePlacementActive.value) return true
   const session = activeSmartLayerEditSession.value
   if (session) return session.parentDirty || history.currentPosition.value > 0
   return savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value
@@ -588,9 +611,19 @@ function layerObjectUrls(layer: LayerItem) {
   )
 }
 
+function layerNativeImageIDs(layer: LayerItem) {
+  return smartLayerObjectLayers(layer).flatMap((item) => [
+    item.image?.sourceUrl,
+    ...layerStylePatternAssets(item.styles).map((asset) => asset.sourceUrl)
+  ]).flatMap((source) => source?.startsWith('/__axia_asset/')
+    ? [source.slice('/__axia_asset/'.length).split('?')[0]!]
+    : [])
+}
+
 function trackLayerAssets(items: LayerItem[]) {
   for (const layer of items) {
     for (const source of layerObjectUrls(layer)) trackedObjectUrls.add(source)
+    for (const id of layerNativeImageIDs(layer)) trackedNativeImageIDs.add(id)
   }
 }
 
@@ -600,8 +633,10 @@ function retainedHistoryLayers() {
 
 function collectUnusedObjectUrls() {
   const retainedUrls = new Set<string>()
+  const retainedNativeImageIDs = new Set<string>()
   for (const layer of [...layers.value, ...retainedHistoryLayers()]) {
     for (const source of layerObjectUrls(layer)) retainedUrls.add(source)
+    for (const id of layerNativeImageIDs(layer)) retainedNativeImageIDs.add(id)
   }
   for (const entry of history.entries()) {
     for (const source of historyDeltaObjectUrls(entry.delta)) retainedUrls.add(source)
@@ -620,6 +655,14 @@ function collectUnusedObjectUrls() {
     URL.revokeObjectURL(source)
     trackedObjectUrls.delete(source)
   }
+
+  const releasedNativeImageIDs: string[] = []
+  for (const id of trackedNativeImageIDs) {
+    if (retainedNativeImageIDs.has(id)) continue
+    releasedNativeImageIDs.push(id)
+    trackedNativeImageIDs.delete(id)
+  }
+  void releaseDesktopImageImports(releasedNativeImageIDs)
 }
 
 function releaseAllEditorAssets(preserveSmartCache = false) {
@@ -629,9 +672,16 @@ function releaseAllEditorAssets(preserveSmartCache = false) {
   clearPreparedImageCache()
   clearLayerStyleRenderCache()
   if (!preserveSmartCache) clearSmartLayerRenderCache()
-  releaseLayerAssets([...layers.value, ...retainedHistoryLayers()])
+  const releasedLayers = [...layers.value, ...retainedHistoryLayers()]
+  const nativeImageIDs = new Set([
+    ...trackedNativeImageIDs,
+    ...releasedLayers.flatMap(layerNativeImageIDs)
+  ])
+  releaseLayerAssets(releasedLayers)
+  void releaseDesktopImageImports([...nativeImageIDs])
   for (const source of trackedObjectUrls) URL.revokeObjectURL(source)
   trackedObjectUrls.clear()
+  trackedNativeImageIDs.clear()
 }
 
 async function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
@@ -1642,6 +1692,13 @@ function updateLayerTransform(layerId: string, transform: LayerTransform) {
 
   if (floatingSelectionSession.value?.layerId === layerId) clearFloatingSelectionSession()
 
+  if (imagePlacementSession.value?.currentLayerId === layerId) {
+    const sizeChanged = previous?.width !== transform.width || previous?.height !== transform.height
+    layer.transform = { ...transform }
+    if (sizeChanged) void refreshLayerPreview(layer)
+    return
+  }
+
   if ((transform.rotation ?? 0) !== 0 && layerSupportsRotationBaking(layer)) {
     // Apply the committed (still rotated) geometry immediately so nothing
     // visually reverts to the pre-rotation state while the pixel bake runs
@@ -1687,6 +1744,13 @@ function moveLayerTransforms(updates: Array<{ layerId: string; transform: LayerT
     })
   }
   if (!items.length) return
+
+  const placementLayerId = imagePlacementSession.value?.currentLayerId
+  if (placementLayerId && items.length === 1 && items[0]!.layerId === placementLayerId) {
+    const layer = layers.value.find((candidate) => candidate.id === placementLayerId)
+    if (layer) layer.transform = { ...items[0]!.after }
+    return
+  }
 
   if (items.some((item) => floatingSelectionSession.value?.layerId === item.layerId)) {
     clearFloatingSelectionSession()
@@ -1852,6 +1916,100 @@ async function createDocument(settings: NewDocumentSettings) {
     isBusy.value = false
     if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient' || activeTool.value === 'paint-bucket') {
       void ensureRasterLayerPaintable()
+    }
+  }
+}
+
+function releaseUnadoptedImportedImage(image: ImportedImage | null | undefined) {
+  if (!image) return
+  if (image.sourceUrl.startsWith('blob:')) URL.revokeObjectURL(image.sourceUrl)
+  else if (image.sourceUrl.startsWith('/__axia_asset/')) void releaseDesktopImageImports([image.id])
+}
+
+async function prepareImportedDocumentLayer(layer: LayerItem) {
+  const asset = layer.image
+  const transform = layer.transform
+  if (!asset || !transform) throw new Error('A mídia não possui conteúdo visual válido.')
+  const target = editorPreviewSize(
+    asset,
+    transform.width,
+    transform.height,
+    1,
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+    ACTIVE_PREVIEW_PIXELS
+  )
+  let preview: Awaited<ReturnType<typeof createImagePreview>>
+  try {
+    preview = await createImagePreview(asset, target.width, target.height)
+    await prepareImageSource(preview?.url ?? asset.sourceUrl)
+    asset.previewUrl = preview?.url
+    asset.previewWidth = preview?.width ?? asset.width
+    asset.previewHeight = preview?.height ?? asset.height
+  } catch (error) {
+    if (preview?.url.startsWith('blob:')) URL.revokeObjectURL(preview.url)
+    releasePreparedImage(preview?.url ?? asset.sourceUrl)
+    throw error
+  }
+}
+
+async function replaceDocumentWithImportedImage(
+  image: ImportedImage,
+  documentName = image.name,
+  baselineLabel = 'Mídia aberta',
+  background: DocumentSpec['background'] = 'transparent'
+) {
+  const validationError = validateImportedImageDocument(image)
+  if (validationError) throw new Error(validationError)
+
+  const settings = importedImageDocumentSettings(image, documentName, background)
+  const document = await createEditorDocument(settings, image.width, image.height)
+  const layer = createNativeImageLayer(image)
+  let documentAdopted = false
+
+  try {
+    // Prepare the exact visual source before releasing anything owned by the current document.
+    await prepareImportedDocumentLayer(layer)
+    canvasViewport.value?.commitPendingTransform()
+    if (rasterMutationBarrier.isPending && !await rasterMutationBarrier.wait()) {
+      throw new Error('Não foi possível concluir a edição atual antes de abrir a mídia.')
+    }
+    await releaseAxiaProjectAssets()
+
+    releaseAllEditorAssets()
+    history.clear(baselineLabel)
+    previewGenerations.clear()
+    selection.value = null
+    selectionGeneration++
+    activeDocument.value = document
+    guides.value = []
+    rulerOrigin.value = { x: 0, y: 0 }
+    rulerUnit.value = 'px'
+    layers.value = [layer]
+    trackLayerAssets([layer])
+    documentAdopted = true
+    activeLayerId.value = layer.id
+    selectedLayerIds.value = [layer.id]
+    layerSelectionAnchorId.value = layer.id
+    activeTool.value = 'move'
+    zoom.value = 100
+    projectPath.value = ''
+    savedHistoryRevision.value = historyRevision.value
+    hasOpenDocument.value = true
+    appScreen.value = 'editor'
+    previewLayerCountHint = 1
+    statusText.value = 'Preparando imagem para edição…'
+    await nextTick()
+    previewLayerCountHint = 0
+    await canvasViewport.value?.waitForLayerImages([{
+      layerId: layer.id,
+      source: layer.image?.previewUrl ?? layer.image!.sourceUrl
+    }])
+    statusText.value = `${document.name} — ${document.width} × ${document.height} px`
+  } finally {
+    previewLayerCountHint = 0
+    if (!documentAdopted && layer.image?.previewUrl?.startsWith('blob:')) {
+      releasePreparedImage(layer.image.previewUrl)
+      URL.revokeObjectURL(layer.image.previewUrl)
     }
   }
 }
@@ -2297,14 +2455,17 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
 }
 
 async function addDroppedImages(images: ImportedImage[], errors: string[]) {
-  if (isBusy.value) return
-  isBusy.value = true
-  statusText.value = 'Importando imagens…'
-  try {
-    await addImportedImages(images, errors)
-  } finally {
-    isBusy.value = false
+  if (imagePlacementActive.value) {
+    for (const image of images) releaseUnadoptedImportedImage(image)
+    errorText.value = 'Conclua ou cancele o posicionamento das imagens antes de adicionar outros arquivos.'
+    return
   }
+  if (isBusy.value) {
+    for (const image of images) releaseUnadoptedImportedImage(image)
+    return
+  }
+  statusText.value = 'Preparando imagens para posicionamento…'
+  await startImagePlacementQueue(images, errors)
 }
 
 async function selectWithMagicWand(point: SelectionPoint, combineMode: SelectionCombineMode) {
@@ -3016,6 +3177,175 @@ function commitPaintBucket(point: SelectionPoint, color: string, bucketSelection
   }).catch(() => undefined)
 }
 
+function activateCurrentImagePlacement(session: ImagePlacementSession) {
+  let attempts = 0
+  const activate = async () => {
+    if (imagePlacementSession.value !== session) return
+    if (isBusy.value) {
+      window.setTimeout(activate, 0)
+      return
+    }
+    await nextTick()
+    if (imagePlacementSession.value !== session) return
+    const started = canvasViewport.value?.startFreeTransform() ?? false
+    if (!started && attempts++ < 10) {
+      window.setTimeout(activate, 50)
+      return
+    }
+    if (!started) {
+      showError(new Error('A caixa de transformação não pôde ser iniciada.'), 'Não foi possível posicionar a imagem.')
+      cancelCurrentImagePlacement()
+      return
+    }
+    statusText.value = `Posicione a imagem e pressione Enter — ${imagePlacementRemaining.value} restante${imagePlacementRemaining.value === 1 ? '' : 's'}`
+  }
+  window.setTimeout(activate, 0)
+}
+
+function releasePlacementLayer(layer: LayerItem) {
+  previewControllers.get(layer.id)?.abort()
+  previewControllers.delete(layer.id)
+  layers.value = layers.value.filter((candidate) => candidate.id !== layer.id)
+  for (const source of [layer.image?.sourceUrl, layer.image?.previewUrl]) {
+    if (source) releasePreparedImage(source)
+  }
+  collectUnusedObjectUrls()
+}
+
+async function stageNextImagePlacement() {
+  const previous = imagePlacementSession.value
+  if (!previous) return
+  const [image, ...pending] = previous.pending
+  if (!image) {
+    imagePlacementSession.value = undefined
+    statusText.value = 'Todas as imagens foram posicionadas'
+    return
+  }
+
+  // Remove o item em preparação da lista pendente imediatamente. Assim,
+  // Cancelar todas não libera sua fonte enquanto a prévia ainda a decodifica.
+  const stagingSession: ImagePlacementSession = {
+    ...previous,
+    currentLayerId: image.id,
+    pending
+  }
+  imagePlacementSession.value = stagingSession
+
+  isBusy.value = true
+  statusText.value = 'Preparando próxima imagem…'
+  let layer: LayerItem | undefined
+  try {
+    layer = createNativeImageLayer(image)
+    layer.transform = imageTransform(image)
+    await prepareImportedDocumentLayer(layer)
+    if (imagePlacementSession.value !== stagingSession) {
+      if (layer.image?.previewUrl?.startsWith('blob:')) {
+        releasePreparedImage(layer.image.previewUrl)
+        URL.revokeObjectURL(layer.image.previewUrl)
+      }
+      releaseUnadoptedImportedImage(image)
+      return
+    }
+    const session: ImagePlacementSession = {
+      currentLayerId: layer.id,
+      pending,
+      previousActiveLayerId: activeLayerId.value
+    }
+    layers.value = [layer, ...layers.value]
+    trackLayerAssets([layer])
+    activeLayerId.value = layer.id
+    selectedLayerIds.value = [layer.id]
+    layerSelectionAnchorId.value = layer.id
+    activeTool.value = 'move'
+    imagePlacementSession.value = session
+    await nextTick()
+    await canvasViewport.value?.waitForLayerImages([{
+      layerId: layer.id,
+      source: layer.image?.previewUrl ?? layer.image!.sourceUrl
+    }])
+    activateCurrentImagePlacement(session)
+  } catch (error) {
+    if (layer?.image?.previewUrl?.startsWith('blob:')) {
+      releasePreparedImage(layer.image.previewUrl)
+      URL.revokeObjectURL(layer.image.previewUrl)
+    }
+    releaseUnadoptedImportedImage(image)
+    if (imagePlacementSession.value !== stagingSession) return
+    showError(error, `Não foi possível preparar ${image.name}. A fila continuará.`)
+    imagePlacementSession.value = { ...stagingSession, currentLayerId: '', pending }
+    window.setTimeout(() => void stageNextImagePlacement(), 0)
+  } finally {
+    isBusy.value = false
+  }
+}
+
+async function startImagePlacementQueue(images: ImportedImage[], errors: string[] = []) {
+  errorText.value = errors.join('\n')
+  if (!images.length) {
+    statusText.value = errors.length ? 'Nenhuma imagem pôde ser adicionada' : 'Adição de imagens cancelada'
+    return
+  }
+  selection.value = null
+  selectionGeneration++
+  imagePlacementSession.value = {
+    currentLayerId: '',
+    pending: images,
+    previousActiveLayerId: activeLayerId.value
+  }
+  await stageNextImagePlacement()
+}
+
+function confirmCurrentImagePlacement() {
+  if (cancellingImagePlacementQueue) return
+  const session = imagePlacementSession.value
+  if (!session) return
+  const layer = layers.value.find((candidate) => candidate.id === session.currentLayerId)
+  if (layer?.transform) {
+    recordHistory('Posicionar imagem', {
+      type: 'layers:add',
+      items: [{ index: 0, layer: cloneLayerHistoryState(layer) }],
+      activeBefore: session.previousActiveLayerId,
+      activeAfter: layer.id
+    })
+  }
+  imagePlacementSession.value = { ...session, currentLayerId: '', pending: session.pending }
+  void stageNextImagePlacement()
+}
+
+function cancelCurrentImagePlacement() {
+  if (cancellingImagePlacementQueue) return
+  const session = imagePlacementSession.value
+  if (!session) return
+  const layer = layers.value.find((candidate) => candidate.id === session.currentLayerId)
+  if (layer) releasePlacementLayer(layer)
+  activeLayerId.value = layers.value.some((candidate) => candidate.id === session.previousActiveLayerId)
+    ? session.previousActiveLayerId
+    : layers.value[0]!.id
+  selectedLayerIds.value = [activeLayerId.value]
+  layerSelectionAnchorId.value = activeLayerId.value
+  imagePlacementSession.value = { ...session, currentLayerId: '', pending: session.pending }
+  void stageNextImagePlacement()
+}
+
+function cancelImagePlacementQueue() {
+  const session = imagePlacementSession.value
+  if (!session) return
+  cancellingImagePlacementQueue = true
+  canvasViewport.value?.cancelPendingTransform()
+  cancellingImagePlacementQueue = false
+  const current = layers.value.find((candidate) => candidate.id === session.currentLayerId)
+  if (current) releasePlacementLayer(current)
+  for (const image of session.pending) releaseUnadoptedImportedImage(image)
+  activeLayerId.value = layers.value.some((candidate) => candidate.id === session.previousActiveLayerId)
+    ? session.previousActiveLayerId
+    : layers.value[0]!.id
+  selectedLayerIds.value = [activeLayerId.value]
+  layerSelectionAnchorId.value = activeLayerId.value
+  imagePlacementSession.value = undefined
+  isBusy.value = false
+  statusText.value = 'Fila de posicionamento cancelada'
+}
+
 function commitSolidFill(color: string) {
   if (rasterMutationBarrier.isPending) return
   const controller = new AbortController()
@@ -3115,6 +3445,10 @@ async function registerRecentProject(
 
 function showProjectHome() {
   if (isBusy.value) return
+  if (imagePlacementActive.value) {
+    statusText.value = 'Conclua ou cancele o posicionamento das imagens antes de sair.'
+    return
+  }
   if (activeSmartLayerEditSession.value) {
     statusText.value = 'Conclua ou cancele a edição da camada inteligente antes de sair.'
     return
@@ -3321,6 +3655,67 @@ async function openProject(recentPath = '') {
   }
 }
 
+async function canOpenMediaDocument(mediaLabel: string) {
+  if (activeSmartLayerEditSession.value) {
+    statusText.value = `Conclua ou cancele a edição da camada inteligente antes de abrir ${mediaLabel}.`
+    return false
+  }
+  return !isBusy.value && await confirmDiscardChanges()
+}
+
+async function openImageAsDocument() {
+  if (!await canOpenMediaDocument('outra imagem')) return
+  errorText.value = ''
+  if (!hasDesktopBackend()) {
+    documentImageInput.value?.click()
+    return
+  }
+
+  isBusy.value = true
+  statusText.value = 'Selecionando imagem…'
+  let image: ImportedImage | null = null
+  let adopted = false
+  try {
+    image = await selectDesktopImage()
+    if (!image) {
+      statusText.value = 'Abertura de imagem cancelada'
+      return
+    }
+    statusText.value = 'Abrindo imagem como documento…'
+    await replaceDocumentWithImportedImage(image, image.name, 'Imagem aberta')
+    adopted = true
+  } catch (error) {
+    showError(error, 'Não foi possível abrir a imagem como documento.')
+  } finally {
+    if (!adopted) releaseUnadoptedImportedImage(image)
+    isBusy.value = false
+  }
+}
+
+async function readLocalImageDocument(input: HTMLInputElement) {
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+
+  isBusy.value = true
+  statusText.value = 'Abrindo imagem como documento…'
+  let image: ImportedImage | undefined
+  let adopted = false
+  try {
+    const result = await readBrowserImages([file])
+    image = result.images[0]
+    if (!image) throw new Error(result.errors[0] || 'A imagem não pôde ser lida.')
+    await replaceDocumentWithImportedImage(image, image.name, 'Imagem aberta')
+    adopted = true
+    errorText.value = result.errors.join('\n')
+  } catch (error) {
+    showError(error, 'Não foi possível abrir a imagem como documento.')
+  } finally {
+    if (!adopted) releaseUnadoptedImportedImage(image)
+    isBusy.value = false
+  }
+}
+
 async function importImages() {
   errorText.value = ''
   if (!hasDesktopBackend()) {
@@ -3329,9 +3724,9 @@ async function importImages() {
   }
 
   isBusy.value = true
-  statusText.value = 'Importando imagens…'
+  statusText.value = 'Selecionando imagens…'
   try {
-    await addImportedImages(await selectDesktopImages())
+    await startImagePlacementQueue(await selectDesktopImages())
   } catch (error) {
     showError(error, 'Não foi possível importar as imagens.')
   } finally {
@@ -3343,10 +3738,10 @@ async function readLocalFiles(input: HTMLInputElement) {
   if (!input.files?.length) return
 
   isBusy.value = true
-  statusText.value = 'Importando imagens…'
+  statusText.value = 'Preparando imagens para posicionamento…'
   try {
     const result = await readBrowserImages(input.files)
-    await addImportedImages(result.images, result.errors)
+    await startImagePlacementQueue(result.images, result.errors)
   } catch (error) {
     showError(error, 'Não foi possível importar as imagens.')
   } finally {
@@ -3365,9 +3760,11 @@ async function releasePDFSource() {
   else if (source.sourceUrl.startsWith('blob:')) URL.revokeObjectURL(source.sourceUrl)
 }
 
-async function importPDF() {
+async function beginPDFImport(destination: 'document' | 'layer') {
   if (isBusy.value || showImportPdfDialog.value) return
+  if (destination === 'document' && !await canOpenMediaDocument('outro PDF')) return
   errorText.value = ''
+  pdfImportDestination.value = destination
   if (!hasDesktopBackend()) {
     pdfFileInput.value?.click()
     return
@@ -3377,13 +3774,13 @@ async function importPDF() {
   try {
     const source = await selectDesktopPDF()
     if (!source) {
-      statusText.value = 'Importação de PDF cancelada'
+      statusText.value = destination === 'document' ? 'Abertura de PDF cancelada' : 'Importação de PDF cancelada'
       return
     }
     await releasePDFSource()
     pdfImportSource.value = source
     showImportPdfDialog.value = true
-    statusText.value = 'PDF pronto para importar'
+    statusText.value = destination === 'document' ? 'PDF pronto para abrir' : 'PDF pronto para adicionar'
   } catch (error) {
     showError(error, 'Não foi possível abrir o PDF.')
   } finally {
@@ -3391,19 +3788,77 @@ async function importPDF() {
   }
 }
 
+function importPDF() {
+  return beginPDFImport('layer')
+}
+
+function openPDFAsDocument() {
+  return beginPDFImport('document')
+}
+
 async function handleNativeFileDrop(
   images: ImportedImage[],
   pdf: PDFImportSource | null,
   errors: string[]
 ) {
-  if (isBusy.value || showImportPdfDialog.value) {
+  if (isBusy.value || showImportPdfDialog.value || imagePlacementActive.value) {
+    for (const image of images) releaseUnadoptedImportedImage(image)
     if (pdf?.id) await releaseDesktopPDF(pdf.id).catch(() => undefined)
     return
   }
   errorText.value = ''
   try {
-    if (images.length || errors.length) await addDroppedImages(images, errors)
+    if (appScreen.value === 'home') {
+      if (!await canOpenMediaDocument('outra mídia')) {
+        for (const image of images) releaseUnadoptedImportedImage(image)
+        if (pdf?.id) await releaseDesktopPDF(pdf.id).catch(() => undefined)
+        return
+      }
+      if (pdf) {
+        pdfImportDestination.value = 'document'
+        await releasePDFSource()
+        pdfImportSource.value = pdf
+        showImportPdfDialog.value = true
+        errorText.value = [
+          ...errors,
+          ...images.map((image) => `${image.name}: abra imagens separadamente do PDF`)
+        ].join('\n')
+        for (const image of images) releaseUnadoptedImportedImage(image)
+        statusText.value = 'PDF pronto para escolher a página'
+        return
+      }
+      const image = images[0]
+      if (!image) {
+        errorText.value = errors.join('\n')
+        return
+      }
+      isBusy.value = true
+      let adopted = false
+      try {
+        await replaceDocumentWithImportedImage(image, image.name, 'Imagem aberta')
+        adopted = true
+        const ignored = images.slice(1)
+        for (const candidate of ignored) releaseUnadoptedImportedImage(candidate)
+        errorText.value = [
+          ...errors,
+          ...ignored.map((candidate) => `${candidate.name}: abra somente uma imagem por vez na tela inicial`)
+        ].join('\n')
+      } finally {
+        if (!adopted) for (const candidate of images) releaseUnadoptedImportedImage(candidate)
+        isBusy.value = false
+      }
+      return
+    }
+    if (images.length || errors.length) {
+      await addDroppedImages(images, [
+        ...errors,
+        ...(pdf ? [`${pdf.name}: adicione PDFs separadamente das imagens`] : [])
+      ])
+      if (pdf?.id) await releaseDesktopPDF(pdf.id).catch(() => undefined)
+      return
+    }
     if (!pdf) return
+    pdfImportDestination.value = 'layer'
     await releasePDFSource()
     pdfImportSource.value = pdf
     showImportPdfDialog.value = true
@@ -3431,7 +3886,7 @@ async function openLocalPDF(file: File) {
     byteSize: file.size
   }
   showImportPdfDialog.value = true
-  statusText.value = 'PDF pronto para importar'
+  statusText.value = pdfImportDestination.value === 'document' ? 'PDF pronto para abrir' : 'PDF pronto para adicionar'
 }
 
 async function readLocalPDF(input: HTMLInputElement) {
@@ -3442,21 +3897,63 @@ async function readLocalPDF(input: HTMLInputElement) {
 
 async function openDroppedPDF(file: File, errors: string[]) {
   if (isBusy.value || showImportPdfDialog.value) return
+  if (imagePlacementActive.value) {
+    errorText.value = 'Conclua ou cancele o posicionamento das imagens antes de adicionar um PDF.'
+    return
+  }
+  pdfImportDestination.value = 'layer'
   await openLocalPDF(file)
   if (errors.length) errorText.value = errors.join('\n')
 }
 
+async function openHomeDroppedFiles(files: File[]) {
+  if (!files.length || !await canOpenMediaDocument('outra mídia')) return
+  const pdfs = files.filter((file) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))
+  if (pdfs.length) {
+    pdfImportDestination.value = 'document'
+    await openLocalPDF(pdfs[0]!)
+    errorText.value = [
+      ...pdfs.slice(1).map((file) => `${file.name}: abra somente um PDF por vez`),
+      ...files.filter((file) => !pdfs.includes(file)).map((file) => `${file.name}: abra imagens separadamente do PDF`)
+    ].join('\n')
+    return
+  }
+
+  isBusy.value = true
+  statusText.value = 'Abrindo imagem como documento…'
+  let image: ImportedImage | undefined
+  let adopted = false
+  try {
+    const result = await readBrowserImages([files[0]!])
+    image = result.images[0]
+    if (!image) throw new Error(result.errors[0] || 'A imagem não pôde ser lida.')
+    await replaceDocumentWithImportedImage(image, image.name, 'Imagem aberta')
+    adopted = true
+    errorText.value = [
+      ...result.errors,
+      ...files.slice(1).map((candidate) => `${candidate.name}: abra somente uma imagem por vez na tela inicial`)
+    ].join('\n')
+  } catch (error) {
+    showError(error, 'Não foi possível abrir a imagem como documento.')
+  } finally {
+    if (!adopted) releaseUnadoptedImportedImage(image)
+    isBusy.value = false
+  }
+}
+
 async function cancelPDFImport() {
   if (isBusy.value && pdfImportController) {
-    pdfImportProgress.value = 'Cancelando importação…'
+    pdfImportProgress.value = 'Cancelando processamento…'
     pdfImportController.abort()
     return
   }
   if (isBusy.value) return
+  const wasOpeningDocument = pdfImportDestination.value === 'document'
   showImportPdfDialog.value = false
   pdfImportProgress.value = ''
   await releasePDFSource()
-  statusText.value = 'Importação de PDF cancelada'
+  pdfImportDestination.value = 'layer'
+  statusText.value = wasOpeningDocument ? 'Abertura de PDF cancelada' : 'Adição de PDF cancelada'
 }
 
 async function performPDFImport(request: PDFRenderRequest) {
@@ -3471,23 +3968,47 @@ async function performPDFImport(request: PDFRenderRequest) {
       pdfImportProgress.value = `Convertendo página ${completed} de ${count}…`
       statusText.value = pdfImportProgress.value
     })
-    pdfImportProgress.value = 'Adicionando página ao documento…'
-    await addImportedImages(images)
+    if (pdfImportDestination.value === 'document') {
+      const image = images[0]
+      if (!image) throw new Error('A página selecionada não gerou uma imagem.')
+      pdfImportProgress.value = 'Criando documento com a página…'
+      let adopted = false
+      try {
+        await replaceDocumentWithImportedImage(
+          image,
+          pdfImportSource.value?.name ?? request.name,
+          'PDF aberto',
+          request.background
+        )
+        adopted = true
+      } finally {
+        if (!adopted) releaseUnadoptedImportedImage(image)
+      }
+    } else {
+      pdfImportProgress.value = 'Adicionando página ao documento…'
+      await addImportedImages(images)
+    }
     showImportPdfDialog.value = false
     await releasePDFSource()
-    statusText.value = 'Página do PDF importada'
+    statusText.value = pdfImportDestination.value === 'document' ? 'PDF aberto como documento' : 'Página do PDF importada'
   } catch (error) {
     showImportPdfDialog.value = false
     await releasePDFSource()
     if (error instanceof DOMException && error.name === 'AbortError') {
-      statusText.value = 'Importação de PDF cancelada'
+      statusText.value = pdfImportDestination.value === 'document' ? 'Abertura de PDF cancelada' : 'Adição de PDF cancelada'
     } else {
-      showError(error, 'Não foi possível importar a página do PDF.')
+      showError(
+        error,
+        pdfImportDestination.value === 'document'
+          ? 'Não foi possível abrir a página do PDF como documento.'
+          : 'Não foi possível adicionar a página do PDF.'
+      )
     }
   } finally {
     await closePDFImport(request.document).catch(() => undefined)
     pdfImportController = undefined
     pdfImportProgress.value = ''
+    pdfImportDestination.value = 'layer'
     isBusy.value = false
   }
 }
@@ -3623,6 +4144,14 @@ function handleShortcut(event: KeyboardEvent) {
     return
   }
 
+  // A fila usa Enter/Esc dentro do Canvas para confirmar ou cancelar o item
+  // atual. Todos os demais atalhos ficam suspensos para que nenhuma ação
+  // altere o documento enquanto a camada ainda não pertence ao histórico.
+  if (imagePlacementActive.value) {
+    if (event.key !== 'Enter' && event.key !== 'Escape') event.preventDefault()
+    return
+  }
+
   if (command && event.code === 'KeyN' && !event.shiftKey && !event.altKey) {
     event.preventDefault()
     requestNewDocument()
@@ -3719,7 +4248,6 @@ function handleShortcut(event: KeyboardEvent) {
     activeTool.value = 'crop'
     return
   }
-
   if (event.code === 'KeyW') {
     event.preventDefault()
     const tool = event.shiftKey
@@ -3802,7 +4330,10 @@ onBeforeUnmount(() => {
       :loading="recentProjectsLoading"
       :projects="recentProjects"
       @clear="clearProjectRecents"
+      @files-dropped="openHomeDroppedFiles"
       @new-document="requestNewDocument"
+      @open-image-document="openImageAsDocument"
+      @open-pdf-document="openPDFAsDocument"
       @open-project="openProject()"
       @open-recent="openProject"
       @remove-recent="removeProjectFromRecents"
@@ -3828,7 +4359,7 @@ onBeforeUnmount(() => {
       :history-bytes="historyBytes"
       :history-items="historyItems"
       :history-position="historyPosition"
-      :is-busy="isBusy"
+      :is-busy="isBusy || imagePlacementActive"
       :redo-label="redoLabel"
       :status-text="statusText"
       :undo-label="undoLabel"
@@ -3850,6 +4381,8 @@ onBeforeUnmount(() => {
       @merge-layers="mergeSelectedLayers"
       @new-document="requestNewDocument"
       @open-layer-styles="openLayerStyles(activeLayerId)"
+      @open-image-document="openImageAsDocument"
+      @open-pdf-document="openPDFAsDocument"
       @open-project="openProject"
       @rasterize-layer="rasterizeLayer()"
       @redo="redoHistory"
@@ -3871,6 +4404,13 @@ onBeforeUnmount(() => {
       @change="readLocalFiles($event.target as HTMLInputElement)"
     />
     <input
+      ref="documentImageInput"
+      accept="image/png,image/jpeg,image/gif"
+      class="visually-hidden"
+      type="file"
+      @change="readLocalImageDocument($event.target as HTMLInputElement)"
+    />
+    <input
       ref="pdfFileInput"
       accept="application/pdf,.pdf"
       class="visually-hidden"
@@ -3885,6 +4425,10 @@ onBeforeUnmount(() => {
       :class="{ 'workspace--smart-edit': activeSmartLayerEditSession }"
       :inert="modalOpen || undefined"
     >
+      <div v-if="imagePlacementActive" class="image-placement-banner" role="status">
+        <span>Posicionando imagens · {{ imagePlacementRemaining }} restante{{ imagePlacementRemaining === 1 ? '' : 's' }}</span>
+        <button type="button" @click="cancelImagePlacementQueue">Cancelar todas</button>
+      </div>
       <header v-if="activeSmartLayerEditSession" class="smart-edit-bar">
         <div class="smart-edit-context">
           <strong>Conteúdo inteligente</strong>
@@ -3901,6 +4445,7 @@ onBeforeUnmount(() => {
       </header>
 
       <ToolBar
+        :inert="imagePlacementActive || undefined"
         v-model:active-tool="activeTool"
         v-model:background-color="backgroundColor"
         v-model:foreground-color="brushColor"
@@ -3958,6 +4503,8 @@ onBeforeUnmount(() => {
         @create-text="addTextLayer"
         @select-layer="selectSingleLayer"
         @move-layers="moveLayerTransforms"
+        @transform-cancelled="cancelCurrentImagePlacement"
+        @transform-committed="confirmCurrentImagePlacement"
         @update:magic-wand-contiguous="magicWandContiguous = $event"
         @update:magic-wand-tolerance="magicWandTolerance = $event"
         @update:paint-bucket-contiguous="paintBucketContiguous = $event"
@@ -3978,7 +4525,7 @@ onBeforeUnmount(() => {
         @update:zoom="setZoom"
       />
 
-      <aside class="side-panels" aria-label="Painéis do documento">
+      <aside class="side-panels" :inert="imagePlacementActive || undefined" aria-label="Painéis do documento">
         <PropertiesPanel
           :active-layer="activeLayer"
           :active-tool="activeTool"
@@ -4035,6 +4582,7 @@ onBeforeUnmount(() => {
     />
     <ImportPdfDialog
       :busy="isBusy"
+      :destination="pdfImportDestination"
       :open="showImportPdfDialog"
       :progress="pdfImportProgress"
       :source="pdfImportSource"

@@ -12,11 +12,13 @@ import {
   PrepareExportedImage,
   PrepareRecentThumbnail,
   RecordRecentProject,
+  ReleaseImageImports,
   ReleasePDFImport,
   ReleaseAxiaProjectAssets,
   SaveExportedPNG,
   RemoveRecentProject,
   SetDocumentDirty,
+  SelectImageFile,
   SelectImageFiles,
   SelectPDFFile
 } from '../../bindings/axia/app'
@@ -111,6 +113,12 @@ export function registerNativeFileDrop(
   })
 }
 
+export async function selectDesktopImage(): Promise<ImportedImage | null> {
+  if (!hasDesktopBackend()) return null
+  const image = await SelectImageFile()
+  return image.id ? image as ImportedImage : null
+}
+
 export async function selectDesktopPDF(): Promise<PDFImportSource | null> {
   if (!hasDesktopBackend()) return null
   const source = await SelectPDFFile()
@@ -120,6 +128,11 @@ export async function selectDesktopPDF(): Promise<PDFImportSource | null> {
 export async function releaseDesktopPDF(id: string) {
   if (!hasDesktopBackend() || !id) return
   await ReleasePDFImport(id)
+}
+
+export async function releaseDesktopImageImports(ids: string[]) {
+  if (!hasDesktopBackend() || !ids.length) return
+  await ReleaseImageImports([...new Set(ids)])
 }
 
 export async function applyPreviewFilter(filterName: string) {

@@ -45,7 +45,7 @@ export function normalizeExportSettings(settings: Partial<ExportSettings>): Expo
 
 export function exportFilename(name: string, format: ExportFormat) {
   const extension = EXPORT_FORMAT_CAPABILITIES[format].extension
-  const clean = name.trim().replace(/\.(png|jpe?g|webp)$/i, '') || 'imagem'
+  const clean = name.trim().replace(/\.(gif|pdf|png|jpe?g|webp)$/i, '') || 'imagem'
   return `${clean}${extension}`
 }
 

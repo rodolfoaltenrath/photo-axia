@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/gif"
 	"image/jpeg"
 	"image/png"
@@ -31,6 +32,8 @@ type App struct {
 	mainWindow            application.Window
 	assetsMu              sync.RWMutex
 	imagePaths            map[string]string
+	managedImageIDs       map[string]struct{}
+	managedImageDirectory string
 	pdfPaths              map[string]string
 	projectMu             sync.Mutex
 	projectSaves          map[string]string
@@ -128,6 +131,20 @@ func (c *previewCache) put(entry previewCacheEntry) {
 	}
 }
 
+func (c *previewCache) removeImage(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	retained := c.entries[:0]
+	for _, entry := range c.entries {
+		if entry.key.id == id {
+			c.bytes -= int64(len(entry.data))
+			continue
+		}
+		retained = append(retained, entry)
+	}
+	c.entries = retained
+}
+
 type DocumentSpec struct {
 	ID             string  `json:"id"`
 	Name           string  `json:"name"`
@@ -163,14 +180,15 @@ type ImportedImage struct {
 
 func NewApp() *App {
 	return &App{
-		imagePaths:    make(map[string]string),
-		pdfPaths:      make(map[string]string),
-		projectSaves:  make(map[string]string),
-		projectFiles:  make(map[string]projectSession),
-		recentUploads: make(map[string]recentUpload),
-		exportUploads: make(map[string]exportUpload),
-		previewSlots:  make(chan struct{}, 1),
-		previewCache:  newPreviewCache(),
+		imagePaths:      make(map[string]string),
+		managedImageIDs: make(map[string]struct{}),
+		pdfPaths:        make(map[string]string),
+		projectSaves:    make(map[string]string),
+		projectFiles:    make(map[string]projectSession),
+		recentUploads:   make(map[string]recentUpload),
+		exportUploads:   make(map[string]exportUpload),
+		previewSlots:    make(chan struct{}, 1),
+		previewCache:    newPreviewCache(),
 	}
 }
 
@@ -206,9 +224,15 @@ func (a *App) ServiceShutdown() error {
 func (a *App) shutdown(context.Context) {
 	a.releaseProjectSessions("")
 	a.assetsMu.Lock()
+	managedImageDirectory := a.managedImageDirectory
 	a.imagePaths = make(map[string]string)
+	a.managedImageIDs = make(map[string]struct{})
+	a.managedImageDirectory = ""
 	a.pdfPaths = make(map[string]string)
 	a.assetsMu.Unlock()
+	if managedImageDirectory != "" {
+		_ = os.RemoveAll(managedImageDirectory)
+	}
 	a.projectMu.Lock()
 	a.projectSaves = make(map[string]string)
 	a.projectMu.Unlock()
@@ -334,7 +358,7 @@ func (a *App) SelectImageFiles() ([]ImportedImage, error) {
 
 	images := make([]ImportedImage, 0, len(paths))
 	for _, path := range paths {
-		imported, err := a.readImageFile(path)
+		imported, err := a.importImageFile(path)
 		if err != nil {
 			return nil, err
 		}
@@ -342,6 +366,26 @@ func (a *App) SelectImageFiles() ([]ImportedImage, error) {
 	}
 
 	return images, nil
+}
+
+func (a *App) SelectImageFile() (ImportedImage, error) {
+	if a.desktop == nil {
+		return ImportedImage{}, fmt.Errorf("aplicativo desktop indisponivel")
+	}
+	dialog := a.desktop.Dialog.OpenFile().
+		SetTitle("Abrir imagem como documento").
+		AddFilter("Imagens", "*.png;*.jpg;*.jpeg;*.gif")
+	if a.mainWindow != nil {
+		dialog.AttachToWindow(a.mainWindow)
+	}
+	path, err := dialog.PromptForSingleSelection()
+	if err != nil {
+		return ImportedImage{}, err
+	}
+	if path == "" {
+		return ImportedImage{}, nil
+	}
+	return a.importImageFile(path)
 }
 
 const maxPDFImportBytes int64 = 512 * 1024 * 1024
@@ -442,7 +486,7 @@ func (a *App) ImportDroppedFiles(paths []string) DroppedFilesResult {
 			pdf = &source
 			continue
 		}
-		imported, err := a.readImageFile(path)
+		imported, err := a.importImageFile(path)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %s", filepath.Base(path), err))
 			continue
@@ -572,6 +616,120 @@ func (a *App) readImageFile(path string) (ImportedImage, error) {
 		ResolutionDPIY:   resolutionDPIY,
 		ResolutionSource: resolutionSource,
 	}, nil
+}
+
+func (a *App) ensureManagedImageDirectory() (string, error) {
+	a.assetsMu.Lock()
+	defer a.assetsMu.Unlock()
+	if a.managedImageDirectory != "" {
+		return a.managedImageDirectory, nil
+	}
+	directory, err := os.MkdirTemp("", "axia-images-*")
+	if err != nil {
+		return "", fmt.Errorf("criar sessão temporária de imagens: %w", err)
+	}
+	a.managedImageDirectory = directory
+	return directory, nil
+}
+
+func snapshotImageFile(sourcePath string, directory string) (string, error) {
+	extension := strings.ToLower(filepath.Ext(sourcePath))
+	if extension == ".gif" {
+		file, err := os.Open(sourcePath)
+		if err != nil {
+			return "", err
+		}
+		firstFrame, _, decodeErr := image.Decode(file)
+		closeErr := file.Close()
+		if decodeErr != nil {
+			return "", fmt.Errorf("decodificar primeiro quadro do GIF: %w", decodeErr)
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+		target, err := os.CreateTemp(directory, "image-*.png")
+		if err != nil {
+			return "", err
+		}
+		targetPath := target.Name()
+		if err := png.Encode(target, firstFrame); err != nil {
+			target.Close()
+			_ = os.Remove(targetPath)
+			return "", fmt.Errorf("congelar primeiro quadro do GIF: %w", err)
+		}
+		if err := target.Close(); err != nil {
+			_ = os.Remove(targetPath)
+			return "", err
+		}
+		return targetPath, nil
+	}
+
+	if extension == "" {
+		extension = ".img"
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return "", err
+	}
+	defer source.Close()
+	target, err := os.CreateTemp(directory, "image-*"+extension)
+	if err != nil {
+		return "", err
+	}
+	targetPath := target.Name()
+	if _, err := io.Copy(target, source); err != nil {
+		target.Close()
+		_ = os.Remove(targetPath)
+		return "", fmt.Errorf("copiar imagem para a sessão: %w", err)
+	}
+	if err := target.Close(); err != nil {
+		_ = os.Remove(targetPath)
+		return "", err
+	}
+	return targetPath, nil
+}
+
+func (a *App) importImageFile(path string) (ImportedImage, error) {
+	directory, err := a.ensureManagedImageDirectory()
+	if err != nil {
+		return ImportedImage{}, err
+	}
+	snapshotPath, err := snapshotImageFile(path, directory)
+	if err != nil {
+		return ImportedImage{}, err
+	}
+	imported, err := a.readImageFile(snapshotPath)
+	if err != nil {
+		_ = os.Remove(snapshotPath)
+		return ImportedImage{}, err
+	}
+	imported.Name = filepath.Base(path)
+	a.assetsMu.Lock()
+	a.managedImageIDs[imported.ID] = struct{}{}
+	a.assetsMu.Unlock()
+	return imported, nil
+}
+
+func (a *App) ReleaseImageImports(ids []string) {
+	paths := make([]string, 0, len(ids))
+	a.assetsMu.Lock()
+	for _, id := range ids {
+		if _, managed := a.managedImageIDs[id]; !managed {
+			continue
+		}
+		if path := a.imagePaths[id]; path != "" {
+			paths = append(paths, path)
+		}
+		delete(a.imagePaths, id)
+		delete(a.managedImageIDs, id)
+	}
+	a.assetsMu.Unlock()
+	for _, path := range paths {
+		_ = os.Remove(path)
+	}
+	for _, id := range ids {
+		a.previewCache.removeImage(id)
+	}
 }
 
 func imageResolutionFromHeader(data []byte, format string) (float64, float64, string) {
@@ -883,6 +1041,62 @@ func (a *App) pdfHandler() http.Handler {
 	})
 }
 
+type exifOrientedImage struct {
+	source      image.Image
+	orientation int
+	bounds      image.Rectangle
+}
+
+func newEXIFOrientedImage(source image.Image, orientation int) image.Image {
+	if orientation < 2 || orientation > 8 {
+		return source
+	}
+	sourceBounds := source.Bounds()
+	width, height := sourceBounds.Dx(), sourceBounds.Dy()
+	if orientation >= 5 {
+		width, height = height, width
+	}
+	return &exifOrientedImage{
+		source:      source,
+		orientation: orientation,
+		bounds:      image.Rect(0, 0, width, height),
+	}
+}
+
+func (oriented *exifOrientedImage) ColorModel() color.Model {
+	return oriented.source.ColorModel()
+}
+
+func (oriented *exifOrientedImage) Bounds() image.Rectangle {
+	return oriented.bounds
+}
+
+func (oriented *exifOrientedImage) At(x int, y int) color.Color {
+	bounds := oriented.source.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	localX, localY := x-oriented.bounds.Min.X, y-oriented.bounds.Min.Y
+	var sourceX, sourceY int
+	switch oriented.orientation {
+	case 2:
+		sourceX, sourceY = width-1-localX, localY
+	case 3:
+		sourceX, sourceY = width-1-localX, height-1-localY
+	case 4:
+		sourceX, sourceY = localX, height-1-localY
+	case 5:
+		sourceX, sourceY = localY, localX
+	case 6:
+		sourceX, sourceY = localY, height-1-localX
+	case 7:
+		sourceX, sourceY = width-1-localY, height-1-localX
+	case 8:
+		sourceX, sourceY = width-1-localY, localX
+	default:
+		sourceX, sourceY = localX, localY
+	}
+	return oriented.source.At(bounds.Min.X+sourceX, bounds.Min.Y+sourceY)
+}
+
 func generateImagePreview(path string, width int, height int) (previewCacheEntry, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -898,6 +1112,11 @@ func generateImagePreview(path string, width int, height int) (previewCacheEntry
 	source, format, err := image.Decode(file)
 	if err != nil {
 		return previewCacheEntry{}, err
+	}
+	if format == "jpeg" {
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr == nil {
+			source = newEXIFOrientedImage(source, jpegExifOrientation(file))
+		}
 	}
 
 	preview := image.NewRGBA(image.Rect(0, 0, width, height))

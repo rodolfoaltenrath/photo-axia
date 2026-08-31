@@ -12,23 +12,34 @@ defineProps<{
 
 const emit = defineEmits<{
   (event: 'clear'): void
+  (event: 'filesDropped', files: File[]): void
   (event: 'newDocument'): void
+  (event: 'openImageDocument'): void
+  (event: 'openPdfDocument'): void
   (event: 'openProject'): void
   (event: 'openRecent', path: string): void
   (event: 'removeRecent', path: string): void
   (event: 'returnToEditor'): void
 }>()
+
+function handleDrop(event: DragEvent) {
+  event.preventDefault()
+  if (!event.dataTransfer?.files.length) return
+  emit('filesDropped', Array.from(event.dataTransfer.files))
+}
 </script>
 
 <template>
-  <main class="project-home">
+  <main class="project-home" @dragover.prevent @drop="handleDrop">
     <header class="project-home-header">
       <img class="project-home-logo" :src="axiaLogo" alt="Axia Studio" />
       <div class="project-home-actions" aria-label="Ações de projeto">
         <button class="primary-button" :disabled="busy" type="button" @click="emit('newDocument')">
           Novo
         </button>
-        <button :disabled="busy" type="button" @click="emit('openProject')">Abrir</button>
+        <button :disabled="busy" type="button" @click="emit('openProject')">Abrir projeto</button>
+        <button :disabled="busy" type="button" @click="emit('openImageDocument')">Abrir imagem</button>
+        <button :disabled="busy" type="button" @click="emit('openPdfDocument')">Abrir PDF</button>
         <button v-if="canReturnToEditor" :disabled="busy" type="button" @click="emit('returnToEditor')">
           Voltar ao editor
         </button>
@@ -71,7 +82,7 @@ const emit = defineEmits<{
       <div v-else class="recent-projects-empty">
         <span aria-hidden="true">AX</span>
         <h2>Nenhum projeto recente</h2>
-        <p>Crie um documento novo ou abra um projeto <code>.axia</code> existente.</p>
+        <p>Crie um documento, abra um projeto <code>.axia</code> ou arraste uma imagem ou PDF para esta tela.</p>
       </div>
     </section>
   </main>

@@ -21,6 +21,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 const props = defineProps<{
   busy: boolean
+  destination: 'document' | 'layer'
   open: boolean
   progress: string
   source: PDFImportSource | null
@@ -73,6 +74,7 @@ const selectedSize = computed(() => {
   const page = pages.value[normalizedSelection.value[0]! - 1]
   return page ? pdfPagePixelSize(page, effectiveDpi.value) : undefined
 })
+const opensDocument = computed(() => props.destination === 'document')
 
 function formatBytes(bytes: number) {
   const units = ['B', 'KB', 'MB', 'GB']
@@ -280,7 +282,7 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
     >
       <header class="dialog-header">
         <div>
-          <h2 id="pdf-import-title">Importar página do PDF</h2>
+          <h2 id="pdf-import-title">{{ opensDocument ? 'Abrir PDF como documento' : 'Adicionar PDF como camada' }}</h2>
           <span>{{ source?.name }}<template v-if="pages.length"> · {{ pages.length }} {{ pages.length === 1 ? 'página' : 'páginas' }}</template></span>
         </div>
         <button type="button" title="Fechar" aria-label="Fechar" @click="cancel">×</button>
@@ -313,7 +315,10 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
             <div v-if="selectedSize"><dt>Tamanho final</dt><dd>{{ selectedSize.width }} × {{ selectedSize.height }} px</dd></div>
             <div><dt>Uso estimado de memória</dt><dd>{{ formatBytes(estimatedBytes) }}</dd></div>
           </dl>
-          <p>A página será convertida em pixels. Textos e vetores não permanecerão editáveis.</p>
+          <p>
+            A página será convertida em pixels. Textos e vetores não permanecerão editáveis.
+            <template v-if="opensDocument"> O tamanho final acima será o tamanho do novo documento.</template>
+          </p>
         </aside>
 
         <section class="pdf-page-picker" aria-label="Páginas do PDF">
@@ -343,9 +348,9 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
         <p v-if="validationError" class="form-error pdf-import-error">{{ validationError }}</p>
         <p v-if="props.busy" class="pdf-import-progress" role="status">{{ progress }}</p>
         <footer class="dialog-actions pdf-import-actions">
-          <button type="button" @click="cancel">{{ props.busy ? 'Cancelar importação' : 'Cancelar' }}</button>
+          <button type="button" @click="cancel">{{ props.busy ? 'Cancelar processamento' : 'Cancelar' }}</button>
           <button class="primary-button" :disabled="controlsBusy || Boolean(validationError)" type="submit">
-            {{ props.busy ? 'Importando…' : 'Importar página' }}
+            {{ props.busy ? 'Processando…' : opensDocument ? 'Abrir página' : 'Adicionar página' }}
           </button>
         </footer>
       </form>
