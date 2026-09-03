@@ -4,7 +4,7 @@ import type { RenderedLayerAppearance } from '../services/renderDocument.ts'
 
 export function layerCanRasterize(layer?: LayerItem) {
   if (!layer || layer.kind === 'adjustment' || layer.kind === 'pixel') return false
-  return Boolean((layer.transform && (layer.image || layer.text)) || (layer.kind === 'background' && !layer.image))
+  return Boolean((layer.transform && (layer.image || layer.text || layer.shape)) || (layer.kind === 'background' && !layer.image))
 }
 
 // Raster layers (image/background/pixel) keep rotation as CSS metadata during
@@ -23,6 +23,7 @@ export interface RasterizedLayerPatch {
   image: ImageAsset
   smart: undefined
   text: undefined
+  shape: undefined
   transform: LayerTransform
   styles: LayerStyleConfig
 }
@@ -36,6 +37,7 @@ export function rasterizedLayerPatch(
     image: { ...image },
     smart: undefined,
     text: undefined,
+    shape: undefined,
     transform: {
       x: appearance.x,
       y: appearance.y,

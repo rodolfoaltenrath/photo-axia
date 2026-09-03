@@ -4,6 +4,7 @@ export type EditorTool =
   | 'eraser'
   | 'gradient'
   | 'paint-bucket'
+  | 'shape'
   | 'eyedropper'
   | 'crop'
   | 'object-selection'
@@ -13,7 +14,9 @@ export type EditorTool =
   | 'hand'
   | 'zoom'
 
-export type LayerKind = 'pixel' | 'image' | 'text' | 'smart' | 'adjustment' | 'background'
+import type { ShapeToolConfig } from '../editor/shape'
+
+export type LayerKind = 'pixel' | 'image' | 'text' | 'shape' | 'smart' | 'adjustment' | 'background'
 export type LayerBlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
 export type DocumentUnit = 'px' | 'cm' | 'mm' | 'in'
 export type DocumentBackground = 'transparent' | 'white' | 'black'
@@ -237,7 +240,13 @@ export interface LayerItem {
   image?: ImageAsset
   smart?: SmartLayerContent
   text?: TextLayerContent
+  shape?: ShapeLayerContent
   transform?: LayerTransform
+}
+
+export interface ShapeLayerContent extends ShapeToolConfig {
+  baseWidth: number
+  baseHeight: number
 }
 
 export interface SmartLayerContent {

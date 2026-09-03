@@ -111,6 +111,14 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
         </div>
       </div>
     </div>
+    <canvas
+      v-if="view.shapePreviewStyle"
+      :ref="actions.captureShapePreviewCanvas"
+      class="shape-preview"
+      :style="view.shapePreviewStyle"
+      :width="view.shapePreviewDimensions.width"
+      :height="view.shapePreviewDimensions.height"
+    ></canvas>
     <SelectionOverlay
       v-if="view.selection"
       :document-height="view.documentHeight"
@@ -185,6 +193,28 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
         :aria-label="`Redimensionar por ${handle.id}`"
         title="Arraste para redimensionar; Alt usa o centro; Shift libera a proporção"
         @pointerdown="actions.startTransformResize($event, handle)"
+      ></button>
+    </div>
+    <div
+      v-if="view.shapeTransformStyle"
+      class="free-transform-box shape-transform-box"
+      :style="view.shapeTransformStyle"
+      @dblclick.stop="actions.commitShape"
+    >
+      <div
+        class="free-transform-body"
+        title="Arraste para mover; Enter confirma e Esc cancela"
+        @pointerdown="actions.startShapeTransformMove"
+      ></div>
+      <button
+        v-for="handle in TRANSFORM_HANDLES"
+        :key="handle.id"
+        class="free-transform-handle"
+        :style="{ left: `${handle.left}%`, top: `${handle.top}%`, cursor: handle.cursor }"
+        type="button"
+        :aria-label="`Redimensionar forma por ${handle.id}`"
+        title="Arraste para redimensionar; Alt usa o centro; Shift libera a proporção"
+        @pointerdown="actions.startShapeTransformResize($event, handle)"
       ></button>
     </div>
             </div>

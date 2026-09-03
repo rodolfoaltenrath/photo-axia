@@ -149,6 +149,7 @@ import type { BrushOperation } from './editor/brush'
 import type { GradientGeometry, GradientStopsConfig } from './editor/gradient'
 import { createGradientToolConfig, syncSimpleGradientColors } from './editor/gradientToolState'
 import { gradientResultTransform } from './editor/gradientRaster'
+import { DEFAULT_SHAPE_CONFIG, normalizeShapeConfig, type ShapeGeometry, type ShapeKind, type ShapeToolConfig } from './editor/shape'
 import {
   disposeSelectionMoveEngine,
   moveImageSelection,
@@ -203,6 +204,9 @@ const gradientConfig = ref<GradientStopsConfig>(createGradientToolConfig(
   brushColor.value,
   backgroundColor.value
 ))
+const shapeConfig = ref<ShapeToolConfig>({ ...DEFAULT_SHAPE_CONFIG, color: brushColor.value })
+const shapeDraftEditing = ref(false)
+const editableShapeLayerId = ref<string>()
 const guides = ref<EditorGuide[]>([])
 const rulersVisible = ref(initialRulersVisibility())
 const guidesVisible = ref(true)
@@ -501,6 +505,43 @@ watch(autoSelectLayer, (enabled) => {
 
 watch([brushColor, backgroundColor], ([foreground, background]) => {
   gradientConfig.value = syncSimpleGradientColors(gradientConfig.value, foreground, background)
+  shapeConfig.value = { ...shapeConfig.value, color: foreground }
+})
+
+function updateShapeConfig(config: ShapeToolConfig) {
+  const normalized = normalizeShapeConfig(config)
+  shapeConfig.value = normalized
+  brushColor.value = shapeConfig.value.color
+  const layer = activeLayer.value
+  if (
+    shapeDraftEditing.value || editableShapeLayerId.value !== layer.id ||
+    layer.kind !== 'shape' || !layer.shape
+  ) return
+  const before = { shape: { ...layer.shape } }
+  const after = { shape: { ...layer.shape, ...normalized } }
+  if (JSON.stringify(before.shape) === JSON.stringify(after.shape)) return
+  layer.shape = after.shape
+  recordHistory('Editar forma', {
+    type: 'layer:patch',
+    layerId: layer.id,
+    before,
+    after
+  }, { mergeKey: `shape:${layer.id}`, mergeWindowMs: 800 })
+}
+
+function updateShapeKind(kind: ShapeKind) {
+  editableShapeLayerId.value = undefined
+  shapeConfig.value = normalizeShapeConfig({ ...shapeConfig.value, kind })
+}
+
+watch([activeLayerId, activeTool], () => {
+  const layer = activeLayer.value
+  if (activeTool.value === 'shape' && layer.kind === 'shape' && layer.shape) {
+    shapeConfig.value = normalizeShapeConfig(layer.shape)
+    editableShapeLayerId.value = layer.id
+  } else {
+    editableShapeLayerId.value = undefined
+  }
 })
 
 function createBackgroundLayer(): LayerItem {
@@ -633,10 +674,8 @@ function retainedHistoryLayers() {
 
 function collectUnusedObjectUrls() {
   const retainedUrls = new Set<string>()
-  const retainedNativeImageIDs = new Set<string>()
   for (const layer of [...layers.value, ...retainedHistoryLayers()]) {
     for (const source of layerObjectUrls(layer)) retainedUrls.add(source)
-    for (const id of layerNativeImageIDs(layer)) retainedNativeImageIDs.add(id)
   }
   for (const entry of history.entries()) {
     for (const source of historyDeltaObjectUrls(entry.delta)) retainedUrls.add(source)
@@ -656,13 +695,9 @@ function collectUnusedObjectUrls() {
     trackedObjectUrls.delete(source)
   }
 
-  const releasedNativeImageIDs: string[] = []
-  for (const id of trackedNativeImageIDs) {
-    if (retainedNativeImageIDs.has(id)) continue
-    releasedNativeImageIDs.push(id)
-    trackedNativeImageIDs.delete(id)
-  }
-  void releaseDesktopImageImports(releasedNativeImageIDs)
+  // Assets nativos são referências leves para arquivos mantidos pelo backend.
+  // Conservá-los até o fechamento do documento evita liberar uma imagem no
+  // intervalo entre remover uma camada e registrar seu snapshot no histórico.
 }
 
 function releaseAllEditorAssets(preserveSmartCache = false) {
@@ -1295,6 +1330,7 @@ async function rasterizeLayer(layerId = activeLayerId.value) {
       image: layer.image,
       smart: layer.smart,
       text: layer.text,
+      shape: layer.shape,
       transform: layer.transform,
       styles: layer.styles
     })
@@ -1416,6 +1452,10 @@ async function mergeSelectedLayers() {
       }
     }
     await preloadImage(createdSource)
+    // Prepara a fonte visual enquanto as camadas de origem ainda pertencem ao
+    // documento. Assim a troca abaixo é atômica e não disputa duas gerações de
+    // preview disparadas pela mudança da camada ativa.
+    await refreshLayerPreview(merged, true, true, true)
 
     const remaining = layers.value.filter((layer) => !selected.has(layer.id))
     const firstSelectedIndex = selectedItems[0]!.index
@@ -1426,7 +1466,6 @@ async function mergeSelectedLayers() {
     layers.value = remaining
     trackLayerAssets([merged])
     selectSingleLayer(merged.id)
-    await refreshLayerPreview(merged, true, false, true)
 
     recordHistory('Mesclar camadas', {
       type: 'layers:replace',
@@ -2446,6 +2485,9 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
           if (source) releasePreparedImage(source)
         }
       }
+      const failedNativeImageIDs = imageLayers.flatMap(layerNativeImageIDs)
+      for (const id of failedNativeImageIDs) trackedNativeImageIDs.delete(id)
+      void releaseDesktopImageImports(failedNativeImageIDs)
       collectUnusedObjectUrls()
       throw error
     }
@@ -3087,6 +3129,52 @@ function commitGradient(
   void commit.finally(() => {
     if (pendingGradientCommit === controller) pendingGradientCommit = undefined
   }).catch(() => undefined)
+}
+
+function commitShape(
+  insertionAnchorId: string | undefined,
+  geometry: ShapeGeometry,
+  config: ShapeToolConfig
+) {
+  if (isBusy.value) return
+  clearFloatingSelectionSession()
+  const normalized = normalizeShapeConfig(config)
+  const id = crypto.randomUUID()
+  const activeBefore = activeLayerId.value
+  const selectedBefore = [...selectedLayerIds.value]
+  const anchorIndex = insertionAnchorId
+    ? layers.value.findIndex((layer) => layer.id === insertionAnchorId)
+    : -1
+  const insertionIndex = anchorIndex < 0 ? 0 : anchorIndex
+  const names: Record<ShapeKind, string> = {
+    rectangle: 'Retângulo',
+    ellipse: 'Elipse',
+    triangle: 'Triângulo',
+    star: 'Estrela'
+  }
+  const layer: LayerItem = {
+    id,
+    name: names[normalized.kind],
+    visible: true,
+    opacity: 100,
+    blendMode: 'normal',
+    kind: 'shape',
+    styles: createLayerStyleConfig(),
+    shape: { ...normalized, baseWidth: geometry.width, baseHeight: geometry.height },
+    transform: { ...geometry, rotation: 0 }
+  }
+  layers.value.splice(insertionIndex, 0, layer)
+  selectSingleLayer(id)
+  editableShapeLayerId.value = id
+  recordHistory('Criar forma', {
+    type: 'layers:add',
+    items: [{ index: insertionIndex, layer: cloneLayerHistoryState(layer) }],
+    activeBefore,
+    activeAfter: id,
+    selectedBefore,
+    selectedAfter: [id]
+  })
+  statusText.value = `${names[normalized.kind]} criado em uma nova camada de forma`
 }
 
 async function performPaintBucket(point: SelectionPoint | null, color: string, bucketSelection: SelectionRegion | null, signal: AbortSignal) {
@@ -4264,6 +4352,7 @@ function handleShortcut(event: KeyboardEvent) {
     e: 'eraser',
     g: event.shiftKey ? 'paint-bucket' : 'gradient',
     i: 'eyedropper',
+    u: 'shape',
     c: 'crop',
     t: 'text',
     h: 'hand',
@@ -4345,7 +4434,7 @@ onBeforeUnmount(() => {
       :inert="modalOpen || undefined"
       :can-delete-layer="layers.length > 1"
       :can-convert-to-smart-layer="canConvertSelectedLayersToSmart"
-      :can-duplicate-layer="Boolean(activeLayer.image || activeLayer.text)"
+      :can-duplicate-layer="Boolean(activeLayer.image || activeLayer.text || activeLayer.shape)"
       :can-edit-smart-layer="activeLayer.kind === 'smart'"
       :can-fill-layer="activeLayer.visible && ['image', 'background', 'pixel'].includes(activeLayer.kind) && Boolean(activeLayer.image && activeLayer.transform)"
       :can-flatten-image="canFlattenImage"
@@ -4450,8 +4539,10 @@ onBeforeUnmount(() => {
         v-model:background-color="backgroundColor"
         v-model:foreground-color="brushColor"
         :selection-mode="selectionMode"
+        :shape-kind="shapeConfig.kind"
         @tool-double-click="handleToolDoubleClick"
         @update-selection-mode="setSelectionMode"
+        @update-shape-kind="updateShapeKind"
       />
 
       <CanvasViewport
@@ -4465,6 +4556,7 @@ onBeforeUnmount(() => {
         :foreground-color="brushColor"
         :background-color="backgroundColor"
         :gradient-config="gradientConfig"
+        :shape-config="shapeConfig"
         :document="activeDocument"
         :guides="guides"
         :guides-locked="guidesLocked"
@@ -4494,8 +4586,11 @@ onBeforeUnmount(() => {
         @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"
         @gradient-gesture="commitGradient"
+        @shape-gesture="commitShape"
         @paint-bucket="commitPaintBucket"
         @update:gradient-config="gradientConfig = $event"
+        @update:shape-config="updateShapeConfig"
+        @update:shape-editing="shapeDraftEditing = $event"
         @update:brush-color="brushColor = $event"
         @update:brush-size="brushSize = $event"
         @sample-color="sampleColor"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import CanvasContextBar from './canvas/CanvasContextBar.vue'
 import CanvasSurface from './canvas/CanvasSurface.vue'
 import type { LayerItem, LayerTransform } from '../types/editor'
@@ -24,6 +24,7 @@ import { useSelectionInteraction } from './canvas/composables/useSelectionIntera
 import { useSelectionMove } from './canvas/composables/useSelectionMove'
 import { useBrushInteraction } from './canvas/composables/useBrushInteraction'
 import { useGradientInteraction } from './canvas/composables/useGradientInteraction'
+import { useShapeInteraction } from './canvas/composables/useShapeInteraction'
 import { useLayerImageReadiness } from './canvas/composables/useLayerImageHandoff'
 import { readBrowserImages } from '../services/imageImport'
 import type { DocumentPoint } from '../editor/freeTransform'
@@ -316,6 +317,39 @@ const {
 })
 
 const {
+  cancelShape,
+  captureShapePreviewCanvas,
+  commitShape: commitShapeDraft,
+  hasShapePointer,
+  shapeInteraction,
+  shapeIsEditing,
+  shapePreviewDimensions,
+  shapePreviewStyle,
+  shapeTransformStyle,
+  startShapePointer,
+  startShapeTransformMove,
+  startShapeTransformResize,
+  stopShapePointer,
+  updateShapePointer
+} = useShapeInteraction({
+  activeTool: () => props.activeTool,
+  config: () => props.shapeConfig,
+  document: () => props.document,
+  isBusy: () => props.isBusy,
+  activeLayerId: () => props.activeLayerId || undefined,
+  scale: () => scale.value,
+  scrollArea,
+  documentPointFromPointer: pointerToDocument,
+  scheduleInteractionFrame,
+  discardInteractionFrame,
+  confirm: (insertionAnchorId, geometry, config) => {
+    emit('shapeGesture', insertionAnchorId, geometry, config)
+  }
+})
+
+watch(shapeIsEditing, (editing) => emit('update:shapeEditing', editing), { immediate: true })
+
+const {
   cancelSelectionMove,
   captureSelectionMoveCanvas,
   commitKeyboardSelectionMove,
@@ -378,10 +412,13 @@ const {
     return true
   },
   isTransforming: () => isTransforming.value,
+  isShapeEditing: () => shapeIsEditing.value,
   cancelTransform: cancelFreeTransform,
   commitTransform: commitFreeTransform,
+  commitShape: commitShapeDraft,
   cancelBrush,
   cancelGradient,
+  cancelShape,
   cancelSelectionMove,
   cancelSelection,
   clearSelection: () => emit('update:selection', null),
@@ -402,7 +439,8 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--selection':
     props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser' ||
-    props.activeTool === 'gradient' || props.activeTool === 'paint-bucket' || props.activeTool === 'magic-wand',
+    props.activeTool === 'gradient' || props.activeTool === 'paint-bucket' || props.activeTool === 'magic-wand' ||
+    props.activeTool === 'shape',
   'canvas-scroll--eyedropper': props.activeTool === 'eyedropper',
   'canvas-scroll--pan-ready':
     props.activeTool === 'hand' || (isSpacePressed.value && !modifierKeys.value.command && !modifierKeys.value.alt),
@@ -423,6 +461,10 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
   gradientInteraction: gradientInteraction.value,
   gradientPreviewDimensions: gradientPreviewDimensions.value,
   gradientPreviewStyle: gradientPreviewStyle.value,
+  shapeInteraction: shapeInteraction.value,
+  shapePreviewDimensions: shapePreviewDimensions.value,
+  shapePreviewStyle: shapePreviewStyle.value,
+  shapeTransformStyle: shapeTransformStyle.value,
   defaultLayerTransform: defaultLayerTransform.value,
   documentHeight: props.document.height,
   documentOffsetX: documentViewportOffset.value.x,
@@ -460,6 +502,7 @@ const canvasSurfaceActions: CanvasSurfaceActions = {
   brushPreviewHidesLayer,
   captureBrushPreviewCanvas,
   captureGradientPreviewCanvas,
+  captureShapePreviewCanvas,
   gradientPreviewHidesLayer,
   captureCanvasRulers,
   captureFreeTransformBox,
@@ -469,6 +512,7 @@ const canvasSurfaceActions: CanvasSurfaceActions = {
   captureSurface,
   clearRulerPointer,
   commitFreeTransform,
+  commitShape: commitShapeDraft,
   displayTransform,
   handleLayerImageError,
   handleLayerImageLoaded,
@@ -483,6 +527,8 @@ const canvasSurfaceActions: CanvasSurfaceActions = {
   startTransformMove,
   startTransformResize,
   startTransformRotate,
+  startShapeTransformMove,
+  startShapeTransformResize,
   startViewportPointer,
   stopPointer,
   updatePointer
@@ -704,6 +750,16 @@ function startViewportPointer(event: PointerEvent) {
     commitFreeTransform()
     return
   }
+  if (
+    event.button === 0 &&
+    shapeIsEditing.value &&
+    !isSpacePressed.value &&
+    target?.closest('.shape-transform-box')
+  ) return
+  if (event.button === 0 && shapeIsEditing.value && !isSpacePressed.value) {
+    commitShapeDraft()
+    return
+  }
 
   if (props.activeTool === 'move' && props.selection && !isSpacePressed.value) {
     const point = pointerToDocument(event)
@@ -742,6 +798,15 @@ function startViewportPointer(event: PointerEvent) {
   if (props.activeTool === 'gradient' && !isSpacePressed.value) {
     const point = pointerToDocument(event)
     if (point && startGradientPointer(event, point)) return
+  }
+
+  if (props.activeTool === 'shape' && !isSpacePressed.value) {
+    const point = pointerToDocument(event)
+    if (
+      point && point.x >= 0 && point.y >= 0 &&
+      point.x <= props.document.width && point.y <= props.document.height &&
+      startShapePointer(event, point)
+    ) return
   }
 
   if (props.activeTool === 'paint-bucket' && !isSpacePressed.value && (event.button === 0 || event.button === 2)) {
@@ -890,6 +955,8 @@ function updatePointer(event: PointerEvent) {
 
   if (hasGradientPointer(event.pointerId) && updateGradientPointer(event)) return
 
+  if (hasShapePointer(event.pointerId) && updateShapePointer(event)) return
+
   if (hasSelectionMovePointer(event.pointerId)) {
     const point = pointerToDocument(event)
     if (point) updateSelectionMovePointer(event, point)
@@ -909,6 +976,7 @@ function stopPointer(event: PointerEvent) {
   else cancelSelectionPointer(event.pointerId)
   stopBrushPointer(event)
   stopGradientPointer(event)
+  stopShapePointer(event)
   stopSelectionMovePointer(event)
   stopTransformPointer(event.pointerId)
   if (panStart.value.pointerId === event.pointerId) {
@@ -931,10 +999,14 @@ onBeforeUnmount(() => {
 })
 
 defineExpose({
-  cancelPendingTransform: cancelFreeTransform,
+  cancelPendingTransform: () => {
+    cancelFreeTransform()
+    cancelShape()
+  },
   commitPendingTransform: () => {
     commitKeyboardLayerMove()
     commitFreeTransform()
+    commitShapeDraft()
   },
   discardPendingBrushPreview: clearBrushPreview,
   fitDocument,
@@ -963,6 +1035,8 @@ defineExpose({
       :document="document"
       :guide-count="guides.length"
       :gradient-config="gradientConfig"
+      :shape-config="shapeConfig"
+      :shape-editing="shapeIsEditing"
       :guide-snapping-enabled="guideSnappingEnabled"
       :smart-guides-enabled="smartGuidesEnabled"
       :guides-locked="guidesLocked"
@@ -981,9 +1055,11 @@ defineExpose({
       :selection-combine-mode="selectionCombineMode"
       :visual-zoom="visualZoom"
       @cancel-transform="cancelFreeTransform"
+      @cancel-shape="cancelShape"
       @clear-guides="emit('clearGuides')"
       @clear-selection="emit('update:selection', null)"
       @commit-transform="commitFreeTransform"
+      @commit-shape="commitShapeDraft"
       @delete-selection="emit('deleteSelection')"
       @fit-document="fitDocument"
       @update-auto-select-layer="emit('update:autoSelectLayer', $event)"
@@ -992,6 +1068,7 @@ defineExpose({
       @update-guide-snapping-enabled="emit('update:guideSnappingEnabled', $event)"
       @update-smart-guides-enabled="emit('update:smartGuidesEnabled', $event)"
       @update-gradient-config="emit('update:gradientConfig', $event)"
+      @update-shape-config="emit('update:shapeConfig', $event)"
       @update-guides-locked="emit('update:guidesLocked', $event)"
       @update-guides-visible="emit('update:guidesVisible', $event)"
       @update-magic-wand-contiguous="emit('update:magicWandContiguous', $event)"

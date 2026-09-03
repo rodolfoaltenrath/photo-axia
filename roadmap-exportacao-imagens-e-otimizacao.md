@@ -659,3 +659,26 @@ Infraestrutura criada:
   seguro para isso, verificar erro de pasta sem permissão e falta de espaço em disco.
 - Estado da entrega: desenvolvimento concluído; homologação multiplataforma ainda em
   andamento conforme os critérios originalmente definidos neste roadmap.
+
+### 2026-09-03 — Correção da mesclagem de camadas raster
+
+- Investigado o erro `Não foi possível carregar a prévia` ao mesclar duas fotos.
+- A prévia da camada mesclada agora é preparada enquanto as camadas originais ainda
+  pertencem ao documento; só depois ocorre a substituição atômica e o registro no histórico.
+- Eliminada a disputa entre a geração explícita da prévia e a atualização disparada
+  pela troca da camada ativa.
+- Referências nativas de imagens deixam de ser liberadas durante estados transitórios;
+  permanecem disponíveis para composição e `Ctrl+Z` até o documento ser fechado.
+- Importações que falham antes de serem adotadas continuam liberando seus recursos
+  imediatamente, evitando acumular referências sem uso.
+- O compositor passou a decodificar, desenhar e liberar uma camada de cada vez, em vez
+  de manter simultaneamente em memória os rasters originais de todas as fotos.
+- O desenho e a ordem de composição não mudam; a alteração reduz apenas o pico de
+  memória e torna uma eventual falha identificável pelo nome exato da camada.
+- Validação: 347 testes frontend, `vue-tsc --noEmit`, bundle Vite 8, testes Go e
+  `git diff --check` aprovados.
+- Executável atualizado em `bin/axia.exe` (13.483.520 bytes; SHA-256
+  `9A3FE3A944E611F5327F6E93A46787001910C6621EB8D846CF01921E82580A83`).
+- Instalador NSIS da correção atualizado em `bin/axia-amd64-installer.exe`
+  (7.321.281 bytes; SHA-256
+  `166EE38E74EB414D67AE38DC38628C67D6289F878A12980775F339E8037CD732`).

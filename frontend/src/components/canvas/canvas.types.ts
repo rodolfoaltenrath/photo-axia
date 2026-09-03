@@ -1,5 +1,6 @@
 import type { BrushOperation } from '../../editor/brush'
 import type { GradientGeometry, GradientStopsConfig } from '../../editor/gradient'
+import type { ShapeGeometry, ShapeToolConfig } from '../../editor/shape'
 import type { DocumentPoint, TransformHandle } from '../../editor/freeTransform'
 import type { EditorGuide, GuideOrientation, RulerOrigin, RulerUnit } from '../../editor/guides'
 import type { SelectionMode, SelectionPoint, SelectionRegion } from '../../editor/selection'
@@ -34,6 +35,7 @@ export interface CanvasViewportProps {
   foregroundColor: string
   backgroundColor: string
   gradientConfig: GradientStopsConfig
+  shapeConfig: ShapeToolConfig
   document: DocumentSpec
   guides: EditorGuide[]
   guidesLocked: boolean
@@ -91,6 +93,12 @@ export interface CanvasViewportEmits {
     config: GradientStopsConfig,
     selection: SelectionRegion | null
   ): void
+  (
+    event: 'shapeGesture',
+    insertionAnchorId: string | undefined,
+    geometry: ShapeGeometry,
+    config: ShapeToolConfig
+  ): void
   (event: 'paintBucket', point: SelectionPoint, color: string, selection: SelectionRegion | null): void
   (event: 'selectLayer', layerId: string): void
   (event: 'transformCancelled'): void
@@ -106,6 +114,8 @@ export interface CanvasViewportEmits {
   (event: 'update:paintBucketContiguous', enabled: boolean): void
   (event: 'update:paintBucketTolerance', tolerance: number): void
   (event: 'update:gradientConfig', config: GradientStopsConfig): void
+  (event: 'update:shapeConfig', config: ShapeToolConfig): void
+  (event: 'update:shapeEditing', editing: boolean): void
   (event: 'update:guidesLocked', enabled: boolean): void
   (event: 'update:guidesVisible', enabled: boolean): void
   (event: 'update:guideSnappingEnabled', enabled: boolean): void
@@ -128,6 +138,10 @@ export interface CanvasSurfaceView {
   gradientInteraction: GradientInteraction | null
   gradientPreviewDimensions: { width: number; height: number }
   gradientPreviewStyle?: CSSProperties
+  shapeInteraction: import('./composables/useShapeInteraction').ShapeInteraction | null
+  shapePreviewDimensions: { width: number; height: number }
+  shapePreviewStyle?: CSSProperties
+  shapeTransformStyle?: CSSProperties
   defaultLayerTransform: LayerTransform
   documentHeight: number
   documentOffsetX: number
@@ -166,6 +180,7 @@ export interface CanvasSurfaceActions {
   gradientPreviewHidesLayer: (layerId: string) => boolean
   captureBrushPreviewCanvas: (element: unknown) => void
   captureGradientPreviewCanvas: (element: unknown) => void
+  captureShapePreviewCanvas: (element: unknown) => void
   captureCanvasRulers: (element: unknown) => void
   captureFreeTransformBox: (element: unknown) => void
   captureGuideOverlay: (element: unknown) => void
@@ -174,6 +189,7 @@ export interface CanvasSurfaceActions {
   captureSurface: (element: unknown) => void
   clearRulerPointer: () => void
   commitFreeTransform: () => void
+  commitShape: () => boolean
   displayTransform: (layer: LayerItem) => LayerTransform | undefined
   handleLayerImageError: (layerId: string, source: string) => void
   handleLayerImageLoaded: (layerId: string, source: string) => void
@@ -188,6 +204,8 @@ export interface CanvasSurfaceActions {
   startTransformMove: (event: PointerEvent) => void
   startTransformResize: (event: PointerEvent, handle: TransformHandle) => void
   startTransformRotate: (event: PointerEvent) => void
+  startShapeTransformMove: (event: PointerEvent) => void
+  startShapeTransformResize: (event: PointerEvent, handle: TransformHandle) => void
   startViewportPointer: (event: PointerEvent) => void
   stopPointer: (event: PointerEvent) => void
   updatePointer: (event: PointerEvent) => void

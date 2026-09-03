@@ -73,7 +73,7 @@ const draggedLayerFillStyle = computed(() => ({
   '--layer-fill-opacity': String(layerStyleFillOpacity(draggedLayer.value?.styles))
 }))
 const canManipulate = computed(() => Boolean(activeLayer.value))
-const canDuplicate = computed(() => Boolean(activeLayer.value?.image || activeLayer.value?.text))
+const canDuplicate = computed(() => Boolean(activeLayer.value?.image || activeLayer.value?.text || activeLayer.value?.shape))
 const canMoveUp = computed(() => canManipulate.value && activeIndex.value > 0)
 const canMoveDown = computed(() => {
   if (!canManipulate.value || activeIndex.value < 0) return false
@@ -337,6 +337,9 @@ onBeforeUnmount(() => {
             :src="draggedLayer.image.previewUrl ?? draggedLayer.image.sourceUrl"
           />
           <span v-else-if="draggedLayer?.kind === 'text'" class="layer-thumb-text">T</span>
+          <svg v-else-if="draggedLayer?.kind === 'shape' && draggedLayer.shape" class="layer-thumb-shape" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4 4h16v16H4z" :fill="draggedLayer.shape.color" />
+          </svg>
         </span>
         <span class="layer-drag-preview-copy">
           <strong>{{ draggedLayer?.name }}</strong>

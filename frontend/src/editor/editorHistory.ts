@@ -86,6 +86,7 @@ export function cloneLayerState(layer: LayerItem): LayerItem {
     image: layer.image ? { ...layer.image } : undefined,
     smart: cloneSmartLayerContent(layer.smart),
     text: layer.text ? { ...layer.text } : undefined,
+    shape: layer.shape ? { ...layer.shape } : undefined,
     transform: layer.transform ? { ...layer.transform } : undefined,
     styles: layer.styles ? cloneLayerStyleConfig(layer.styles) : createLayerStyleConfig()
   }
@@ -106,6 +107,7 @@ export function cloneLayerPatch(patch: Partial<LayerItem>): Partial<LayerItem> {
   if ('smart' in patch) cloned.smart = cloneSmartLayerContent(patch.smart)
   if (patch.smart) cloned.image = undefined
   if ('text' in patch) cloned.text = patch.text ? { ...patch.text } : patch.text
+  if ('shape' in patch) cloned.shape = patch.shape ? { ...patch.shape } : patch.shape
   if ('transform' in patch) cloned.transform = patch.transform ? { ...patch.transform } : patch.transform
   if ('styles' in patch) cloned.styles = patch.styles ? cloneLayerStyleConfig(patch.styles) : patch.styles
   return cloned

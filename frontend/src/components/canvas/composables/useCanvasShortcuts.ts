@@ -13,10 +13,13 @@ interface CanvasShortcutOptions {
   deleteSelectedGuide: () => boolean
   deleteSelection: () => boolean
   isTransforming: () => boolean
+  isShapeEditing: () => boolean
   cancelTransform: () => void
   commitTransform: () => void
+  commitShape: () => boolean
   cancelBrush: () => boolean
   cancelGradient: () => boolean
+  cancelShape: () => boolean
   cancelSelectionMove: () => boolean
   cancelSelection: () => boolean
   clearSelection: () => void
@@ -67,7 +70,18 @@ export function useCanvasShortcuts(options: CanvasShortcutOptions) {
 
   function handleWindowKeydown(event: KeyboardEvent) {
     updateModifierKeys(event)
-    if (event.defaultPrevented || isEditableShortcutTarget(event.target)) return
+    if (event.defaultPrevented) return
+    if (options.isShapeEditing() && event.key === 'Escape') {
+      event.preventDefault()
+      options.cancelShape()
+      return
+    }
+    if (options.isShapeEditing() && event.key === 'Enter') {
+      event.preventDefault()
+      options.commitShape()
+      return
+    }
+    if (isEditableShortcutTarget(event.target)) return
     const arrowDelta = canvasArrowNudgeDelta(event.key, event.shiftKey)
     if (arrowDelta && options.handleArrowNudge(event, arrowDelta)) return
 
@@ -109,6 +123,11 @@ export function useCanvasShortcuts(options: CanvasShortcutOptions) {
     }
 
     if (event.key === 'Escape' && options.cancelGradient()) {
+      event.preventDefault()
+      return
+    }
+
+    if (event.key === 'Escape' && options.cancelShape()) {
       event.preventDefault()
       return
     }

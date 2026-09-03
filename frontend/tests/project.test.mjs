@@ -66,7 +66,7 @@ function projectState() {
 test('manifesto .axia deduplica originals e descarta previews derivados', () => {
   const { manifest, assetSources } = createAxiaProjectManifest(projectState())
   assert.equal(manifest.format, 'axia')
-  assert.equal(manifest.version, 2)
+  assert.equal(manifest.version, 3)
   assert.equal(manifest.assets.length, 1)
   assert.equal(assetSources.length, 1)
   assert.equal(manifest.layers[0].image.assetId, manifest.layers[1].image.assetId)
@@ -94,6 +94,28 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
   assert.equal(restored.view.activeLayerId, 'image-a')
   assert.equal(restored.view.smartGuidesEnabled, true)
   assert.equal(restored.view.zoom, 68.89)
+})
+
+test('persiste uma camada de forma vetorial sem criar asset raster', () => {
+  const state = projectState()
+  state.layers.unshift({
+    id: 'shape-a', name: 'Retângulo', visible: true, opacity: 100, blendMode: 'normal', kind: 'shape',
+    shape: {
+      kind: 'rectangle', color: '#e63946', cornerRadius: 18, squareness: 0,
+      starPoints: 5, starInnerRatio: 50, baseWidth: 320, baseHeight: 180
+    },
+    transform: { x: 44, y: 72, width: 640, height: 270, rotation: 12 }
+  })
+  const { manifest } = createAxiaProjectManifest(state)
+  assert.equal(manifest.assets.length, 1)
+  assert.deepEqual(manifest.layers[0].shape, state.layers[0].shape)
+
+  const restored = restoreAxiaProject(JSON.stringify(manifest), {
+    [manifest.assets[0].id]: '/__axia_asset/restored'
+  })
+  assert.equal(restored.layers[0].kind, 'shape')
+  assert.deepEqual(restored.layers[0].shape, state.layers[0].shape)
+  assert.deepEqual(restored.layers[0].transform, state.layers[0].transform)
 })
 
 test('projetos antigos sem mesclagem são restaurados em modo normal', () => {
@@ -131,7 +153,7 @@ test('persiste estilos, luz global e padrões sem gravar URLs transitórias no m
   }
 
   const { manifest, assetSources } = createAxiaProjectManifest(state)
-  assert.equal(manifest.version, 2)
+  assert.equal(manifest.version, 3)
   assert.equal(manifest.assets.length, 2)
   assert.equal(assetSources.length, 2)
   assert.equal(JSON.stringify(manifest).includes('blob:pattern'), false)
@@ -213,7 +235,7 @@ test('persiste e restaura conteúdo inteligente aninhado com assets deduplicados
   state.view.activeLayerId = 'smart'
 
   const { manifest, assetSources } = createAxiaProjectManifest(state)
-  assert.equal(manifest.version, 2)
+  assert.equal(manifest.version, 3)
   assert.equal(manifest.layers[0].kind, 'smart')
   assert.equal(manifest.layers[0].image, undefined)
   assert.equal(manifest.layers[0].smart.layers[0].image.assetId, 'asset-0001')

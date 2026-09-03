@@ -1,5 +1,5 @@
 import type { EditorGuide, RulerOrigin, RulerUnit } from '../editor/guides'
-import type { DocumentSpec, ImageAsset, LayerItem, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, SmartLayerContent, TextLayerContent } from '../types/editor'
+import type { DocumentSpec, ImageAsset, LayerItem, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, ShapeLayerContent, SmartLayerContent, TextLayerContent } from '../types/editor'
 import { normalizeLayerBlendMode } from '../editor/blendModes.ts'
 import {
   cloneLayerStyleConfig,
@@ -8,8 +8,9 @@ import {
   normalizeLayerStyleGlobalLight
 } from '../editor/layerStyles.ts'
 import { SMART_LAYER_MAX_DEPTH } from '../editor/smartLayers.ts'
+import { normalizeShapeConfig } from '../editor/shape.ts'
 
-export const AXIA_PROJECT_VERSION = 2
+export const AXIA_PROJECT_VERSION = 3
 export const AXIA_PROJECT_MAX_LAYERS = 10_000
 
 export interface AxiaProjectViewState {
@@ -83,6 +84,10 @@ function cloneTransform(transform?: LayerTransform) {
 
 function cloneText(text?: TextLayerContent) {
   return text ? { ...text } : undefined
+}
+
+function cloneShape(shape?: ShapeLayerContent) {
+  return shape ? { ...shape } : undefined
 }
 
 function replaceStoredPatternReferences(
@@ -187,6 +192,7 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
         smart,
         styles: storedStyles,
         text: cloneText(layer.text),
+        shape: cloneShape(layer.shape),
         transform: cloneTransform(layer.transform)
       }
     } finally {
@@ -271,6 +277,19 @@ function restoreText(value: unknown): TextLayerContent | undefined {
   }
 }
 
+function restoreShape(value: unknown): ShapeLayerContent | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Camada de forma inválida.')
+  const source = value as Record<string, unknown>
+  const baseWidth = finiteNumber(source.baseWidth)
+  const baseHeight = finiteNumber(source.baseHeight)
+  if (!baseWidth || !baseHeight || baseWidth > 16_384 || baseHeight > 16_384) {
+    throw new Error('Dimensões da forma inválidas.')
+  }
+  const config = normalizeShapeConfig(source as unknown as ShapeLayerContent)
+  return { ...config, baseWidth, baseHeight }
+}
+
 function restoreLayerStyles(
   value: unknown,
   assets: Map<string, AxiaArchiveAsset>,
@@ -320,10 +339,10 @@ function restoreLayerStyles(
 
 export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<string, string>): AxiaProjectState {
   const parsed = JSON.parse(manifestJSON) as Partial<AxiaProjectManifest>
-  if (parsed.format !== 'axia' || (parsed.version !== 1 && parsed.version !== AXIA_PROJECT_VERSION)) {
+  if (parsed.format !== 'axia' || ![1, 2, AXIA_PROJECT_VERSION].includes(parsed.version ?? 0)) {
     throw new Error(`Versão de projeto .axia não suportada: ${String(parsed.version ?? 'desconhecida')}.`)
   }
-  const projectVersion = parsed.version
+  const projectVersion = parsed.version!
   const document = parsed.document
   if (
     !document || !Number.isFinite(document.width) || !Number.isFinite(document.height) ||
@@ -343,7 +362,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
     throw new Error('Estrutura de camadas inválida.')
   }
   const assets = new Map(parsed.assets.map((asset) => [asset.id, asset]))
-  const layerKinds = new Set(['pixel', 'image', 'text', 'smart', 'adjustment', 'background'])
+  const layerKinds = new Set(['pixel', 'image', 'text', 'shape', 'smart', 'adjustment', 'background'])
   let layerCount = 0
   const restoreStoredLayers = (storedLayers: AxiaStoredLayer[], depth: number): LayerItem[] => {
     if (depth > SMART_LAYER_MAX_DEPTH) throw new Error('A camada inteligente excede o limite de aninhamento.')
@@ -373,9 +392,11 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
     }
     const transform = restoreTransform(stored.transform)
     const text = restoreText(stored.text)
+    const shape = restoreShape(stored.shape)
     const styles = restoreLayerStyles(stored.styles, assets, assetUrls)
     if (stored.kind === 'image' && (!image || !transform)) throw new Error('Camada de imagem incompleta.')
     if (stored.kind === 'text' && (!text || !transform)) throw new Error('Camada de texto incompleta.')
+    if (stored.kind === 'shape' && (!shape || !transform)) throw new Error('Camada de forma incompleta.')
     let smart: SmartLayerContent | undefined
     if (stored.kind === 'smart') {
       const source = stored.smart
@@ -418,6 +439,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
       image,
       smart,
       text,
+      shape,
       transform
     }
     })

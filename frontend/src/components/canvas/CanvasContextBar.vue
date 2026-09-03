@@ -7,6 +7,7 @@ import type { RulerUnit } from '../../editor/guides'
 import type { SelectionMode } from '../../editor/selection'
 import type { SelectionCombineMode } from '../../editor/selectionCombine'
 import type { GradientStopsConfig } from '../../editor/gradient'
+import { normalizeShapeConfig, type ShapeToolConfig } from '../../editor/shape'
 import { gradientStripBackground } from '../../editor/gradientEditor'
 import type { DocumentSpec, EditorTool } from '../../types/editor'
 
@@ -18,6 +19,8 @@ const props = defineProps<{
   document: DocumentSpec
   guideCount: number
   gradientConfig: GradientStopsConfig
+  shapeConfig: ShapeToolConfig
+  shapeEditing: boolean
   guideSnappingEnabled: boolean
   smartGuidesEnabled: boolean
   guidesLocked: boolean
@@ -40,9 +43,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'cancelTransform'): void
+  (event: 'cancelShape'): void
   (event: 'clearGuides'): void
   (event: 'clearSelection'): void
   (event: 'commitTransform'): void
+  (event: 'commitShape'): void
   (event: 'deleteSelection'): void
   (event: 'fitDocument'): void
   (event: 'updateAutoSelectLayer', enabled: boolean): void
@@ -51,6 +56,7 @@ const emit = defineEmits<{
   (event: 'updateGuideSnappingEnabled', enabled: boolean): void
   (event: 'updateSmartGuidesEnabled', enabled: boolean): void
   (event: 'updateGradientConfig', config: GradientStopsConfig): void
+  (event: 'updateShapeConfig', config: ShapeToolConfig): void
   (event: 'updateGuidesLocked', enabled: boolean): void
   (event: 'updateGuidesVisible', enabled: boolean): void
   (event: 'updateMagicWandContiguous', enabled: boolean): void
@@ -69,6 +75,10 @@ function updateBrushSize(value: number) {
   emit('updateBrushSize', normalizeBrushSize(value))
 }
 
+function updateShapeConfig(patch: Partial<ShapeToolConfig>) {
+  emit('updateShapeConfig', normalizeShapeConfig({ ...props.shapeConfig, ...patch }))
+}
+
 const gradientEditorOpen = ref(false)
 const toolLabels: Record<EditorTool, string> = {
   move: 'Mover',
@@ -76,6 +86,7 @@ const toolLabels: Record<EditorTool, string> = {
   eraser: 'Borracha',
   gradient: 'Degradê',
   'paint-bucket': 'Balde de Tinta',
+  shape: 'Forma',
   eyedropper: 'Conta-gotas',
   crop: 'Seleção',
   'object-selection': 'Seleção de Objeto',
@@ -215,6 +226,67 @@ watch(() => props.activeTool, (tool) => {
         />
       </label>
       <span v-else class="brush-context-hint">Apaga para transparência</span>
+    </div>
+    <div v-if="activeTool === 'shape'" class="shape-context-options">
+      <label class="brush-color-control">
+        <span>Cor</span>
+        <input
+          :value="shapeConfig.color"
+          aria-label="Cor da forma"
+          type="color"
+          @input="updateShapeConfig({ color: ($event.target as HTMLInputElement).value })"
+        />
+      </label>
+      <label v-if="shapeConfig.kind !== 'ellipse'">
+        <span>Arredondamento</span>
+        <input
+          :value="shapeConfig.cornerRadius"
+          min="0"
+          max="8192"
+          type="number"
+          @input="updateShapeConfig({ cornerRadius: Number(($event.target as HTMLInputElement).value) })"
+        />
+        <span>px</span>
+      </label>
+      <label v-if="shapeConfig.kind === 'ellipse'" title="0% cria uma elipse; valores maiores aproximam a forma de um quadrado arredondado">
+        <span>Quadratura</span>
+        <input
+          :value="shapeConfig.squareness"
+          min="0"
+          max="100"
+          type="range"
+          @input="updateShapeConfig({ squareness: Number(($event.target as HTMLInputElement).value) })"
+        />
+        <output>{{ shapeConfig.squareness }}%</output>
+      </label>
+      <template v-if="shapeConfig.kind === 'star'">
+        <label>
+          <span>Pontas</span>
+          <input
+            :value="shapeConfig.starPoints"
+            min="3"
+            max="32"
+            type="number"
+            @input="updateShapeConfig({ starPoints: Number(($event.target as HTMLInputElement).value) })"
+          />
+        </label>
+        <label title="Controla o tamanho da parte interna da estrela">
+          <span>Profundidade</span>
+          <input
+            :value="shapeConfig.starInnerRatio"
+            min="5"
+            max="95"
+            type="range"
+            @input="updateShapeConfig({ starInnerRatio: Number(($event.target as HTMLInputElement).value) })"
+          />
+          <output>{{ shapeConfig.starInnerRatio }}%</output>
+        </label>
+      </template>
+      <span class="brush-context-hint">Shift: proporção igual · Alt: pelo centro · Enter: confirmar · Esc: cancelar</span>
+      <div v-if="shapeEditing" class="shape-confirm-actions" role="group" aria-label="Confirmar ou cancelar forma">
+        <button type="button" title="Cancelar forma (Esc)" @click="emit('cancelShape')">Cancelar</button>
+        <button class="primary-button" type="button" title="Confirmar forma (Enter)" @click="emit('commitShape')">Confirmar</button>
+      </div>
     </div>
     <div v-if="activeTool === 'gradient'" class="gradient-options">
       <div class="gradient-editor-control">

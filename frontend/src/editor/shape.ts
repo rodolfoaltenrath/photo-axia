@@ -77,6 +77,30 @@ export function shapeGeometryFromDrag(
   }
 }
 
+export function reanchorShapeDrag(
+  geometry: ShapeGeometry,
+  pointer: SelectionPoint,
+  fromCenter: boolean
+) {
+  const center = {
+    x: geometry.x + geometry.width / 2,
+    y: geometry.y + geometry.height / 2
+  }
+  const end = {
+    x: pointer.x >= center.x ? geometry.x + geometry.width : geometry.x,
+    y: pointer.y >= center.y ? geometry.y + geometry.height : geometry.y
+  }
+  return {
+    start: fromCenter
+      ? center
+      : {
+          x: end.x === geometry.x ? geometry.x + geometry.width : geometry.x,
+          y: end.y === geometry.y ? geometry.y + geometry.height : geometry.y
+        },
+    end
+  }
+}
+
 export function shapeIsDegenerate(geometry: ShapeGeometry) {
   return !Number.isFinite(geometry.x) || !Number.isFinite(geometry.y) ||
     !Number.isFinite(geometry.width) || !Number.isFinite(geometry.height) ||
@@ -222,4 +246,16 @@ export function traceShapePath(
     { x: geometry.x, y: geometry.y + geometry.height }
   ]
   traceRoundedPolygon(context, vertices, radius)
+}
+
+export function shapePathData(geometry: ShapeGeometry, config: ShapeToolConfig) {
+  const commands: string[] = []
+  traceShapePath({
+    beginPath() { commands.length = 0 },
+    closePath() { commands.push('Z') },
+    lineTo(x, y) { commands.push(`L ${x} ${y}`) },
+    moveTo(x, y) { commands.push(`M ${x} ${y}`) },
+    quadraticCurveTo(cpx, cpy, x, y) { commands.push(`Q ${cpx} ${cpy} ${x} ${y}`) }
+  }, geometry, config)
+  return commands.join(' ')
 }

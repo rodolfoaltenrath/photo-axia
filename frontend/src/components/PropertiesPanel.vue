@@ -36,7 +36,7 @@ watch(
     <div class="properties-scroll">
       <div class="property-summary">
         <span>Ferramenta</span>
-        <strong class="property-summary-tool">{{ activeTool === 'brush' ? 'Pincel' : activeTool === 'eraser' ? 'Borracha' : activeTool }}</strong>
+        <strong class="property-summary-tool">{{ activeTool === 'brush' ? 'Pincel' : activeTool === 'eraser' ? 'Borracha' : activeTool === 'shape' ? 'Forma' : activeTool }}</strong>
         <span>Camada</span>
         <strong :title="activeLayer.name">{{ activeLayer.name }}</strong>
       </div>

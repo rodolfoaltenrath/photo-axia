@@ -3,10 +3,13 @@ import test from 'node:test'
 import {
   DEFAULT_SHAPE_CONFIG,
   normalizeShapeConfig,
+  reanchorShapeDrag,
   shapeGeometryFromDrag,
   shapeIsDegenerate,
+  shapePathData,
   starVertices,
   superellipseVertices,
+  traceShapePath,
   triangleVertices
 } from '../src/editor/shape.ts'
 
@@ -20,6 +23,26 @@ test('normaliza a caixa nos quatro sentidos e combina Shift com Alt', () => {
   assert.deepEqual(shapeGeometryFromDrag({ x: 20, y: 30 }, { x: 30, y: 35 }, true, true), {
     x: 10, y: 20, width: 20, height: 20
   })
+})
+
+test('gera um caminho SVG vetorial reutilizável sem rasterizar a forma', () => {
+  const path = shapePathData({ x: 0, y: 0, width: 120, height: 80 }, {
+    ...DEFAULT_SHAPE_CONFIG,
+    cornerRadius: 12
+  })
+  assert.match(path, /^M /)
+  assert.match(path, /Q /)
+  assert.match(path, /Z$/)
+  assert.equal(path.includes('NaN'), false)
+})
+
+test('alternar Alt durante o arraste preserva a geometria antes de continuar pelo centro', () => {
+  const geometry = shapeGeometryFromDrag({ x: 20, y: 30 }, { x: 80, y: 70 })
+  const centered = reanchorShapeDrag(geometry, { x: 80, y: 70 }, true)
+  assert.deepEqual(shapeGeometryFromDrag(centered.start, centered.end, false, true), geometry)
+
+  const corner = reanchorShapeDrag(geometry, centered.end, false)
+  assert.deepEqual(shapeGeometryFromDrag(corner.start, corner.end), geometry)
 })
 
 test('normaliza configurações adulteradas sem perder defaults acessíveis', () => {
@@ -65,4 +88,22 @@ test('quadratura aproxima a elipse dos cantos sem ultrapassar a caixa', () => {
 test('recusa gestos subpixel ou inválidos', () => {
   assert.equal(shapeIsDegenerate({ x: 0, y: 0, width: 0.49, height: 10 }), true)
   assert.equal(shapeIsDegenerate({ x: 0, y: 0, width: 10, height: 10 }), false)
+})
+
+test('traça todas as formas com comandos finitos e limita raios exagerados', () => {
+  for (const kind of ['rectangle', 'ellipse', 'triangle', 'star']) {
+    const coordinates = []
+    const context = {
+      beginPath() {}, closePath() {},
+      lineTo(...values) { coordinates.push(...values) },
+      moveTo(...values) { coordinates.push(...values) },
+      quadraticCurveTo(...values) { coordinates.push(...values) }
+    }
+    traceShapePath(context, { x: 10, y: 20, width: 8, height: 6 }, {
+      ...DEFAULT_SHAPE_CONFIG, kind, cornerRadius: 10_000, squareness: 100, starPoints: 32
+    })
+    assert.ok(coordinates.length > 0)
+    assert.ok(coordinates.every(Number.isFinite))
+    assert.ok(coordinates.every((value, index) => index % 2 ? value >= 20 && value <= 26 : value >= 10 && value <= 18))
+  }
 })

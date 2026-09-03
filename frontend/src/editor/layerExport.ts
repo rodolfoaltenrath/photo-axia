@@ -4,7 +4,7 @@ export function layerCanExportPNG(layer: LayerItem | undefined, background: Docu
   if (!layer || layer.kind === 'adjustment') return false
   if (layer.kind === 'background' && !layer.image) return background !== 'transparent'
   if (!layer.transform) return false
-  return Boolean(layer.image || layer.text || (layer.kind === 'smart' && layer.smart))
+  return Boolean(layer.image || layer.text || layer.shape || (layer.kind === 'smart' && layer.smart))
 }
 
 function safeFilePart(value: string, fallback: string, stripExtension = false) {

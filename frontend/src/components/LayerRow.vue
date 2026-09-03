@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { shapePathData } from '../editor/shape'
 import type { LayerItem, LayerStyleGlobalLight } from '../types/editor'
 import visibleIcon from '../assets/icons/visible.svg'
 import { blendModeLabel } from '../editor/blendModes'
@@ -111,6 +112,7 @@ const kindLabels: Record<LayerItem['kind'], string> = {
   pixel: 'Pixels',
   image: 'Imagem',
   text: 'Texto',
+  shape: 'Forma',
   smart: 'Inteligente',
   adjustment: 'Ajuste',
   background: 'Fundo'
@@ -199,6 +201,15 @@ function openContextMenu(event: MouseEvent) {
   emit('openContextMenu', props.layer.id, event.clientX, event.clientY)
 }
 
+const shapeThumbnail = computed(() => {
+  const shape = props.layer.shape
+  if (!shape) return undefined
+  return {
+    path: shapePathData({ x: 0, y: 0, width: shape.baseWidth, height: shape.baseHeight }, shape),
+    viewBox: `0 0 ${shape.baseWidth} ${shape.baseHeight}`
+  }
+})
+
 function openThumbnailAction() {
   if (props.layer.kind === 'smart') emit('editSmartLayer', props.layer.id)
   else emit('openLayerStyles', props.layer.id)
@@ -273,6 +284,9 @@ function openThumbnailAction() {
           />
         </template>
         <span v-else-if="layer.kind === 'text'" class="layer-thumb-text" aria-hidden="true">T</span>
+        <svg v-else-if="layer.kind === 'shape' && layer.shape && shapeThumbnail" class="layer-thumb-shape" aria-hidden="true" :viewBox="shapeThumbnail.viewBox" preserveAspectRatio="xMidYMid meet">
+          <path :d="shapeThumbnail.path" :fill="layer.shape.color" />
+        </svg>
         <span v-if="layer.kind === 'smart'" class="layer-thumb-smart" aria-label="Camada inteligente" title="Camada inteligente">
           <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 2.5h6l3 3v8h-9zM9.5 2.5v3h3M5.5 10.5h5M8 8v5" /></svg>
         </span>

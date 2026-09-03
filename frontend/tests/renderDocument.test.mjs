@@ -107,6 +107,21 @@ test('exportação isolada incorpora opacidade mas nunca o blend externo', () =>
   assert.equal(plan?.layer.blendMode, 'normal')
 })
 
+test('aparência isolada reconhece camada vetorial sem exigir imagem', () => {
+  const source = {
+    id: 'shape-layer', name: 'Estrela', visible: true, opacity: 100, blendMode: 'normal', kind: 'shape',
+    styles: createLayerStyleConfig(),
+    shape: {
+      kind: 'star', color: '#ffcc00', cornerRadius: 4, squareness: 0,
+      starPoints: 5, starInnerRatio: 50, baseWidth: 200, baseHeight: 200
+    },
+    transform: { x: 80, y: 90, width: 300, height: 220, rotation: 0 }
+  }
+  const plan = layerAppearanceRenderPlan({ ...document, background: 'transparent', layerStyleGlobalLight: { angle: 120, altitude: 30 } }, source, 'local')
+  assert.deepEqual(plan?.viewport, { x: 80, y: 90, width: 300, height: 220 })
+  assert.equal(plan?.layer.shape, source.shape)
+})
+
 test('aparência isolada recusa camada vazia e materializa fundo sintético', () => {
   const spec = { ...document, background: 'white', layerStyleGlobalLight: { angle: 120, altitude: 30 } }
   assert.equal(layerAppearanceRenderPlan(spec, {

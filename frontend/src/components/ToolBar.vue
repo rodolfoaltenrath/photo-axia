@@ -26,14 +26,20 @@ import marqueeEllipseIcon from '../assets/icons/marquee-ellipse.svg'
 import objectSelectionIcon from '../assets/icons/object-selection.svg'
 import quickSelectionIcon from '../assets/icons/quick-selection.svg'
 import magicWandIcon from '../assets/icons/magic-wand.svg'
+import shapeIcon from '../assets/icons/shape.svg'
+import shapeEllipseIcon from '../assets/icons/shape-ellipse.svg'
+import shapeTriangleIcon from '../assets/icons/shape-triangle.svg'
+import shapeStarIcon from '../assets/icons/shape-star.svg'
+import type { ShapeKind } from '../editor/shape'
 
-const props = defineProps<{ selectionMode: SelectionMode }>()
+const props = defineProps<{ selectionMode: SelectionMode; shapeKind: ShapeKind }>()
 const activeTool = defineModel<EditorTool>('activeTool', { required: true })
 const foregroundColor = defineModel<string>('foregroundColor', { required: true })
 const backgroundColor = defineModel<string>('backgroundColor', { required: true })
 const emit = defineEmits<{
   (event: 'toolDoubleClick', tool: EditorTool): void
   (event: 'updateSelectionMode', mode: SelectionMode): void
+  (event: 'updateShapeKind', kind: ShapeKind): void
 }>()
 const toolbarElement = ref<HTMLElement | null>(null)
 
@@ -52,6 +58,13 @@ const colorTools: ToolDefinition[] = [
 
 const toolsBeforeMarqueeGroup: ToolDefinition[] = [
   { id: 'eyedropper', icon: eyedropperIcon, label: 'Conta-gotas (I)', enabled: true },
+]
+
+const shapeTools: Array<{ kind: ShapeKind; icon: string; label: string }> = [
+  { kind: 'rectangle', icon: shapeIcon, label: 'Retângulo (U)' },
+  { kind: 'ellipse', icon: shapeEllipseIcon, label: 'Elipse (U)' },
+  { kind: 'triangle', icon: shapeTriangleIcon, label: 'Triângulo (U)' },
+  { kind: 'star', icon: shapeStarIcon, label: 'Estrela (U)' }
 ]
 
 const toolsAfterMarqueeGroup: ToolDefinition[] = [
@@ -79,6 +92,7 @@ const intelligentSelectionTools: Array<{
 const rememberedColorTool = ref<'gradient' | 'paint-bucket'>('gradient')
 const rememberedMarqueeMode = ref<MarqueeSelectionMode>('rectangle')
 const rememberedIntelligentSelectionTool = ref<IntelligentSelectionTool>('magic-wand')
+const rememberedShapeKind = ref<ShapeKind>('rectangle')
 watch(activeTool, (tool) => {
   if (tool === 'gradient' || tool === 'paint-bucket') rememberedColorTool.value = tool
   if (isIntelligentSelectionTool(tool)) {
@@ -87,6 +101,9 @@ watch(activeTool, (tool) => {
 }, { immediate: true })
 watch(() => props.selectionMode, (mode) => {
   if (marqueeTools.some((tool) => tool.mode === mode)) rememberedMarqueeMode.value = mode as MarqueeSelectionMode
+}, { immediate: true })
+watch(() => props.shapeKind, (kind) => {
+  rememberedShapeKind.value = kind
 }, { immediate: true })
 
 function selectColorTool(tool: 'gradient' | 'paint-bucket', event?: Event) {
@@ -106,6 +123,18 @@ function selectMarqueeTool(mode: MarqueeSelectionMode, event?: Event) {
 
 function marqueeTool(mode: MarqueeSelectionMode) {
   return marqueeTools.find((tool) => tool.mode === mode) ?? marqueeTools[0]!
+}
+
+function shapeTool(kind: ShapeKind) {
+  return shapeTools.find((tool) => tool.kind === kind) ?? shapeTools[0]!
+}
+
+function selectShapeTool(kind: ShapeKind, event?: Event) {
+  rememberedShapeKind.value = kind
+  emit('updateShapeKind', kind)
+  activeTool.value = 'shape'
+  const details = (event?.currentTarget as HTMLElement | null)?.closest('details')
+  if (details) details.open = false
 }
 
 function selectIntelligentSelectionTool(tool: IntelligentSelectionTool, event?: Event) {
@@ -207,6 +236,36 @@ function resetColors() {
             @click="selectColorTool(tool.id as 'gradient' | 'paint-bucket', $event)"
           >
             <img alt="" :class="{ 'toolbar-raster-icon': tool.rasterIcon }" :src="tool.icon" />
+            <span>{{ tool.label }}</span>
+          </button>
+        </div>
+      </details>
+    </div>
+
+    <div class="toolbar-tool-group" :class="{ active: activeTool === 'shape' }">
+      <button
+        :aria-label="shapeTool(rememberedShapeKind).label"
+        :aria-pressed="activeTool === 'shape'"
+        :title="shapeTool(rememberedShapeKind).label"
+        type="button"
+        @click="selectShapeTool(rememberedShapeKind)"
+        @contextmenu="openToolFlyout"
+      >
+        <img alt="" :src="shapeTool(rememberedShapeKind).icon" />
+      </button>
+      <details>
+        <summary aria-label="Mostrar ferramentas de forma" title="Mostrar ferramentas do grupo U">▸</summary>
+        <div class="toolbar-tool-flyout" role="menu" aria-label="Ferramentas do grupo U">
+          <button
+            v-for="tool in shapeTools"
+            :key="tool.kind"
+            :aria-pressed="activeTool === 'shape' && shapeKind === tool.kind"
+            :title="tool.label"
+            type="button"
+            role="menuitem"
+            @click="selectShapeTool(tool.kind, $event)"
+          >
+            <img alt="" :src="tool.icon" />
             <span>{{ tool.label }}</span>
           </button>
         </div>

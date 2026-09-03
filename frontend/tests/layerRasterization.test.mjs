@@ -27,6 +27,14 @@ test('somente conteúdo visual suportado pode ser rasterizado', () => {
     transform: { x: 0, y: 0, width: 50, height: 24 }
   })), true)
   assert.equal(layerCanRasterize(baseLayer({
+    kind: 'shape',
+    shape: {
+      kind: 'rectangle', color: '#000000', cornerRadius: 8, squareness: 0,
+      starPoints: 5, starInnerRatio: 50, baseWidth: 50, baseHeight: 24
+    },
+    transform: { x: 0, y: 0, width: 50, height: 24 }
+  })), true)
+  assert.equal(layerCanRasterize(baseLayer({
     kind: 'smart',
     image: { width: 20, height: 10, mimeType: 'image/png', sourceUrl: 'blob:smart' },
     transform: { x: 0, y: 0, width: 20, height: 10 }
@@ -52,6 +60,7 @@ test('patch rasterizado incorpora aparência local e não toca na composição e
   assert.notEqual(patch.image, image)
   assert.equal(patch.smart, undefined)
   assert.equal(patch.text, undefined)
+  assert.equal(patch.shape, undefined)
   assert.deepEqual(patch.transform, { x: -12, y: 8, width: 84, height: 62, rotation: 0 })
   assert.deepEqual(patch.styles, createLayerStyleConfig())
   assert.equal(source.opacity, 45)

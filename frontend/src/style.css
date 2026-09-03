@@ -858,6 +858,7 @@ textarea:focus-visible,
 .selection-move-preview,
 .brush-preview,
 .gradient-preview,
+.shape-preview,
 .gradient-controls {
   position: absolute;
 }
@@ -865,12 +866,14 @@ textarea:focus-visible,
 .brush-preview,
 .selection-move-preview,
 .gradient-preview,
+.shape-preview,
 .gradient-controls {
   inset: 0 auto auto 0;
   pointer-events: none;
 }
 
-.gradient-preview {
+.gradient-preview,
+.shape-preview {
   z-index: 1;
 }
 
@@ -2758,6 +2761,32 @@ textarea:focus-visible,
   white-space: pre-line;
 }
 
+.document-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  opacity: var(--layer-fill-opacity, 1);
+}
+
+.layer-thumb-shape {
+  width: 26px;
+  height: 26px;
+  filter: drop-shadow(0 0 1px rgb(255 255 255 / 45%));
+}
+
+.shape-transform-box {
+  z-index: 21;
+}
+
+.shape-confirm-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .gradient-editor-control {
   position: relative;
   text-transform: none;
@@ -3035,6 +3064,7 @@ textarea:focus-visible,
 }
 
 .brush-context-options,
+.shape-context-options,
 .brush-size-control,
 .brush-color-control {
   display: inline-flex;
@@ -3045,6 +3075,27 @@ textarea:focus-visible,
 
 .brush-context-options {
   gap: 14px;
+}
+
+.shape-context-options,
+.shape-context-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+}
+
+.shape-context-options {
+  gap: 12px;
+}
+
+.shape-context-options input[type='number'] {
+  width: 64px;
+}
+
+.shape-context-options input[type='range'] {
+  width: 88px;
+  accent-color: #58c4b3;
 }
 
 .brush-size-control input[type='range'] {

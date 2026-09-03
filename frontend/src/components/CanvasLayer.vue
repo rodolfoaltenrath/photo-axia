@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../types/editor'
 import { layerCompositingStyle } from '../editor/blendModes'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
+import { shapePathData } from '../editor/shape'
 import { useLayerImageBuffer } from './canvas/composables/useLayerImageHandoff'
 import { useLayerStyleRaster } from './canvas/composables/useLayerStyleRaster'
 
@@ -97,6 +98,16 @@ const textStyle = computed(() => {
     transform: `scale(${props.transform.width / text.baseWidth}, ${props.transform.height / text.baseHeight})`
   }
 })
+
+const shapePath = computed(() => {
+  const shape = props.layer.shape
+  return shape ? shapePathData({ x: 0, y: 0, width: shape.baseWidth, height: shape.baseHeight }, shape) : ''
+})
+
+const shapeViewBox = computed(() => {
+  const shape = props.layer.shape
+  return shape ? `0 0 ${shape.baseWidth} ${shape.baseHeight}` : undefined
+})
 </script>
 
 <template>
@@ -140,5 +151,14 @@ const textStyle = computed(() => {
       :style="textStyle"
       v-text="layer.text.content"
     ></div>
+    <svg
+      v-else-if="layer.kind === 'shape' && layer.shape"
+      class="document-shape"
+      :viewBox="shapeViewBox"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <path :d="shapePath" :fill="layer.shape.color" />
+    </svg>
   </div>
 </template>

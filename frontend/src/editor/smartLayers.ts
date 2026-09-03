@@ -55,6 +55,7 @@ function smartContentLayerIdentity(layer: LayerItem): unknown {
       hash: smartLayerContentHash(layer.smart)
     } : undefined,
     text: layer.text,
+    shape: layer.shape,
     transform: layer.transform
   }
 }
@@ -107,6 +108,7 @@ export function cloneSmartLayerSource(layer: LayerItem): LayerItem {
     image: layer.image ? { ...layer.image } : undefined,
     smart: cloneSmartLayerContent(layer.smart),
     text: layer.text ? { ...layer.text } : undefined,
+    shape: layer.shape ? { ...layer.shape } : undefined,
     transform: layer.transform ? { ...layer.transform } : undefined,
     styles: cloneLayerStyleConfig(layer.styles)
   }
@@ -119,8 +121,8 @@ export function smartLayerDepth(layer: LayerItem): number {
 
 export function layersCanConvertToSmart(items: readonly IndexedLayerItem[]) {
   if (items.some(({ layer }) => layer.kind === 'smart')) return false
-  const hasVisualContent = items.some(({ layer }) => Boolean(layer.image || layer.text || layer.kind === 'background'))
-  const hasVisibleContent = items.some(({ layer }) => layer.visible && Boolean(layer.image || layer.text || layer.kind === 'background'))
+  const hasVisualContent = items.some(({ layer }) => Boolean(layer.image || layer.text || layer.shape || layer.kind === 'background'))
+  const hasVisibleContent = items.some(({ layer }) => layer.visible && Boolean(layer.image || layer.text || layer.shape || layer.kind === 'background'))
   return items.length > 0 && hasVisualContent && (items.length === 1 || hasVisibleContent) &&
     items.every(({ layer }) => layer.kind !== 'adjustment' && smartLayerDepth(layer) < SMART_LAYER_MAX_DEPTH)
 }

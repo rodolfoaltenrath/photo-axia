@@ -5,7 +5,7 @@ import { createLayerStyleConfig } from './layerStyles.ts'
 function layerHasVisualContent(layer: LayerItem, document: Pick<DocumentSpec, 'background'>) {
   if (!layer.visible || layer.kind === 'adjustment') return false
   if (layer.kind === 'background' && !layer.image) return document.background !== 'transparent'
-  return Boolean(layer.image || layer.text || (layer.kind === 'smart' && layer.smart))
+  return Boolean(layer.image || layer.text || layer.shape || (layer.kind === 'smart' && layer.smart))
 }
 
 export function documentCanFlatten(document: Pick<DocumentSpec, 'width' | 'height' | 'background'>, layers: readonly LayerItem[]) {

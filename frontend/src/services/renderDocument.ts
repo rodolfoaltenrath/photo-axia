@@ -13,8 +13,9 @@ import {
 } from '../editor/layerStyleCompositor.ts'
 import { layerStyleFillOpacity } from '../editor/layerStyles.ts'
 import { textFont, textLines } from '../editor/text.ts'
+import { traceShapePath } from '../editor/shape.ts'
 import { sourceScaleFactor } from '../editor/selection.ts'
-import { prepareImageSource } from './imageImport.ts'
+import { prepareImageSource, releasePreparedImage } from './imageImport.ts'
 import {
   acquireDecodedLayerStyle,
   releaseLayerStyleRenderConsumer,
@@ -73,7 +74,7 @@ export function layerAppearanceRenderPlan(
   mode: LayerAppearanceMode
 ): LayerAppearanceRenderPlan | null {
   const syntheticBackground = layer.kind === 'background' && !layer.image && document.background !== 'transparent'
-  if (!syntheticBackground && (!layer.transform || (!layer.image && !layer.text))) return null
+  if (!syntheticBackground && (!layer.transform || (!layer.image && !layer.text && !layer.shape))) return null
 
   const bounds = syntheticBackground
     ? { x: 0, y: 0, width: document.width, height: document.height }
@@ -129,6 +130,7 @@ async function prepareLayerRaster(
   if (!layerStyleNeedsCompositing(layer.styles)) {
     return {
       image: await prepareImageSource(source),
+      dispose: () => releasePreparedImage(source),
       sourceWidth,
       sourceHeight,
       renderedWidth: sourceWidth,
@@ -199,71 +201,85 @@ async function renderDocumentCanvas(
     ...(background?.visible && !background.image ? [background] : []),
     ...orderedLayers
   ])
-  const rasters = new Map<string, PreparedLayerRaster>()
   const session = `${purpose}:${document.id}:${++renderSessionId}`
   const consumers: string[] = []
 
   try {
-    const prepared = await Promise.allSettled(orderedLayers.map(async (layer) => {
-      if (!layer.image) return
-      const consumerId = `${session}:${layer.id}`
-      consumers.push(consumerId)
-      rasters.set(layer.id, await prepareLayerRaster(
-        document,
-        layer,
-        usePreviewSources,
-        consumerId,
-        usePreviewSources ? 'interactive' : 'final'
-      ))
-    }))
-    const failed = prepared.find((result): result is PromiseRejectedResult => result.status === 'rejected')
-    if (failed) throw failed.reason
-
     for (const layer of orderedLayers) {
       if (!layer.transform) continue
-
-      const raster = rasters.get(layer.id)
-      if (!raster && (layer.kind !== 'text' || !layer.text)) continue
-
-      const centerX = layer.transform.x + layer.transform.width / 2
-      const centerY = layer.transform.y + layer.transform.height / 2
-      context.save()
-      context.globalAlpha = layer.opacity / 100
-      context.globalCompositeOperation = canvasBlendOperation(layer.blendMode)
-      context.translate(centerX, centerY)
-      context.rotate(((layer.transform.rotation ?? 0) * Math.PI) / 180)
-
-      if (raster) {
-        const rect = layerRasterDrawRect(layer.transform, raster)
-        context.drawImage(raster.image, rect.x, rect.y, rect.width, rect.height)
-      } else if (layer.text) {
-        const text = layer.text
-        const scaleX = layer.transform.width / text.baseWidth
-        const scaleY = layer.transform.height / text.baseHeight
-        const lineHeight = text.fontSize * text.lineHeight
-        const textX = text.alignment === 'center' ? text.baseWidth / 2 : text.alignment === 'right' ? text.baseWidth : 0
-
-        context.globalAlpha *= layerStyleFillOpacity(layer.styles)
-        context.scale(scaleX, scaleY)
-        context.translate(-text.baseWidth / 2, -text.baseHeight / 2)
-        context.beginPath()
-        context.rect(0, 0, text.baseWidth, text.baseHeight)
-        context.clip()
-        context.fillStyle = text.color
-        context.font = textFont(text)
-        context.textAlign = text.alignment
-        context.textBaseline = 'top'
-        for (const [index, line] of textLines(text.content).entries()) {
-          context.fillText(line, textX, index * lineHeight + (lineHeight - text.fontSize) / 2)
+      let raster: PreparedLayerRaster | undefined
+      try {
+        if (layer.image) {
+          const consumerId = `${session}:${layer.id}`
+          consumers.push(consumerId)
+          raster = await prepareLayerRaster(
+            document,
+            layer,
+            usePreviewSources,
+            consumerId,
+            usePreviewSources ? 'interactive' : 'final'
+          )
         }
-      }
+        if (!raster && !layer.text && !layer.shape) continue
 
-      context.restore()
+        const centerX = layer.transform.x + layer.transform.width / 2
+        const centerY = layer.transform.y + layer.transform.height / 2
+        context.save()
+        try {
+          context.globalAlpha = layer.opacity / 100
+          context.globalCompositeOperation = canvasBlendOperation(layer.blendMode)
+          context.translate(centerX, centerY)
+          context.rotate(((layer.transform.rotation ?? 0) * Math.PI) / 180)
+
+          if (raster) {
+            const rect = layerRasterDrawRect(layer.transform, raster)
+            context.drawImage(raster.image, rect.x, rect.y, rect.width, rect.height)
+          } else if (layer.text) {
+            const text = layer.text
+            const scaleX = layer.transform.width / text.baseWidth
+            const scaleY = layer.transform.height / text.baseHeight
+            const lineHeight = text.fontSize * text.lineHeight
+            const textX = text.alignment === 'center' ? text.baseWidth / 2 : text.alignment === 'right' ? text.baseWidth : 0
+
+            context.globalAlpha *= layerStyleFillOpacity(layer.styles)
+            context.scale(scaleX, scaleY)
+            context.translate(-text.baseWidth / 2, -text.baseHeight / 2)
+            context.beginPath()
+            context.rect(0, 0, text.baseWidth, text.baseHeight)
+            context.clip()
+            context.fillStyle = text.color
+            context.font = textFont(text)
+            context.textAlign = text.alignment
+            context.textBaseline = 'top'
+            for (const [index, line] of textLines(text.content).entries()) {
+              context.fillText(line, textX, index * lineHeight + (lineHeight - text.fontSize) / 2)
+            }
+          } else if (layer.shape) {
+            const shape = layer.shape
+            context.globalAlpha *= layerStyleFillOpacity(layer.styles)
+            context.scale(layer.transform.width / shape.baseWidth, layer.transform.height / shape.baseHeight)
+            traceShapePath(context, {
+              x: -shape.baseWidth / 2,
+              y: -shape.baseHeight / 2,
+              width: shape.baseWidth,
+              height: shape.baseHeight
+            }, shape)
+            context.fillStyle = shape.color
+            context.fill()
+          }
+        } finally {
+          context.restore()
+        }
+      } catch (error) {
+        const detail = error instanceof Error && error.message ? ` ${error.message}` : ''
+        throw new Error(`Não foi possível compor a camada “${layer.name}”.${detail}`, { cause: error })
+      } finally {
+        raster?.dispose?.()
+      }
     }
 
     return canvas
   } finally {
-    for (const raster of rasters.values()) raster.dispose?.()
     for (const consumer of consumers) releaseLayerStyleRenderConsumer(consumer)
   }
 }
@@ -423,7 +439,7 @@ export async function renderMergedLayers(document: DocumentSpec, layers: LayerIt
   let hasBounds = hasSyntheticBackground
 
   for (const layer of visibleLayers) {
-    if (!layer.image && !layer.text) continue
+    if (!layer.image && !layer.text && !layer.shape) continue
     const bounds = layerStyledDocumentBounds(layer, document.layerStyleGlobalLight)
     if (!bounds) continue
     hasBounds = true
