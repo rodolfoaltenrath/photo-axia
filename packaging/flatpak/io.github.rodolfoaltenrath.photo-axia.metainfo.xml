@@ -40,6 +40,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.1" date="2026-09-03" type="development">
+      <description>
+        <p>Layer style composition and project format compatibility fixes.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-08-11" type="development">
       <description>
         <p>Initial development package for Linux testing.</p>

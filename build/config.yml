@@ -7,7 +7,7 @@ info:
   description: Editor de imagens desktop
   copyright: Copyright 2026 rodolfoaltenrath
   comments: Editor raster por camadas para Windows e Linux
-  version: 0.1.0
+  version: 0.1.1
 
 dev_mode:
   root_path: .

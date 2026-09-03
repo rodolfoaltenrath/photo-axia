@@ -284,7 +284,7 @@ func (a *App) handleWindowClosing(event *application.WindowEvent) {
 func (a *App) GetEditorStatus() EditorStatus {
 	return EditorStatus{
 		AppName:      "Axia",
-		Engine:       "go-image-core/0.1.0",
+		Engine:       "go-image-core/0.1.1",
 		DocumentOpen: true,
 	}
 }
