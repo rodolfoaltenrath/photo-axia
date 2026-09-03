@@ -67,7 +67,7 @@ func TestAxiaProjectRoundTripWithNativeAsset(t *testing.T) {
 	app.imagePaths["native"] = imagePath
 	app.projectSaves["save-token"] = target
 
-	request := projectSaveRequest(t, "save-token", projectManifest("assets/asset-0001.png", 1), map[string]string{
+	request := projectSaveRequest(t, "save-token", projectManifest("assets/asset-0001.png", axiaFormatVersion), map[string]string{
 		"asset-0001": "/__axia_asset/native",
 	}, nil)
 	response := httptest.NewRecorder()
@@ -93,7 +93,10 @@ func TestAxiaProjectRoundTripWithNativeAsset(t *testing.T) {
 }
 
 func TestValidateManifestAcceptsCurrentAndPreviousVersions(t *testing.T) {
-	for _, version := range []int{axiaMinimumReadVersion, axiaFormatVersion} {
+	if axiaFormatVersion != 3 {
+		t.Fatalf("backend project version %d diverges from the frontend manifest version 3", axiaFormatVersion)
+	}
+	for _, version := range []int{1, 2, axiaFormatVersion} {
 		if _, err := validateManifest(projectManifest("assets/asset-0001.png", version)); err != nil {
 			t.Fatalf("version %d should be supported: %v", version, err)
 		}

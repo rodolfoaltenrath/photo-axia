@@ -1,4 +1,9 @@
-import { activeLayerStyleEffects, layerStyleInsets, type LayerStyleRaster } from './layerStyleCompositor.ts'
+import {
+  activeLayerStyleEffects,
+  layerStyleEffectIsRasterSupported,
+  layerStyleInsets,
+  type LayerStyleRaster
+} from './layerStyleCompositor.ts'
 import { normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from './layerStyles.ts'
 import type {
   ColorOverlayEffect,
@@ -589,10 +594,7 @@ export function composeLayerStyleRaster(
   const globalLight = normalizeLayerStyleGlobalLight(globalLightValue)
   const scale = Number.isFinite(resolutionScale) && resolutionScale > 0 ? Math.min(8, resolutionScale) : 1
   const effects = activeLayerStyleEffects(styles)
-  const unsupported = effects.filter((effect) =>
-    !['drop-shadow', 'inner-shadow', 'outer-glow', 'inner-glow', 'color-overlay', 'stroke'].includes(effect.type) ||
-    (effect.type === 'stroke' && effect.paint.type === 'pattern')
-  )
+  const unsupported = effects.filter((effect) => !layerStyleEffectIsRasterSupported(effect))
   if (unsupported.length) {
     throw new Error(`Efeitos ainda não suportados pelo compositor: ${unsupported.map((effect) => effect.type).join(', ')}.`)
   }

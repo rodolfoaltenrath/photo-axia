@@ -6,6 +6,7 @@ import {
   buildLayerStylePipeline,
   composeLayerStyleBase,
   layerStyleCacheKey,
+  layerStyleEffectIsRasterSupported,
   layerStyleHash,
   layerStyleInsets,
   layerStyleNeedsCompositing,
@@ -20,6 +21,20 @@ const globalLight = { angle: 0, altitude: 30 }
 function styles(effects = [], fillOpacity = 100) {
   return normalizeLayerStyleConfig({ enabled: true, fillOpacity, effects })
 }
+
+test('mantém uma única regra de efeitos aceitos pelo compositor raster', () => {
+  for (const type of ['drop-shadow', 'inner-shadow', 'outer-glow', 'inner-glow', 'color-overlay']) {
+    assert.equal(layerStyleEffectIsRasterSupported(createDefaultLayerEffect(type, `supported-${type}`)), true)
+  }
+  const colorStroke = createDefaultLayerEffect('stroke', 'supported-stroke')
+  assert.equal(layerStyleEffectIsRasterSupported(colorStroke), true)
+  const patternStroke = {
+    ...colorStroke,
+    paint: { type: 'pattern', patternId: 'pattern', scale: 100, linkWithLayer: true }
+  }
+  assert.equal(layerStyleEffectIsRasterSupported(patternStroke), false)
+  assert.equal(layerStyleEffectIsRasterSupported(createDefaultLayerEffect('gradient-overlay', 'future-gradient')), false)
+})
 
 test('formaliza a ordem estável dos estágios e preserva a ordem entre efeitos do mesmo estágio', () => {
   const config = styles([

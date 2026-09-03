@@ -8,6 +8,7 @@ import {
 } from '../editor/renderBounds.ts'
 import {
   activeLayerStyleEffects,
+  layerStyleEffectIsRasterSupported,
   layerStyleNeedsCompositing,
   type LayerStyleRenderQuality
 } from '../editor/layerStyleCompositor.ts'
@@ -100,7 +101,7 @@ export function layerAppearanceRenderPlan(
 
 function assertSupportedLayerStyles(layers: LayerItem[]) {
   const unsupported = layers.flatMap((layer) => activeLayerStyleEffects(layer.styles)
-    .filter((effect) => !layer.image || effect.type !== 'outer-glow')
+    .filter((effect) => !layer.image || !layerStyleEffectIsRasterSupported(effect))
     .map((effect) => effect.type))
   if (unsupported.length) {
     throw new Error(`Efeitos ainda nao suportados pelo compositor: ${[...new Set(unsupported)].join(', ')}.`)

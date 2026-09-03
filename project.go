@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	axiaFormatVersion       = 2
+	axiaFormatVersion       = 3
 	axiaMinimumReadVersion  = 1
 	maxProjectManifestBytes = 8 * 1024 * 1024
 	maxProjectAssetBytes    = int64(1024 * 1024 * 1024)

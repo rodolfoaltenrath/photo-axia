@@ -44,6 +44,15 @@ export const LAYER_STYLE_COMPOSITION_ORDER: readonly LayerStyleCompositionStage[
   'external', 'content', 'internal', 'overlay', 'upper'
 ])
 
+const RASTER_SUPPORTED_EFFECTS = new Set<LayerEffectType>([
+  'drop-shadow',
+  'inner-shadow',
+  'outer-glow',
+  'inner-glow',
+  'color-overlay',
+  'stroke'
+])
+
 const EFFECT_STAGE: Readonly<Record<LayerEffectType, Exclude<LayerStyleCompositionStage, 'content'>>> = Object.freeze({
   'drop-shadow': 'external',
   'outer-glow': 'external',
@@ -98,6 +107,11 @@ function mergeInsets(target: LayerStyleInsets, source: LayerStyleInsets) {
 export function activeLayerStyleEffects(styles: LayerStyleConfig) {
   if (!styles.enabled) return []
   return styles.effects.filter((effect) => effect.enabled && effect.opacity > 0)
+}
+
+export function layerStyleEffectIsRasterSupported(effect: LayerEffect) {
+  return RASTER_SUPPORTED_EFFECTS.has(effect.type) &&
+    !(effect.type === 'stroke' && effect.paint.type === 'pattern')
 }
 
 export function buildLayerStylePipeline(styles: LayerStyleConfig): LayerStylePipeline {
