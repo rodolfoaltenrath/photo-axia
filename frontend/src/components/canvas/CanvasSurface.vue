@@ -57,8 +57,8 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
             <div :ref="actions.captureSurface" class="canvas-surface" :style="view.surfaceStyle">
     <div class="transparent-grid"></div>
     <div class="document-composite">
-      <div class="document-background" :style="view.backgroundStyle"></div>
       <div class="document-layers">
+        <div class="document-background" :style="view.backgroundStyle"></div>
         <div
           v-for="layer in view.layers"
           :key="layer.id"

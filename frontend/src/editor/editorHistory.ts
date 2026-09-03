@@ -1,4 +1,4 @@
-import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../types/editor'
+import type { LayerItem, LayerStyleConfig, LayerStyleGlobalLight, LayerTransform } from '../types/editor'
 import type { HistoryDirection } from './history'
 import type { SelectionRegion } from './selection'
 import type { EditorGuide } from './guides'
@@ -70,6 +70,15 @@ export interface ChangeLayerStyleGlobalLightDelta {
   after: LayerStyleGlobalLight
 }
 
+export interface ChangeLayerStylesDelta extends SelectionDelta {
+  type: 'layer-styles:change'
+  layerId: string
+  before: LayerStyleConfig
+  after: LayerStyleConfig
+  globalLightBefore: LayerStyleGlobalLight
+  globalLightAfter: LayerStyleGlobalLight
+}
+
 export type EditorHistoryDelta =
   | AddLayersDelta
   | RemoveLayersDelta
@@ -79,6 +88,7 @@ export type EditorHistoryDelta =
   | ReorderLayerDelta
   | ChangeGuidesDelta
   | ChangeLayerStyleGlobalLightDelta
+  | ChangeLayerStylesDelta
 
 export function cloneLayerState(layer: LayerItem): LayerItem {
   return {
@@ -138,9 +148,11 @@ function historyLayerTree(layer: Partial<LayerItem>): Partial<LayerItem>[] {
 }
 
 export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
-  const referencedLayers = delta.type === 'layer:patch'
-    ? [delta.before, delta.after].flatMap(historyLayerTree)
-    : historyDeltaLayers(delta).flatMap(historyLayerTree)
+  const referencedLayers = delta.type === 'layer-styles:change'
+    ? [{ styles: delta.before }, { styles: delta.after }]
+    : delta.type === 'layer:patch'
+      ? [delta.before, delta.after].flatMap(historyLayerTree)
+      : historyDeltaLayers(delta).flatMap(historyLayerTree)
   const referencedImageBytes = referencedLayers
     .reduce((total, layer) => total + (layer.image?.byteSize ?? 0), 0)
   const styleAssets = referencedLayers.flatMap((layer) => layerStylePatternAssets(layer.styles))
@@ -152,6 +164,10 @@ export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
 export function isEditorHistoryDeltaNoop(delta: EditorHistoryDelta) {
   if (delta.type === 'guides:change') return JSON.stringify(delta.before) === JSON.stringify(delta.after)
   if (delta.type === 'document:global-light') return JSON.stringify(delta.before) === JSON.stringify(delta.after)
+  if (delta.type === 'layer-styles:change') {
+    return JSON.stringify(delta.before) === JSON.stringify(delta.after) &&
+      JSON.stringify(delta.globalLightBefore) === JSON.stringify(delta.globalLightAfter)
+  }
   if (delta.type === 'layer:patch') {
     return JSON.stringify(delta.before) === JSON.stringify(delta.after) &&
       JSON.stringify(delta.selectionBefore) === JSON.stringify(delta.selectionAfter)
@@ -189,6 +205,9 @@ export function historyDeltaObjectUrls(delta: EditorHistoryDelta) {
   } else if (delta.type === 'layer:patch') {
     collect(delta.before)
     collect(delta.after)
+  } else if (delta.type === 'layer-styles:change') {
+    collect({ styles: delta.before })
+    collect({ styles: delta.after })
   }
   return [...urls]
 }
@@ -242,6 +261,12 @@ export function applyEditorHistoryDelta(
       const patch = cloneLayerPatch(redo ? delta.after : delta.before)
       Object.assign(layer, patch)
       if (layer.image && (patch.transform || patch.image || patch.styles)) refreshLayerIds.push(layer.id)
+    }
+  } else if (delta.type === 'layer-styles:change') {
+    const layer = layers.find((item) => item.id === delta.layerId)
+    if (layer) {
+      layer.styles = cloneLayerStyleConfig(redo ? delta.after : delta.before)
+      if (layer.image) refreshLayerIds.push(layer.id)
     }
   } else if (delta.type === 'layers:transform') {
     for (const item of delta.items) {

@@ -106,3 +106,14 @@ test('normaliza a luz global do documento', () => {
 test('normalização isolada de efeito rejeita discriminantes desconhecidos', () => {
   assert.equal(normalizeLayerEffect({ type: 'unknown' }), undefined)
 })
+
+test('normaliza origem e limites do brilho interno', () => {
+  const effect = normalizeLayerEffect({
+    type: 'inner-glow', id: 'inner', source: 'center', choke: 140, size: -10, range: 0
+  })
+  assert.equal(effect.source, 'center')
+  assert.equal(effect.choke, 100)
+  assert.equal(effect.size, 0)
+  assert.equal(effect.range, 1)
+  assert.equal(normalizeLayerEffect({ type: 'inner-glow', source: 'invalid' }).source, 'edge')
+})

@@ -171,8 +171,8 @@ test('compositor raster preserva dimensões e aplica fill quando não há efeito
 test('compositor raster recusa efeitos ativos fora do pacote implementado', () => {
   const source = { width: 1, height: 1, data: new Uint8ClampedArray([0, 0, 0, 255]) }
   assert.throws(
-    () => composeLayerStyleRaster(source, styles([createDefaultLayerEffect('stroke', 'stroke')]), globalLight),
-    /stroke/
+    () => composeLayerStyleRaster(source, styles([createDefaultLayerEffect('gradient-overlay', 'overlay')]), globalLight),
+    /gradient-overlay/
   )
 })
 
@@ -185,4 +185,190 @@ test('brilho externo com ruído produz raster determinístico', () => {
   const first = composeLayerStyleRaster(source, config, globalLight)
   const second = composeLayerStyleRaster(source, config, globalLight)
   assert.deepEqual(first.data, second.data)
+})
+
+test('brilho interno permanece nos limites e sobrevive à opacidade de preenchimento zero', () => {
+  const data = new Uint8ClampedArray(5 * 5 * 4)
+  for (let y = 1; y <= 3; y++) {
+    for (let x = 1; x <= 3; x++) data[(y * 5 + x) * 4 + 3] = 255
+  }
+  const glow = createDefaultLayerEffect('inner-glow', 'inner-edge')
+  glow.paint = { type: 'color', color: '#ff0000' }
+  glow.size = 1
+  glow.opacity = 100
+  glow.source = 'edge'
+  const result = composeLayerStyleRaster({ width: 5, height: 5, data }, styles([glow], 0), globalLight)
+
+  assert.deepEqual(
+    { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
+    { width: 5, height: 5, offsetX: 0, offsetY: 0 }
+  )
+  assert.equal(result.data[(0 * 5 + 0) * 4 + 3], 0)
+  assert.ok(result.data[(1 * 5 + 1) * 4 + 3] > 0)
+  assert.equal(result.data[(2 * 5 + 2) * 4 + 3], 0)
+})
+
+test('origem do brilho interno alterna entre borda e centro', () => {
+  const source = { width: 5, height: 5, data: new Uint8ClampedArray(5 * 5 * 4).fill(255) }
+  const edge = createDefaultLayerEffect('inner-glow', 'inner-source')
+  edge.size = 1
+  edge.source = 'edge'
+  const center = { ...edge, source: 'center' }
+  const edgeResult = composeLayerStyleRaster(source, styles([edge], 0), globalLight)
+  const centerResult = composeLayerStyleRaster(source, styles([center], 0), globalLight)
+  const middleAlpha = (result) => result.data[(2 * 5 + 2) * 4 + 3]
+
+  assert.equal(middleAlpha(edgeResult), 0)
+  assert.ok(middleAlpha(centerResult) > 0)
+  assert.notDeepEqual(edgeResult.data, centerResult.data)
+})
+
+test('sombra projetada respeita direção, distância e bounds da luz global', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([255, 255, 255, 255]) }
+  const shadow = createDefaultLayerEffect('drop-shadow', 'directional-shadow')
+  shadow.angle = 180
+  shadow.useGlobalLight = true
+  shadow.distance = 2
+  shadow.size = 0
+  shadow.opacity = 100
+  const result = composeLayerStyleRaster(source, styles([shadow], 0), globalLight)
+
+  assert.deepEqual(
+    { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
+    { width: 3, height: 1, offsetX: -2, offsetY: 0 }
+  )
+  assert.equal(result.data[3], 255)
+  assert.equal(result.data[2 * 4 + 3], 0)
+})
+
+test('recorte da camada remove a sombra sobre o próprio conteúdo', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([255, 255, 255, 255]) }
+  const shadow = createDefaultLayerEffect('drop-shadow', 'knockout-shadow')
+  shadow.distance = 0
+  shadow.size = 0
+  shadow.opacity = 100
+  shadow.layerKnocksOutShadow = true
+  const knockedOut = composeLayerStyleRaster(source, styles([shadow], 0), globalLight)
+  shadow.layerKnocksOutShadow = false
+  const retained = composeLayerStyleRaster(source, styles([shadow], 0), globalLight)
+
+  assert.equal(knockedOut.data[3], 0)
+  assert.equal(retained.data[3], 255)
+})
+
+test('sombra interna respeita direção sem expandir os limites da camada', () => {
+  const source = { width: 5, height: 1, data: new Uint8ClampedArray(5 * 4).fill(255) }
+  const shadow = createDefaultLayerEffect('inner-shadow', 'inner-direction')
+  shadow.useGlobalLight = true
+  shadow.distance = 1
+  shadow.size = 0
+  shadow.opacity = 100
+  const result = composeLayerStyleRaster(source, styles([shadow], 0), globalLight)
+
+  assert.deepEqual(
+    { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
+    { width: 5, height: 1, offsetX: 0, offsetY: 0 }
+  )
+  assert.equal(result.data[3], 255)
+  assert.equal(result.data[4 * 4 + 3], 0)
+})
+
+test('sombra interna nunca colore pixels fora da máscara alfa', () => {
+  const data = new Uint8ClampedArray(3 * 4)
+  data.set([255, 255, 255, 255], 4)
+  const shadow = createDefaultLayerEffect('inner-shadow', 'inner-clip')
+  shadow.useGlobalLight = false
+  shadow.angle = 0
+  shadow.distance = 1
+  shadow.size = 1
+  shadow.opacity = 100
+  const result = composeLayerStyleRaster({ width: 3, height: 1, data }, styles([shadow], 0), globalLight)
+
+  assert.equal(result.data[3], 0)
+  assert.ok(result.data[4 + 3] > 0)
+  assert.equal(result.data[8 + 3], 0)
+})
+
+test('traçado externo expande os bounds e preserva o interior transparente com fill zero', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([255, 255, 255, 255]) }
+  const stroke = createDefaultLayerEffect('stroke', 'outside-stroke')
+  stroke.position = 'outside'
+  stroke.size = 1
+  stroke.opacity = 100
+  stroke.paint = { type: 'color', color: '#ff0000' }
+  const result = composeLayerStyleRaster(source, styles([stroke], 0), globalLight)
+
+  assert.deepEqual(
+    { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
+    { width: 3, height: 3, offsetX: -1, offsetY: -1 }
+  )
+  assert.equal(result.data[3], 255)
+  assert.deepEqual([...result.data.slice(0, 3)], [255, 0, 0])
+  assert.equal(result.data[(1 * 3 + 1) * 4 + 3], 0)
+})
+
+test('traçado interno permanece recortado e não cobre o centro além da espessura', () => {
+  const source = { width: 3, height: 3, data: new Uint8ClampedArray(3 * 3 * 4).fill(255) }
+  const stroke = createDefaultLayerEffect('stroke', 'inside-stroke')
+  stroke.position = 'inside'
+  stroke.size = 1
+  stroke.opacity = 100
+  const result = composeLayerStyleRaster(source, styles([stroke], 0), globalLight)
+
+  assert.deepEqual({ width: result.width, height: result.height }, { width: 3, height: 3 })
+  assert.ok(result.data[3] > 0)
+  assert.equal(result.data[(1 * 3 + 1) * 4 + 3], 0)
+})
+
+test('traçado aceita gradiente espacial e recusa padrão até o motor compartilhado', () => {
+  const source = { width: 3, height: 1, data: new Uint8ClampedArray(3 * 4).fill(255) }
+  const stroke = createDefaultLayerEffect('stroke', 'gradient-stroke')
+  stroke.position = 'outside'
+  stroke.size = 1
+  stroke.paint = {
+    type: 'gradient', angle: 0, scale: 100, reverse: false, alignWithLayer: true,
+    gradient: {
+      type: 'linear', interpolation: 'srgb',
+      colorStops: [{ position: 0, color: '#ff0000' }, { position: 1, color: '#0000ff' }],
+      opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }]
+    }
+  }
+  const result = composeLayerStyleRaster(source, styles([stroke], 0), globalLight)
+  const left = [...result.data.slice(0, 3)]
+  const rightOffset = (result.width - 1) * 4
+  const right = [...result.data.slice(rightOffset, rightOffset + 3)]
+  assert.ok(left[0] > left[2])
+  assert.ok(right[2] > right[0])
+
+  stroke.paint = { type: 'pattern' }
+  assert.throws(() => composeLayerStyleRaster(source, styles([stroke]), globalLight), /stroke/)
+})
+
+test('sobreposição de cor respeita a máscara e permanece visível com fill zero', () => {
+  const data = new Uint8ClampedArray([
+    10, 20, 30, 0,
+    10, 20, 30, 255
+  ])
+  const overlay = createDefaultLayerEffect('color-overlay', 'red-overlay')
+  overlay.color = '#ff0000'
+  overlay.opacity = 50
+  overlay.blendMode = 'normal'
+  const result = composeLayerStyleRaster({ width: 2, height: 1, data }, styles([overlay], 0), globalLight)
+
+  assert.deepEqual([...result.data.slice(0, 4)], [0, 0, 0, 0])
+  assert.deepEqual([...result.data.slice(4, 8)], [255, 0, 0, 128])
+})
+
+test('sobreposição de cor é composta antes do traçado superior', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([255, 255, 255, 255]) }
+  const overlay = createDefaultLayerEffect('color-overlay', 'overlay-order')
+  overlay.color = '#ff0000'
+  overlay.opacity = 100
+  const stroke = createDefaultLayerEffect('stroke', 'stroke-order')
+  stroke.position = 'inside'
+  stroke.size = 1
+  stroke.paint = { type: 'color', color: '#0000ff' }
+  const result = composeLayerStyleRaster(source, styles([overlay, stroke]), globalLight)
+
+  assert.deepEqual([...result.data], [0, 0, 255, 255])
 })

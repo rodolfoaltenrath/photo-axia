@@ -164,6 +164,7 @@ import type {
   LayerBlendMode,
   LayerItem,
   LayerStyleConfig,
+  LayerStyleGlobalLight,
   LayerTransform,
   NewDocumentSettings,
   RecentProject,
@@ -245,7 +246,11 @@ const recentProjects = ref<RecentProject[]>([])
 const recentProjectsLoading = ref(true)
 const showUnsavedChangesDialog = ref(false)
 const showFlattenImageDialog = ref(false)
-const layerStyleDialog = shallowRef<{ layerId: string; before: LayerStyleConfig }>()
+const layerStyleDialog = shallowRef<{
+  layerId: string
+  before: LayerStyleConfig
+  beforeGlobalLight: LayerStyleGlobalLight
+}>()
 const fileInput = ref<HTMLInputElement | null>(null)
 const documentImageInput = ref<HTMLInputElement | null>(null)
 const pdfFileInput = ref<HTMLInputElement | null>(null)
@@ -733,6 +738,11 @@ async function applyHistorySteps(steps: HistoryStep<EditorHistoryDelta>[]) {
         direction === 'redo' ? delta.after : delta.before
       )
       continue
+    }
+    if (delta.type === 'layer-styles:change') {
+      activeDocument.value.layerStyleGlobalLight = normalizeLayerStyleGlobalLight(
+        direction === 'redo' ? delta.globalLightAfter : delta.globalLightBefore
+      )
     }
     const result = applyEditorHistoryDelta(layers.value, activeLayerId.value, delta, direction, selectedLayerIds.value)
     activeLayerId.value = result.activeLayerId
@@ -1663,23 +1673,31 @@ function openLayerStyles(layerId: string) {
   const layer = layers.value.find((item) => item.id === layerId)
   if (!layer) return
   selectSingleLayer(layerId)
-  layerStyleDialog.value = { layerId, before: cloneLayerStyleConfig(layer.styles) }
+  layerStyleDialog.value = {
+    layerId,
+    before: cloneLayerStyleConfig(layer.styles),
+    beforeGlobalLight: { ...activeDocument.value.layerStyleGlobalLight }
+  }
 }
 
-function previewLayerStyles(styles: LayerStyleConfig) {
+function previewLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGlobalLight) {
   const layer = layerStyleDialogLayer.value
   if (!layer) return
   layer.styles = cloneLayerStyleConfig(styles)
+  activeDocument.value.layerStyleGlobalLight = normalizeLayerStyleGlobalLight(globalLight)
 }
 
 function cancelLayerStyles() {
   const session = layerStyleDialog.value
   const layer = layerStyleDialogLayer.value
-  if (session && layer) layer.styles = cloneLayerStyleConfig(session.before)
+  if (session && layer) {
+    layer.styles = cloneLayerStyleConfig(session.before)
+    activeDocument.value.layerStyleGlobalLight = { ...session.beforeGlobalLight }
+  }
   layerStyleDialog.value = undefined
 }
 
-function applyLayerStyles(styles: LayerStyleConfig) {
+function applyLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGlobalLight) {
   const session = layerStyleDialog.value
   const layer = layerStyleDialogLayer.value
   if (!session || !layer) {
@@ -1689,14 +1707,19 @@ function applyLayerStyles(styles: LayerStyleConfig) {
 
   const before = cloneLayerStyleConfig(session.before)
   const after = cloneLayerStyleConfig(styles)
+  const globalLightBefore = { ...session.beforeGlobalLight }
+  const globalLightAfter = normalizeLayerStyleGlobalLight(globalLight)
   layer.styles = after
+  activeDocument.value.layerStyleGlobalLight = globalLightAfter
   layerStyleDialog.value = undefined
-  if (JSON.stringify(before) === JSON.stringify(after)) return
+  if (JSON.stringify(before) === JSON.stringify(after) && JSON.stringify(globalLightBefore) === JSON.stringify(globalLightAfter)) return
   recordHistory('Alterar estilos de camada', {
-    type: 'layer:patch',
+    type: 'layer-styles:change',
     layerId: layer.id,
-    before: { styles: before },
-    after: { styles: after }
+    before,
+    after,
+    globalLightBefore,
+    globalLightAfter
   })
   statusText.value = 'Estilos de camada atualizados'
 }
@@ -4685,6 +4708,7 @@ onBeforeUnmount(() => {
       @import="performPDFImport"
     />
     <LayerStyleDialog
+      :global-light="layerStyleDialog?.beforeGlobalLight ?? activeDocument.layerStyleGlobalLight"
       :layer-name="layerStyleDialogLayer?.name ?? ''"
       :open="Boolean(layerStyleDialog)"
       :raster-effects-available="Boolean(layerStyleDialogLayer?.image)"

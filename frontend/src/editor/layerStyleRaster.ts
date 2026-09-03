@@ -1,13 +1,18 @@
 import { activeLayerStyleEffects, layerStyleInsets, type LayerStyleRaster } from './layerStyleCompositor.ts'
 import { normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from './layerStyles.ts'
 import type {
+  ColorOverlayEffect,
+  DropShadowEffect,
+  InnerShadowEffect,
   LayerBlendMode,
   LayerStyleContour,
   LayerStyleGradient,
   LayerStylePaint,
   LayerStyleConfig,
   LayerStyleGlobalLight,
-  OuterGlowEffect
+  InnerGlowEffect,
+  OuterGlowEffect,
+  StrokeEffect
 } from '../types/editor.ts'
 
 export interface ComposedLayerStyleRaster extends LayerStyleRaster {
@@ -79,6 +84,53 @@ function maxFilterVertical(source: Uint8ClampedArray, width: number, height: num
   return output
 }
 
+function minFilterHorizontal(source: Uint8ClampedArray, width: number, height: number, radius: number) {
+  if (radius <= 0) return new Uint8ClampedArray(source)
+  const output = new Uint8ClampedArray(source.length)
+  const paddedWidth = width + radius * 2
+  const window = radius * 2 + 1
+  const queue = new Int32Array(paddedWidth)
+  for (let y = 0; y < height; y++) {
+    const row = y * width
+    let head = 0
+    let tail = 0
+    const valueAt = (index: number) => index < radius || index >= radius + width
+      ? 0
+      : source[row + index - radius]!
+    for (let index = 0; index < paddedWidth; index++) {
+      const value = valueAt(index)
+      while (tail > head && valueAt(queue[tail - 1]!) >= value) tail--
+      queue[tail++] = index
+      while (tail > head && queue[head]! <= index - window) head++
+      if (index >= window - 1) output[row + index - window + 1] = valueAt(queue[head]!)
+    }
+  }
+  return output
+}
+
+function minFilterVertical(source: Uint8ClampedArray, width: number, height: number, radius: number) {
+  if (radius <= 0) return new Uint8ClampedArray(source)
+  const output = new Uint8ClampedArray(source.length)
+  const paddedHeight = height + radius * 2
+  const window = radius * 2 + 1
+  const queue = new Int32Array(paddedHeight)
+  for (let x = 0; x < width; x++) {
+    let head = 0
+    let tail = 0
+    const valueAt = (index: number) => index < radius || index >= radius + height
+      ? 0
+      : source[(index - radius) * width + x]!
+    for (let index = 0; index < paddedHeight; index++) {
+      const value = valueAt(index)
+      while (tail > head && valueAt(queue[tail - 1]!) >= value) tail--
+      queue[tail++] = index
+      while (tail > head && queue[head]! <= index - window) head++
+      if (index >= window - 1) output[(index - window + 1) * width + x] = valueAt(queue[head]!)
+    }
+  }
+  return output
+}
+
 function boxBlurHorizontal(source: Uint8ClampedArray, width: number, height: number, radius: number) {
   if (radius <= 0) return new Uint8ClampedArray(source)
   const output = new Uint8ClampedArray(source.length)
@@ -119,6 +171,12 @@ function boxBlurVertical(source: Uint8ClampedArray, width: number, height: numbe
 function spreadAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number) {
   return radius > 0
     ? maxFilterVertical(maxFilterHorizontal(source, width, height, radius), width, height, radius)
+    : new Uint8ClampedArray(source)
+}
+
+function erodeAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number) {
+  return radius > 0
+    ? minFilterVertical(minFilterHorizontal(source, width, height, radius), width, height, radius)
     : new Uint8ClampedArray(source)
 }
 
@@ -186,6 +244,38 @@ function paintValue(paint: Extract<LayerStylePaint, { type: 'color' | 'gradient'
   return gradientValue(paint.gradient, paint.reverse ? 1 - value : value)
 }
 
+function strokeGradientPosition(
+  paint: Extract<LayerStylePaint, { type: 'gradient' }>,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+) {
+  const centerX = width / 2
+  const centerY = height / 2
+  const dx = x + 0.5 - centerX
+  const dy = y + 0.5 - centerY
+  const radiusX = Math.max(0.5, width / 2)
+  const radiusY = Math.max(0.5, height / 2)
+  let position: number
+  if (paint.gradient.type === 'radial') {
+    position = Math.hypot(dx / radiusX, dy / radiusY)
+  } else if (paint.gradient.type === 'angle') {
+    position = ((Math.atan2(dy, dx) - paint.angle * Math.PI / 180) / (Math.PI * 2) + 1) % 1
+  } else if (paint.gradient.type === 'diamond') {
+    position = Math.abs(dx) / radiusX + Math.abs(dy) / radiusY
+  } else {
+    const radians = paint.angle * Math.PI / 180
+    const cosine = Math.cos(radians)
+    const sine = Math.sin(radians)
+    const extent = Math.max(0.5, Math.abs(cosine) * radiusX + Math.abs(sine) * radiusY)
+    const linear = 0.5 + (dx * cosine + dy * sine) / (extent * 2)
+    position = paint.gradient.type === 'reflected' ? Math.abs(linear - 0.5) * 2 : linear
+  }
+  const scaled = 0.5 + (position - 0.5) * 100 / paint.scale
+  return clamp01(paint.reverse ? 1 - scaled : scaled)
+}
+
 function blendChannel(backdrop: number, source: number, mode: LayerBlendMode) {
   if (mode === 'multiply') return backdrop * source
   if (mode === 'screen') return 1 - (1 - backdrop) * (1 - source)
@@ -221,13 +311,146 @@ function compositePixel(
   target[offset + 3] = Math.round(outputAlpha * 255)
 }
 
-function effectSeed(effect: OuterGlowEffect) {
+function effectSeed(effect: { id: string }) {
   let seed = 0x811c9dc5
   for (let index = 0; index < effect.id.length; index++) {
     seed ^= effect.id.charCodeAt(index)
     seed = Math.imul(seed, 0x01000193)
   }
   return seed >>> 0
+}
+
+function offsetAlpha(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  offsetX: number,
+  offsetY: number
+) {
+  if (offsetX === 0 && offsetY === 0) return source
+  const shifted = new Uint8ClampedArray(source.length)
+  for (let y = 0; y < height; y++) {
+    const sourceY = y - offsetY
+    if (sourceY < 0 || sourceY >= height) continue
+    for (let x = 0; x < width; x++) {
+      const sourceX = x - offsetX
+      if (sourceX < 0 || sourceX >= width) continue
+      shifted[y * width + x] = source[sourceY * width + sourceX]!
+    }
+  }
+  return shifted
+}
+
+function renderDropShadow(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: DropShadowEffect,
+  globalLight: LayerStyleGlobalLight,
+  resolutionScale: number
+) {
+  const radius = Math.max(0, Math.round(effect.size * resolutionScale))
+  const spreadRadius = Math.min(radius, Math.round(radius * effect.spread / 100))
+  const angle = (effect.useGlobalLight ? globalLight.angle : effect.angle) * Math.PI / 180
+  const distance = effect.distance * resolutionScale
+  const offsetX = Math.round(-Math.cos(angle) * distance)
+  const offsetY = Math.round(Math.sin(angle) * distance)
+  const shifted = offsetAlpha(sourceAlpha, width, height, offsetX, offsetY)
+  const spread = spreadAlpha(shifted, width, height, spreadRadius)
+  const blurred = blurAlpha(spread, width, height, radius - spreadRadius, false)
+  const color = parseColor(effect.color)
+  const colorAlpha = colorOpacity(effect.color)
+  const seed = effectSeed(effect)
+  for (let index = 0; index < blurred.length; index++) {
+    let shadow = blurred[index]! / 255
+    if (effect.layerKnocksOutShadow) shadow = Math.max(0, shadow - sourceAlpha[index]! / 255)
+    if (shadow <= 0) continue
+    const contoured = contourValue(effect.contour, shadow)
+    const noise = effect.noise > 0
+      ? 1 - randomAt(seed ^ 0x9e3779b9, index) * effect.noise / 100
+      : 1
+    const alpha = Math.round(255 * contoured * colorAlpha * effect.opacity / 100 * noise)
+    compositePixel(target, index * 4, color, alpha, effect.blendMode)
+  }
+}
+
+function renderInnerShadow(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: InnerShadowEffect,
+  globalLight: LayerStyleGlobalLight,
+  resolutionScale: number
+) {
+  const radius = Math.max(0, Math.round(effect.size * resolutionScale))
+  const angle = (effect.useGlobalLight ? globalLight.angle : effect.angle) * Math.PI / 180
+  const distance = effect.distance * resolutionScale
+  // A máscara do conteúdo se move contra a projeção externa. A diferença que
+  // permanece dentro da máscara original forma a sombra nas bordas internas.
+  const offsetX = Math.round(Math.cos(angle) * distance)
+  const offsetY = Math.round(-Math.sin(angle) * distance)
+  const shifted = offsetAlpha(sourceAlpha, width, height, offsetX, offsetY)
+  const blurred = blurAlpha(shifted, width, height, radius, false)
+  const chokeThreshold = Math.min(0.99, effect.choke / 100)
+  const color = parseColor(effect.color)
+  const colorAlpha = colorOpacity(effect.color)
+  const seed = effectSeed(effect)
+  for (let index = 0; index < blurred.length; index++) {
+    const mask = sourceAlpha[index]! / 255
+    if (mask <= 0) continue
+    const raw = mask * clamp01((1 - blurred[index]! / 255) * 2)
+    if (raw <= 0) continue
+    const choked = clamp01(raw / Math.max(0.01, 1 - chokeThreshold))
+    const contoured = Math.min(mask, contourValue(effect.contour, choked))
+    const noise = effect.noise > 0
+      ? 1 - randomAt(seed ^ 0x9e3779b9, index) * effect.noise / 100
+      : 1
+    const alpha = Math.round(255 * contoured * colorAlpha * effect.opacity / 100 * noise)
+    compositePixel(target, index * 4, color, alpha, effect.blendMode)
+  }
+}
+
+function renderInnerGlow(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: InnerGlowEffect,
+  resolutionScale: number
+) {
+  const radius = Math.max(0, Math.round(effect.size * resolutionScale))
+  if (radius <= 0) return
+  const blurred = blurAlpha(sourceAlpha, width, height, radius, effect.technique === 'precise')
+  const chokeThreshold = Math.min(0.99, effect.choke / 100)
+  const seed = effectSeed(effect)
+  const solidPaint = effect.paint.type === 'color'
+    ? { color: parseColor(effect.paint.color), opacity: colorOpacity(effect.paint.color) }
+    : undefined
+  for (let index = 0; index < blurred.length; index++) {
+    const mask = sourceAlpha[index]! / 255
+    if (mask <= 0) continue
+    const blurredMask = blurred[index]! / 255
+    // O blur considera pixels fora do raster como transparentes. Isso mantém o
+    // brilho de borda correto mesmo quando a forma toca os limites da imagem.
+    const raw = effect.source === 'edge'
+      ? mask * clamp01((1 - blurredMask) * 2)
+      : mask * blurredMask
+    if (raw <= 0) continue
+    const choked = clamp01(raw / Math.max(0.01, 1 - chokeThreshold))
+    const ranged = clamp01(choked * 100 / effect.range)
+    const contoured = contourValue(effect.contour, ranged)
+    const jittered = effect.jitter > 0
+      ? clamp01(contoured + (randomAt(seed, index) - 0.5) * effect.jitter / 100)
+      : contoured
+    const paint = solidPaint ?? paintValue(effect.paint, jittered)
+    const noise = effect.noise > 0
+      ? 1 - randomAt(seed ^ 0x9e3779b9, index) * effect.noise / 100
+      : 1
+    const alpha = Math.round(255 * jittered * paint.opacity * effect.opacity / 100 * noise * mask)
+    compositePixel(target, index * 4, paint.color, alpha, effect.blendMode)
+  }
 }
 
 function randomAt(seed: number, index: number) {
@@ -251,6 +474,9 @@ function renderOuterGlow(
   const expanded = spreadAlpha(sourceAlpha, width, height, spreadRadius)
   const blurred = blurAlpha(expanded, width, height, radius - spreadRadius, effect.technique === 'precise')
   const seed = effectSeed(effect)
+  const solidPaint = effect.paint.type === 'color'
+    ? { color: parseColor(effect.paint.color), opacity: colorOpacity(effect.paint.color) }
+    : undefined
   for (let index = 0; index < blurred.length; index++) {
     const outer = Math.max(0, blurred[index]! - sourceAlpha[index]!) / 255
     if (outer <= 0) continue
@@ -259,12 +485,67 @@ function renderOuterGlow(
     const jittered = effect.jitter > 0
       ? clamp01(contoured + (randomAt(seed, index) - 0.5) * effect.jitter / 100)
       : contoured
-    const paint = paintValue(effect.paint, jittered)
+    const paint = solidPaint ?? paintValue(effect.paint, jittered)
     const noise = effect.noise > 0
       ? 1 - randomAt(seed ^ 0x9e3779b9, index) * effect.noise / 100
       : 1
     const alpha = Math.round(255 * jittered * paint.opacity * effect.opacity / 100 * noise)
     compositePixel(target, index * 4, paint.color, alpha, effect.blendMode)
+  }
+}
+
+function renderStroke(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: StrokeEffect,
+  resolutionScale: number
+) {
+  if (effect.paint.type === 'pattern') return
+  const thickness = Math.max(1, Math.round(effect.size * resolutionScale))
+  const outsideRadius = effect.position === 'outside'
+    ? thickness
+    : effect.position === 'center' ? Math.ceil(thickness / 2) : 0
+  const insideRadius = effect.position === 'inside'
+    ? thickness
+    : effect.position === 'center' ? Math.floor(thickness / 2) : 0
+  const expanded = outsideRadius > 0
+    ? spreadAlpha(sourceAlpha, width, height, outsideRadius)
+    : sourceAlpha
+  const eroded = insideRadius > 0
+    ? erodeAlpha(sourceAlpha, width, height, insideRadius)
+    : sourceAlpha
+  const solidPaint = effect.paint.type === 'color'
+    ? { color: parseColor(effect.paint.color), opacity: colorOpacity(effect.paint.color) }
+    : undefined
+  const gradientPaint = effect.paint.type === 'gradient' ? effect.paint : undefined
+  for (let index = 0; index < sourceAlpha.length; index++) {
+    const mask = Math.max(0, expanded[index]! - eroded[index]!) / 255
+    if (mask <= 0) continue
+    const x = index % width
+    const y = Math.floor(index / width)
+    const paint = solidPaint ?? gradientValue(
+      gradientPaint!.gradient,
+      strokeGradientPosition(gradientPaint!, x, y, width, height)
+    )
+    const alpha = Math.round(255 * mask * paint.opacity * effect.opacity / 100)
+    compositePixel(target, index * 4, paint.color, alpha, effect.blendMode)
+  }
+}
+
+function renderColorOverlay(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  effect: ColorOverlayEffect
+) {
+  const color = parseColor(effect.color)
+  const colorAlpha = colorOpacity(effect.color)
+  for (let index = 0; index < sourceAlpha.length; index++) {
+    const mask = sourceAlpha[index]! / 255
+    if (mask <= 0) continue
+    const alpha = Math.round(255 * mask * colorAlpha * effect.opacity / 100)
+    compositePixel(target, index * 4, color, alpha, effect.blendMode)
   }
 }
 
@@ -308,7 +589,10 @@ export function composeLayerStyleRaster(
   const globalLight = normalizeLayerStyleGlobalLight(globalLightValue)
   const scale = Number.isFinite(resolutionScale) && resolutionScale > 0 ? Math.min(8, resolutionScale) : 1
   const effects = activeLayerStyleEffects(styles)
-  const unsupported = effects.filter((effect) => effect.type !== 'outer-glow')
+  const unsupported = effects.filter((effect) =>
+    !['drop-shadow', 'inner-shadow', 'outer-glow', 'inner-glow', 'color-overlay', 'stroke'].includes(effect.type) ||
+    (effect.type === 'stroke' && effect.paint.type === 'pattern')
+  )
   if (unsupported.length) {
     throw new Error(`Efeitos ainda não suportados pelo compositor: ${unsupported.map((effect) => effect.type).join(', ')}.`)
   }
@@ -327,9 +611,20 @@ export function composeLayerStyleRaster(
   }
   const data = new Uint8ClampedArray(width * height * 4)
   for (const effect of effects) {
-    if (effect.type === 'outer-glow') renderOuterGlow(data, sourceAlpha, width, height, effect, scale)
+    if (effect.type === 'drop-shadow') renderDropShadow(data, sourceAlpha, width, height, effect, globalLight, scale)
+    else if (effect.type === 'outer-glow') renderOuterGlow(data, sourceAlpha, width, height, effect, scale)
   }
   compositeContent(data, source, insets.left, insets.top, width, styles.fillOpacity)
+  for (const effect of effects) {
+    if (effect.type === 'inner-shadow') renderInnerShadow(data, sourceAlpha, width, height, effect, globalLight, scale)
+    else if (effect.type === 'inner-glow') renderInnerGlow(data, sourceAlpha, width, height, effect, scale)
+  }
+  for (const effect of effects) {
+    if (effect.type === 'color-overlay') renderColorOverlay(data, sourceAlpha, effect)
+  }
+  for (const effect of effects) {
+    if (effect.type === 'stroke') renderStroke(data, sourceAlpha, width, height, effect, scale)
+  }
   return {
     width,
     height,

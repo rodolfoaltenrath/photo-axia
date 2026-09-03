@@ -403,6 +403,41 @@ test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização v
   assert.deepEqual(result.refreshLayerIds, ['image'])
 })
 
+test('estilos e luz global formam uma única alteração reversível', () => {
+  const before = { enabled: true, fillOpacity: 100, effects: [] }
+  const after = {
+    enabled: true,
+    fillOpacity: 100,
+    effects: [{
+      type: 'drop-shadow', id: 'shadow', enabled: true, opacity: 75, blendMode: 'multiply',
+      color: '#000000', angle: 45, useGlobalLight: true, distance: 5, spread: 0, size: 5,
+      noise: 0, contour: { preset: 'linear', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] },
+      layerKnocksOutShadow: true
+    }]
+  }
+  const layers = [{
+    id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+    image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
+    transform: { x: 0, y: 0, width: 10, height: 10 }, styles: before
+  }]
+  const delta = {
+    type: 'layer-styles:change', layerId: 'image', before, after,
+    globalLightBefore: { angle: 120, altitude: 30 },
+    globalLightAfter: { angle: 45, altitude: 30 }
+  }
+
+  let result = applyEditorHistoryDelta(layers, 'image', delta, 'redo')
+  assert.equal(layers[0].styles.effects[0].type, 'drop-shadow')
+  assert.deepEqual(result.refreshLayerIds, ['image'])
+  layers[0].styles.effects[0].color = '#ffffff'
+  assert.equal(delta.after.effects[0].color, '#000000')
+
+  result = applyEditorHistoryDelta(layers, 'image', delta, 'undo')
+  assert.deepEqual(layers[0].styles, before)
+  assert.deepEqual(result.refreshLayerIds, ['image'])
+  assert.equal(isEditorHistoryDeltaNoop(delta), false)
+})
+
 test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada', () => {
   const text = { content: 'Axia', fontFamily: 'Inter', fontSize: 48, color: '#ffffff' }
   const styles = {
