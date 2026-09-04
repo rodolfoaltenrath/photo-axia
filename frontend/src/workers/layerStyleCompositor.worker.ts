@@ -1,4 +1,4 @@
-import { composeLayerStyleRaster } from '../editor/layerStyleRaster.ts'
+import { composeLayerStyleRaster, type LayerStylePatternRasters } from '../editor/layerStyleRaster.ts'
 import type {
   LayerStyleWorkerRenderRequest,
   LayerStyleWorkerRequest,
@@ -14,13 +14,39 @@ function ensureCurrent(id: number) {
   throw new DOMException('Composição cancelada.', 'AbortError')
 }
 
+async function decodePatternBlob(blob: Blob) {
+  const bitmap = await createImageBitmap(blob)
+  try {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+    const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true })
+    if (!context) throw new Error('Renderizador de estilos indisponível.')
+    context.drawImage(bitmap, 0, 0)
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height)
+    canvas.width = 1
+    canvas.height = 1
+    return { width: pixels.width, height: pixels.height, data: pixels.data }
+  } finally {
+    bitmap.close()
+  }
+}
+
+async function decodePatterns(patterns: Record<string, Blob>): Promise<LayerStylePatternRasters> {
+  const entries = await Promise.all(
+    Object.entries(patterns).map(async ([id, blob]) => [id, await decodePatternBlob(blob)] as const)
+  )
+  return new Map(entries)
+}
+
 async function render(request: LayerStyleWorkerRenderRequest) {
   ensureCurrent(request.id)
-  const bitmap = await createImageBitmap(request.source, {
-    resizeWidth: request.sourceWidth,
-    resizeHeight: request.sourceHeight,
-    resizeQuality: request.quality === 'interactive' ? 'medium' : 'high'
-  })
+  const [bitmap, patterns] = await Promise.all([
+    createImageBitmap(request.source, {
+      resizeWidth: request.sourceWidth,
+      resizeHeight: request.sourceHeight,
+      resizeQuality: request.quality === 'interactive' ? 'medium' : 'high'
+    }),
+    decodePatterns(request.patterns)
+  ])
   try {
     ensureCurrent(request.id)
     const sourceCanvas = new OffscreenCanvas(request.sourceWidth, request.sourceHeight)
@@ -32,7 +58,8 @@ async function render(request: LayerStyleWorkerRenderRequest) {
       { width: source.width, height: source.height, data: source.data },
       request.styles,
       request.globalLight,
-      request.resolutionScale
+      request.resolutionScale,
+      patterns
     )
     ensureCurrent(request.id)
 

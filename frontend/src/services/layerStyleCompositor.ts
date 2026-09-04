@@ -2,12 +2,52 @@ import {
   layerStyleCacheKey,
   type LayerStyleRenderQuality
 } from '../editor/layerStyleCompositor.ts'
-import { composeLayerStyleRaster } from '../editor/layerStyleRaster.ts'
-import { normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from '../editor/layerStyles.ts'
+import { composeLayerStyleRaster, type LayerStylePatternRasters } from '../editor/layerStyleRaster.ts'
+import { layerStylePatternAssets, normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from '../editor/layerStyles.ts'
 import { ByteBudgetLruCache, LatestGenerationByKey } from '../editor/renderCache.ts'
 import { prepareImageSource, releasePreparedImage } from './imageImport.ts'
 import type { LayerStyleWorkerRequest, LayerStyleWorkerResult } from '../editor/layerStyleRenderProtocol.ts'
 import type { LayerStyleConfig, LayerStyleGlobalLight } from '../types/editor.ts'
+
+const patternBlobCache = new Map<string, { sourceUrl: string, blob: Blob }>()
+
+async function resolvePatternBlobs(styles: LayerStyleConfig): Promise<Record<string, Blob>> {
+  const assets = layerStylePatternAssets(styles)
+  const patterns: Record<string, Blob> = {}
+  await Promise.all(assets.map(async (asset) => {
+    const cached = patternBlobCache.get(asset.id)
+    if (cached && cached.sourceUrl === asset.sourceUrl) {
+      patterns[asset.id] = cached.blob
+      return
+    }
+    const blob = await (await fetch(asset.sourceUrl)).blob()
+    patternBlobCache.set(asset.id, { sourceUrl: asset.sourceUrl, blob })
+    patterns[asset.id] = blob
+  }))
+  return patterns
+}
+
+async function decodePatternBlobMainThread(blob: Blob) {
+  const bitmap = await createImageBitmap(blob)
+  try {
+    const canvas = makeCanvas(bitmap.width, bitmap.height)
+    const context = context2d(canvas, true)
+    context.drawImage(bitmap, 0, 0)
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height)
+    canvas.width = 1
+    canvas.height = 1
+    return { width: pixels.width, height: pixels.height, data: pixels.data }
+  } finally {
+    bitmap.close()
+  }
+}
+
+async function decodePatternsMainThread(patterns: Record<string, Blob>): Promise<LayerStylePatternRasters> {
+  const entries = await Promise.all(
+    Object.entries(patterns).map(async ([id, blob]) => [id, await decodePatternBlobMainThread(blob)] as const)
+  )
+  return new Map(entries)
+}
 
 export interface LayerStyleRenderRequest {
   consumerId: string
@@ -187,13 +227,17 @@ async function fallbackRender(
   styles: LayerStyleConfig,
   globalLight: LayerStyleGlobalLight,
   resolutionScale: number,
-  quality: LayerStyleRenderQuality
+  quality: LayerStyleRenderQuality,
+  patterns: Record<string, Blob>
 ) {
-  const bitmap = await createImageBitmap(source, {
-    resizeWidth: sourceWidth,
-    resizeHeight: sourceHeight,
-    resizeQuality: quality === 'interactive' ? 'medium' : 'high'
-  })
+  const [bitmap, decodedPatterns] = await Promise.all([
+    createImageBitmap(source, {
+      resizeWidth: sourceWidth,
+      resizeHeight: sourceHeight,
+      resizeQuality: quality === 'interactive' ? 'medium' : 'high'
+    }),
+    decodePatternsMainThread(patterns)
+  ])
   const sourceCanvas = makeCanvas(sourceWidth, sourceHeight)
   try {
     const sourceContext = context2d(sourceCanvas, true)
@@ -203,7 +247,8 @@ async function fallbackRender(
       { width: pixels.width, height: pixels.height, data: pixels.data },
       styles,
       globalLight,
-      resolutionScale
+      resolutionScale,
+      decodedPatterns
     )
     const output = makeCanvas(composed.width, composed.height)
     try {
@@ -235,12 +280,13 @@ function executeRender(
   styles: LayerStyleConfig,
   globalLight: LayerStyleGlobalLight,
   resolutionScale: number,
-  quality: LayerStyleRenderQuality
+  quality: LayerStyleRenderQuality,
+  patterns: Record<string, Blob>
 ) {
   const worker = workerInstance()
   if (!worker) {
     return {
-      promise: fallbackRender(source, sourceWidth, sourceHeight, styles, globalLight, resolutionScale, quality),
+      promise: fallbackRender(source, sourceWidth, sourceHeight, styles, globalLight, resolutionScale, quality, patterns),
       cancel: () => undefined
     }
   }
@@ -248,7 +294,7 @@ function executeRender(
   const promise = new Promise<Omit<LayerStyleRenderResult, 'cacheKey' | 'fromCache'>>((resolve, reject) => {
     workerPending.set(id, { resolve, reject })
     const message: LayerStyleWorkerRequest = {
-      type: 'render', id, source, sourceWidth, sourceHeight, styles, globalLight, resolutionScale, quality
+      type: 'render', id, source, sourceWidth, sourceHeight, styles, globalLight, resolutionScale, quality, patterns
     }
     worker.postMessage(message)
   })
@@ -309,10 +355,13 @@ export async function renderLayerStyle(request: LayerStyleRenderRequest): Promis
     let cancelled = false
     let cancelExecution: () => void = () => undefined
     const promise = (async () => {
-      const source = typeof request.source === 'function' ? await request.source() : request.source
+      const [source, patterns] = await Promise.all([
+        typeof request.source === 'function' ? request.source() : Promise.resolve(request.source),
+        resolvePatternBlobs(styles)
+      ])
       if (cancelled) throw new LayerStyleRenderCancelledError()
       const execution = executeRender(
-        source, request.sourceWidth, request.sourceHeight, styles, globalLight, resolutionScale, quality
+        source, request.sourceWidth, request.sourceHeight, styles, globalLight, resolutionScale, quality, patterns
       )
       cancelExecution = execution.cancel
       const result = await execution.promise

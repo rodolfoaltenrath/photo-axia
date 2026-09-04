@@ -6,8 +6,10 @@ import {
 } from './layerStyleCompositor.ts'
 import { normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from './layerStyles.ts'
 import type {
+  BevelEmbossEffect,
   ColorOverlayEffect,
   DropShadowEffect,
+  GradientOverlayEffect,
   InnerShadowEffect,
   LayerBlendMode,
   LayerStyleContour,
@@ -17,12 +19,23 @@ import type {
   LayerStyleGlobalLight,
   InnerGlowEffect,
   OuterGlowEffect,
+  PatternOverlayEffect,
+  SatinEffect,
   StrokeEffect
 } from '../types/editor.ts'
 
 export interface ComposedLayerStyleRaster extends LayerStyleRaster {
   offsetX: number
   offsetY: number
+}
+
+export type LayerStylePatternRasters = Map<string, LayerStyleRaster>
+
+export class LayerStylePatternMissingError extends Error {
+  constructor(effectType: string) {
+    super(`Padrão não foi decodificado para compor o efeito: ${effectType}.`)
+    this.name = 'LayerStylePatternMissingError'
+  }
 }
 
 const MAX_COMPOSED_PIXELS = 80_000_000
@@ -249,8 +262,15 @@ function paintValue(paint: Extract<LayerStylePaint, { type: 'color' | 'gradient'
   return gradientValue(paint.gradient, paint.reverse ? 1 - value : value)
 }
 
-function strokeGradientPosition(
-  paint: Extract<LayerStylePaint, { type: 'gradient' }>,
+interface SpatialGradientPaint {
+  gradient: LayerStyleGradient
+  angle: number
+  scale: number
+  reverse: boolean
+}
+
+function spatialGradientPosition(
+  paint: SpatialGradientPaint,
   x: number,
   y: number,
   width: number,
@@ -279,6 +299,28 @@ function strokeGradientPosition(
   }
   const scaled = 0.5 + (position - 0.5) * 100 / paint.scale
   return clamp01(paint.reverse ? 1 - scaled : scaled)
+}
+
+function patternSample(
+  pattern: LayerStyleRaster,
+  x: number,
+  y: number,
+  angle: number,
+  scale: number
+) {
+  const scaleFactor = Math.max(0.01, scale / 100)
+  const radians = -angle * Math.PI / 180
+  const cosine = Math.cos(radians)
+  const sine = Math.sin(radians)
+  const rotatedX = (x * cosine - y * sine) / scaleFactor
+  const rotatedY = (x * sine + y * cosine) / scaleFactor
+  const patternX = Math.floor(((rotatedX % pattern.width) + pattern.width) % pattern.width)
+  const patternY = Math.floor(((rotatedY % pattern.height) + pattern.height) % pattern.height)
+  const offset = (patternY * pattern.width + patternX) * 4
+  return {
+    color: [pattern.data[offset]!, pattern.data[offset + 1]!, pattern.data[offset + 2]!] as const,
+    opacity: pattern.data[offset + 3]! / 255
+  }
 }
 
 function blendChannel(backdrop: number, source: number, mode: LayerBlendMode) {
@@ -499,15 +541,120 @@ function renderOuterGlow(
   }
 }
 
+function bevelHeightAt(ramp: Uint8ClampedArray, width: number, height: number, x: number, y: number) {
+  const clampedX = Math.min(width - 1, Math.max(0, x))
+  const clampedY = Math.min(height - 1, Math.max(0, y))
+  return ramp[clampedY * width + clampedX]! / 255
+}
+
+function renderBevelEmboss(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: BevelEmbossEffect,
+  globalLight: LayerStyleGlobalLight,
+  resolutionScale: number,
+  texture: LayerStyleRaster | undefined
+) {
+  if (effect.textureEnabled && !effect.texture) { /* nada selecionado ainda: segue sem textura */ }
+  else if (effect.textureEnabled && !texture) throw new LayerStylePatternMissingError('bevel-emboss')
+  const radius = Math.max(1, Math.round(effect.size * resolutionScale))
+  const softenRadius = Math.max(0, Math.round(effect.soften * resolutionScale))
+  const precise = effect.technique !== 'smooth'
+  // A rampa de altura é aproximada pelo próprio alfa borrado: perto da borda
+  // original o valor varia suavemente de dentro para fora, funcionando como um
+  // mapa de relevo sem exigir uma transformada de distância dedicada.
+  let ramp = blurAlpha(sourceAlpha, width, height, radius, precise)
+  if (softenRadius > 0) ramp = blurAlpha(ramp, width, height, softenRadius, false)
+  if (effect.technique === 'chisel-hard') {
+    const sharpened = new Uint8ClampedArray(ramp.length)
+    for (let index = 0; index < ramp.length; index++) {
+      sharpened[index] = Math.round(clamp01((ramp[index]! / 255 - 0.5) * 2 + 0.5) * 255)
+    }
+    ramp = sharpened
+  }
+  if (effect.textureEnabled && texture) {
+    // A textura soma um relevo fino de baixa amplitude sobre a rampa do bisel,
+    // amostrada pela luminância do padrão em vez de reconstruir um mapa de altura.
+    const textureSign = effect.textureInvert ? -1 : 1
+    const depthFactor = effect.textureDepth / 100 * textureSign
+    const textured = new Uint8ClampedArray(ramp.length)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const index = y * width + x
+        const sample = patternSample(texture, x, y, 0, effect.textureScale)
+        const luminance = (sample.color[0] + sample.color[1] + sample.color[2]) / 3 / 255
+        const delta = (luminance - 0.5) * 2 * depthFactor
+        textured[index] = Math.round(clamp01(ramp[index]! / 255 + delta) * 255)
+      }
+    }
+    ramp = textured
+  }
+
+  const lightAngle = (effect.useGlobalLight ? globalLight.angle : effect.angle) * Math.PI / 180
+  const lightAltitude = effect.altitude * Math.PI / 180
+  const lightX = Math.cos(lightAngle) * Math.cos(lightAltitude)
+  const lightY = -Math.sin(lightAngle) * Math.cos(lightAltitude)
+  const lightZ = Math.sin(lightAltitude)
+
+  const directionSign = effect.direction === 'down' ? -1 : 1
+  const styleSign = effect.style === 'pillow-emboss' ? -1 : 1
+  const strength = Math.max(0, effect.depth) / 100 * 4
+
+  const highlightColor = parseColor(effect.highlightColor)
+  const highlightAlpha = colorOpacity(effect.highlightColor)
+  const shadowColor = parseColor(effect.shadowColor)
+  const shadowAlpha = colorOpacity(effect.shadowColor)
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x
+      const mask = sourceAlpha[index]! / 255
+      const weight = effect.style === 'inner-bevel' ? mask : effect.style === 'outer-bevel' ? 1 - mask : 1
+      if (weight <= 0) continue
+
+      const left = bevelHeightAt(ramp, width, height, x - 1, y)
+      const right = bevelHeightAt(ramp, width, height, x + 1, y)
+      const top = bevelHeightAt(ramp, width, height, x, y - 1)
+      const bottom = bevelHeightAt(ramp, width, height, x, y + 1)
+      const dx = (right - left) / 2 * strength * directionSign * styleSign
+      const dy = (bottom - top) / 2 * strength * directionSign * styleSign
+
+      const normalX = -dx
+      const normalY = -dy
+      const normalZ = 1
+      const length = Math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ)
+      const dot = (normalX * lightX + normalY * lightY + normalZ * lightZ) / length
+      if (dot === 0) continue
+
+      const intensity = contourValue(effect.glossContour, clamp01(Math.abs(dot)))
+      const ranged = effect.contourEnabled
+        ? contourValue(effect.contour, clamp01(intensity * 100 / effect.contourRange))
+        : intensity
+
+      if (dot > 0) {
+        const alpha = Math.round(255 * ranged * weight * highlightAlpha * effect.highlightOpacity / 100 * effect.opacity / 100)
+        compositePixel(target, index * 4, highlightColor, alpha, effect.highlightMode)
+      } else {
+        const alpha = Math.round(255 * ranged * weight * shadowAlpha * effect.shadowOpacity / 100 * effect.opacity / 100)
+        compositePixel(target, index * 4, shadowColor, alpha, effect.shadowMode)
+      }
+    }
+  }
+}
+
 function renderStroke(
   target: Uint8ClampedArray,
   sourceAlpha: Uint8ClampedArray,
   width: number,
   height: number,
   effect: StrokeEffect,
-  resolutionScale: number
+  resolutionScale: number,
+  pattern: LayerStyleRaster | undefined
 ) {
-  if (effect.paint.type === 'pattern') return
+  if (effect.paint.type === 'pattern' && !effect.paint.pattern) return
+  if (effect.paint.type === 'pattern' && !pattern) throw new LayerStylePatternMissingError('stroke')
   const thickness = Math.max(1, Math.round(effect.size * resolutionScale))
   const outsideRadius = effect.position === 'outside'
     ? thickness
@@ -525,15 +672,18 @@ function renderStroke(
     ? { color: parseColor(effect.paint.color), opacity: colorOpacity(effect.paint.color) }
     : undefined
   const gradientPaint = effect.paint.type === 'gradient' ? effect.paint : undefined
+  const patternPaint = effect.paint.type === 'pattern' ? effect.paint : undefined
   for (let index = 0; index < sourceAlpha.length; index++) {
     const mask = Math.max(0, expanded[index]! - eroded[index]!) / 255
     if (mask <= 0) continue
     const x = index % width
     const y = Math.floor(index / width)
-    const paint = solidPaint ?? gradientValue(
-      gradientPaint!.gradient,
-      strokeGradientPosition(gradientPaint!, x, y, width, height)
-    )
+    const paint = solidPaint ?? (patternPaint
+      ? patternSample(pattern!, x, y, patternPaint.angle, patternPaint.scale)
+      : gradientValue(
+          gradientPaint!.gradient,
+          spatialGradientPosition(gradientPaint!, x, y, width, height)
+        ))
     const alpha = Math.round(255 * mask * paint.opacity * effect.opacity / 100)
     compositePixel(target, index * 4, paint.color, alpha, effect.blendMode)
   }
@@ -551,6 +701,77 @@ function renderColorOverlay(
     if (mask <= 0) continue
     const alpha = Math.round(255 * mask * colorAlpha * effect.opacity / 100)
     compositePixel(target, index * 4, color, alpha, effect.blendMode)
+  }
+}
+
+function renderSatin(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: SatinEffect,
+  resolutionScale: number
+) {
+  const radius = Math.max(0, Math.round(effect.size * resolutionScale))
+  const radians = effect.angle * Math.PI / 180
+  const distance = effect.distance * resolutionScale
+  const dx = Math.round(Math.cos(radians) * distance)
+  const dy = Math.round(-Math.sin(radians) * distance)
+  const shiftedPositive = offsetAlpha(sourceAlpha, width, height, dx, dy)
+  const shiftedNegative = offsetAlpha(sourceAlpha, width, height, -dx, -dy)
+  const blurredPositive = blurAlpha(shiftedPositive, width, height, radius, false)
+  const blurredNegative = blurAlpha(shiftedNegative, width, height, radius, false)
+  const color = parseColor(effect.color)
+  const colorAlpha = colorOpacity(effect.color)
+  for (let index = 0; index < sourceAlpha.length; index++) {
+    const mask = sourceAlpha[index]! / 255
+    if (mask <= 0) continue
+    let diff = (blurredPositive[index]! - blurredNegative[index]!) / 255
+    if (effect.invert) diff = -diff
+    const raw = clamp01(diff)
+    const contoured = Math.min(mask, contourValue(effect.contour, raw))
+    const alpha = Math.round(255 * contoured * colorAlpha * effect.opacity / 100 * mask)
+    compositePixel(target, index * 4, color, alpha, effect.blendMode)
+  }
+}
+
+function renderGradientOverlay(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: GradientOverlayEffect
+) {
+  for (let index = 0; index < sourceAlpha.length; index++) {
+    const mask = sourceAlpha[index]! / 255
+    if (mask <= 0) continue
+    const x = index % width
+    const y = Math.floor(index / width)
+    const position = spatialGradientPosition(effect, x, y, width, height)
+    const paint = gradientValue(effect.gradient, position)
+    const alpha = Math.round(255 * mask * paint.opacity * effect.opacity / 100)
+    compositePixel(target, index * 4, paint.color, alpha, effect.blendMode)
+  }
+}
+
+function renderPatternOverlay(
+  target: Uint8ClampedArray,
+  sourceAlpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: PatternOverlayEffect,
+  pattern: LayerStyleRaster | undefined
+) {
+  if (!effect.pattern) return
+  if (!pattern) throw new LayerStylePatternMissingError('pattern-overlay')
+  for (let index = 0; index < sourceAlpha.length; index++) {
+    const mask = sourceAlpha[index]! / 255
+    if (mask <= 0) continue
+    const x = index % width
+    const y = Math.floor(index / width)
+    const sample = patternSample(pattern, x, y, effect.angle, effect.scale)
+    const alpha = Math.round(255 * mask * sample.opacity * effect.opacity / 100)
+    compositePixel(target, index * 4, sample.color, alpha, effect.blendMode)
   }
 }
 
@@ -582,7 +803,8 @@ export function composeLayerStyleRaster(
   source: LayerStyleRaster,
   stylesValue: LayerStyleConfig,
   globalLightValue: LayerStyleGlobalLight,
-  resolutionScale = 1
+  resolutionScale = 1,
+  patterns?: LayerStylePatternRasters
 ): ComposedLayerStyleRaster {
   if (!Number.isInteger(source.width) || !Number.isInteger(source.height) || source.width <= 0 || source.height <= 0) {
     throw new Error('Dimensões de raster inválidas para composição.')
@@ -620,12 +842,22 @@ export function composeLayerStyleRaster(
   for (const effect of effects) {
     if (effect.type === 'inner-shadow') renderInnerShadow(data, sourceAlpha, width, height, effect, globalLight, scale)
     else if (effect.type === 'inner-glow') renderInnerGlow(data, sourceAlpha, width, height, effect, scale)
+    else if (effect.type === 'satin') renderSatin(data, sourceAlpha, width, height, effect, scale)
   }
   for (const effect of effects) {
     if (effect.type === 'color-overlay') renderColorOverlay(data, sourceAlpha, effect)
+    else if (effect.type === 'gradient-overlay') renderGradientOverlay(data, sourceAlpha, width, height, effect)
+    else if (effect.type === 'pattern-overlay') {
+      renderPatternOverlay(data, sourceAlpha, width, height, effect, effect.pattern && patterns?.get(effect.pattern.id))
+    }
   }
   for (const effect of effects) {
-    if (effect.type === 'stroke') renderStroke(data, sourceAlpha, width, height, effect, scale)
+    if (effect.type === 'bevel-emboss') {
+      renderBevelEmboss(data, sourceAlpha, width, height, effect, globalLight, scale, effect.texture && patterns?.get(effect.texture.id))
+    } else if (effect.type === 'stroke') {
+      const patternId = effect.paint.type === 'pattern' ? effect.paint.pattern?.id : undefined
+      renderStroke(data, sourceAlpha, width, height, effect, scale, patternId ? patterns?.get(patternId) : undefined)
+    }
   }
   return {
     width,

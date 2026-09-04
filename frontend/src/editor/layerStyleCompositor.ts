@@ -49,8 +49,12 @@ const RASTER_SUPPORTED_EFFECTS = new Set<LayerEffectType>([
   'inner-shadow',
   'outer-glow',
   'inner-glow',
+  'satin',
   'color-overlay',
-  'stroke'
+  'gradient-overlay',
+  'pattern-overlay',
+  'stroke',
+  'bevel-emboss'
 ])
 
 const EFFECT_STAGE: Readonly<Record<LayerEffectType, Exclude<LayerStyleCompositionStage, 'content'>>> = Object.freeze({
@@ -110,8 +114,7 @@ export function activeLayerStyleEffects(styles: LayerStyleConfig) {
 }
 
 export function layerStyleEffectIsRasterSupported(effect: LayerEffect) {
-  return RASTER_SUPPORTED_EFFECTS.has(effect.type) &&
-    !(effect.type === 'stroke' && effect.paint.type === 'pattern')
+  return RASTER_SUPPORTED_EFFECTS.has(effect.type)
 }
 
 export function buildLayerStylePipeline(styles: LayerStyleConfig): LayerStylePipeline {

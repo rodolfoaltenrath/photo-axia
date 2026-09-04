@@ -18,22 +18,38 @@ import { ByteBudgetLruCache, LatestGenerationByKey } from '../src/editor/renderC
 
 const globalLight = { angle: 0, altitude: 30 }
 
+function testPatternAsset(id) {
+  return {
+    id,
+    name: 'Padrão de teste',
+    width: 4,
+    height: 4,
+    mimeType: 'image/png',
+    sourceUrl: `blob:test-${id}`
+  }
+}
+
 function styles(effects = [], fillOpacity = 100) {
   return normalizeLayerStyleConfig({ enabled: true, fillOpacity, effects })
 }
 
 test('mantém uma única regra de efeitos aceitos pelo compositor raster', () => {
-  for (const type of ['drop-shadow', 'inner-shadow', 'outer-glow', 'inner-glow', 'color-overlay']) {
+  for (const type of [
+    'drop-shadow', 'inner-shadow', 'outer-glow', 'inner-glow', 'satin',
+    'color-overlay', 'gradient-overlay', 'pattern-overlay', 'bevel-emboss'
+  ]) {
     assert.equal(layerStyleEffectIsRasterSupported(createDefaultLayerEffect(type, `supported-${type}`)), true)
   }
   const colorStroke = createDefaultLayerEffect('stroke', 'supported-stroke')
   assert.equal(layerStyleEffectIsRasterSupported(colorStroke), true)
   const patternStroke = {
     ...colorStroke,
-    paint: { type: 'pattern', patternId: 'pattern', scale: 100, linkWithLayer: true }
+    paint: { type: 'pattern', pattern: undefined, angle: 0, scale: 100, linkWithLayer: true }
   }
-  assert.equal(layerStyleEffectIsRasterSupported(patternStroke), false)
-  assert.equal(layerStyleEffectIsRasterSupported(createDefaultLayerEffect('gradient-overlay', 'future-gradient')), false)
+  assert.equal(layerStyleEffectIsRasterSupported(patternStroke), true)
+  const texturedBevel = createDefaultLayerEffect('bevel-emboss', 'textured-bevel')
+  texturedBevel.textureEnabled = true
+  assert.equal(layerStyleEffectIsRasterSupported(texturedBevel), true)
 })
 
 test('formaliza a ordem estável dos estágios e preserva a ordem entre efeitos do mesmo estágio', () => {
@@ -183,12 +199,61 @@ test('compositor raster preserva dimensões e aplica fill quando não há efeito
   assert.deepEqual([...result.data], [10, 20, 30, 50])
 })
 
-test('compositor raster recusa efeitos ativos fora do pacote implementado', () => {
+test('sobreposição de padrão sem imagem escolhida não produz efeito nem exige dados decodificados', () => {
   const source = { width: 1, height: 1, data: new Uint8ClampedArray([0, 0, 0, 255]) }
+  const overlay = createDefaultLayerEffect('pattern-overlay', 'overlay-empty')
+  const result = composeLayerStyleRaster(source, styles([overlay]), globalLight)
+  assert.deepEqual([...result.data], [0, 0, 0, 255])
+})
+
+test('compositor raster recusa compor quando o padrão referenciado não foi decodificado', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([0, 0, 0, 255]) }
+  const overlay = createDefaultLayerEffect('pattern-overlay', 'overlay-missing')
+  overlay.pattern = testPatternAsset('missing-pattern')
   assert.throws(
-    () => composeLayerStyleRaster(source, styles([createDefaultLayerEffect('gradient-overlay', 'overlay')]), globalLight),
-    /gradient-overlay/
+    () => composeLayerStyleRaster(source, styles([overlay]), globalLight),
+    /pattern-overlay/
   )
+})
+
+test('compositor raster recusa bisel e entalhe quando a textura referenciada não foi decodificada', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([0, 0, 0, 255]) }
+  const bevel = createDefaultLayerEffect('bevel-emboss', 'textured')
+  bevel.textureEnabled = true
+  bevel.texture = testPatternAsset('missing-texture')
+  assert.throws(
+    () => composeLayerStyleRaster(source, styles([bevel]), globalLight),
+    /bevel-emboss/
+  )
+})
+
+test('compositor raster recusa traçado com padrão referenciado que não foi decodificado', () => {
+  const source = { width: 4, height: 4, data: new Uint8ClampedArray(64).fill(255) }
+  const stroke = createDefaultLayerEffect('stroke', 'stroke-missing-pattern')
+  stroke.paint = { type: 'pattern', pattern: testPatternAsset('missing-stroke-pattern'), angle: 0, scale: 100, linkWithLayer: true }
+  assert.throws(
+    () => composeLayerStyleRaster(source, styles([stroke]), globalLight),
+    /stroke/
+  )
+})
+
+test('sobreposição de padrão amostra o padrão decodificado, recorta pela máscara e tiling é determinístico', () => {
+  const source = { width: 4, height: 1, data: new Uint8ClampedArray(16).fill(255) }
+  const overlay = createDefaultLayerEffect('pattern-overlay', 'overlay-sample')
+  overlay.pattern = testPatternAsset('checker')
+  overlay.opacity = 100
+  overlay.scale = 100
+  overlay.angle = 0
+  const patternData = new Uint8ClampedArray(2 * 2 * 4)
+  patternData.set([255, 0, 0, 255], 0)
+  patternData.set([0, 255, 0, 255], 4)
+  patternData.set([0, 0, 255, 255], 8)
+  patternData.set([255, 255, 0, 255], 12)
+  const patterns = new Map([['checker', { width: 2, height: 2, data: patternData }]])
+  const first = composeLayerStyleRaster(source, styles([overlay]), globalLight, 1, patterns)
+  const second = composeLayerStyleRaster(source, styles([overlay]), globalLight, 1, patterns)
+  assert.deepEqual([...first.data], [...second.data])
+  assert.notDeepEqual([...first.data.slice(0, 4)], [...first.data.slice(4, 8)])
 })
 
 test('brilho externo com ruído produz raster determinístico', () => {
@@ -335,7 +400,7 @@ test('traçado interno permanece recortado e não cobre o centro além da espess
   assert.equal(result.data[(1 * 3 + 1) * 4 + 3], 0)
 })
 
-test('traçado aceita gradiente espacial e recusa padrão até o motor compartilhado', () => {
+test('traçado aceita gradiente espacial e não produz efeito com padrão sem imagem escolhida', () => {
   const source = { width: 3, height: 1, data: new Uint8ClampedArray(3 * 4).fill(255) }
   const stroke = createDefaultLayerEffect('stroke', 'gradient-stroke')
   stroke.position = 'outside'
@@ -355,8 +420,9 @@ test('traçado aceita gradiente espacial e recusa padrão até o motor compartil
   assert.ok(left[0] > left[2])
   assert.ok(right[2] > right[0])
 
-  stroke.paint = { type: 'pattern' }
-  assert.throws(() => composeLayerStyleRaster(source, styles([stroke]), globalLight), /stroke/)
+  stroke.paint = { type: 'pattern', pattern: undefined, angle: 0, scale: 100, linkWithLayer: true }
+  const withoutPattern = composeLayerStyleRaster(source, styles([stroke], 0), globalLight)
+  assert.deepEqual([...withoutPattern.data], [...new Uint8ClampedArray(withoutPattern.width * withoutPattern.height * 4)])
 })
 
 test('sobreposição de cor respeita a máscara e permanece visível com fill zero', () => {
@@ -386,4 +452,195 @@ test('sobreposição de cor é composta antes do traçado superior', () => {
   const result = composeLayerStyleRaster(source, styles([overlay, stroke]), globalLight)
 
   assert.deepEqual([...result.data], [0, 0, 255, 255])
+})
+
+test('acetinado não expande os limites do raster e respeita a máscara alfa', () => {
+  const width = 6
+  const height = 1
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let x = 1; x < 5; x++) {
+    const offset = x * 4
+    data[offset] = 0
+    data[offset + 1] = 0
+    data[offset + 2] = 0
+    data[offset + 3] = 255
+  }
+  const satin = createDefaultLayerEffect('satin', 'satin-bounds')
+  satin.color = '#ff0000'
+  satin.distance = 2
+  satin.size = 1
+  const result = composeLayerStyleRaster({ width, height, data }, styles([satin]), globalLight)
+
+  assert.deepEqual(
+    { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
+    { width, height, offsetX: 0, offsetY: 0 }
+  )
+  assert.equal(result.data[3], 0)
+  assert.equal(result.data[(width - 1) * 4 + 3], 0)
+})
+
+test('acetinado permanece visível com fill zero e inverter altera o resultado', () => {
+  const width = 6
+  const height = 1
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let x = 1; x < 5; x++) {
+    const offset = x * 4
+    data[offset] = 10
+    data[offset + 1] = 20
+    data[offset + 2] = 30
+    data[offset + 3] = 255
+  }
+  const baseSatin = createDefaultLayerEffect('satin', 'satin-invert')
+  baseSatin.color = '#ff0000'
+  baseSatin.angle = 0
+  baseSatin.distance = 2
+  baseSatin.size = 1
+  baseSatin.opacity = 100
+
+  const normal = composeLayerStyleRaster({ width, height, data }, styles([baseSatin], 0), globalLight)
+  const normalAlphaSum = normal.data.reduce((sum, value, index) => index % 4 === 3 ? sum + value : sum, 0)
+  assert.ok(normalAlphaSum > 0)
+
+  const inverted = composeLayerStyleRaster(
+    { width, height, data },
+    styles([{ ...baseSatin, invert: !baseSatin.invert }], 0),
+    globalLight
+  )
+  assert.notDeepEqual([...normal.data], [...inverted.data])
+})
+
+test('sobreposição de gradiente respeita a máscara e permanece visível com fill zero', () => {
+  const data = new Uint8ClampedArray([
+    10, 20, 30, 0,
+    10, 20, 30, 255
+  ])
+  const overlay = createDefaultLayerEffect('gradient-overlay', 'gradient-mask')
+  overlay.gradient = {
+    type: 'linear',
+    colorStops: [{ position: 0, color: '#ff0000' }, { position: 1, color: '#ff0000' }],
+    opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }],
+    interpolation: 'srgb'
+  }
+  overlay.opacity = 50
+  overlay.blendMode = 'normal'
+  const result = composeLayerStyleRaster({ width: 2, height: 1, data }, styles([overlay], 0), globalLight)
+
+  assert.deepEqual([...result.data.slice(0, 4)], [0, 0, 0, 0])
+  assert.deepEqual([...result.data.slice(4, 8)], [255, 0, 0, 128])
+})
+
+test('sobreposição de gradiente não expande os limites do raster e varia espacialmente', () => {
+  const source = { width: 4, height: 1, data: new Uint8ClampedArray(16).fill(255) }
+  const overlay = createDefaultLayerEffect('gradient-overlay', 'gradient-spatial')
+  overlay.angle = 0
+  overlay.gradient = {
+    type: 'linear',
+    colorStops: [{ position: 0, color: '#000000' }, { position: 1, color: '#ffffff' }],
+    opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }],
+    interpolation: 'srgb'
+  }
+  const result = composeLayerStyleRaster(source, styles([overlay]), globalLight)
+
+  assert.deepEqual(
+    { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
+    { width: 4, height: 1, offsetX: 0, offsetY: 0 }
+  )
+  const leftPixel = result.data[0]
+  const rightPixel = result.data[(result.width - 1) * 4]
+  assert.ok(rightPixel > leftPixel)
+})
+
+test('sobreposição de gradiente é composta antes do traçado superior', () => {
+  const source = { width: 1, height: 1, data: new Uint8ClampedArray([255, 255, 255, 255]) }
+  const overlay = createDefaultLayerEffect('gradient-overlay', 'gradient-order')
+  overlay.opacity = 100
+  overlay.gradient = {
+    type: 'linear',
+    colorStops: [{ position: 0, color: '#ff0000' }, { position: 1, color: '#ff0000' }],
+    opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }],
+    interpolation: 'srgb'
+  }
+  const stroke = createDefaultLayerEffect('stroke', 'stroke-order-gradient')
+  stroke.position = 'inside'
+  stroke.size = 1
+  stroke.paint = { type: 'color', color: '#0000ff' }
+  const result = composeLayerStyleRaster(source, styles([overlay, stroke]), globalLight)
+
+  assert.deepEqual([...result.data], [0, 0, 255, 255])
+})
+
+test('bisel interno não expande os limites, mas bisel externo e entalhe expandem', () => {
+  const source = { width: 6, height: 6, data: new Uint8ClampedArray(144).fill(0) }
+  for (let y = 1; y < 5; y++) {
+    for (let x = 1; x < 5; x++) source.data[(y * 6 + x) * 4 + 3] = 255
+  }
+  const inner = createDefaultLayerEffect('bevel-emboss', 'inner')
+  inner.style = 'inner-bevel'
+  inner.size = 2
+  const innerResult = composeLayerStyleRaster(source, styles([inner]), globalLight)
+  assert.deepEqual(
+    { width: innerResult.width, height: innerResult.height },
+    { width: 6, height: 6 }
+  )
+
+  const outer = createDefaultLayerEffect('bevel-emboss', 'outer')
+  outer.style = 'outer-bevel'
+  outer.size = 2
+  const outerResult = composeLayerStyleRaster(source, styles([outer]), globalLight)
+  assert.ok(outerResult.width > 6)
+  assert.ok(outerResult.height > 6)
+
+  const emboss = createDefaultLayerEffect('bevel-emboss', 'emboss')
+  emboss.style = 'emboss'
+  emboss.size = 2
+  const embossResult = composeLayerStyleRaster(source, styles([emboss]), globalLight)
+  assert.ok(embossResult.width > 6)
+  assert.ok(embossResult.height > 6)
+})
+
+test('bisel e entalhe produzem resultado determinístico e pintam realce ou sombra na borda', () => {
+  const source = { width: 8, height: 8, data: new Uint8ClampedArray(256).fill(0) }
+  for (let y = 1; y < 7; y++) {
+    for (let x = 1; x < 7; x++) source.data[(y * 8 + x) * 4 + 3] = 255
+  }
+  const bevel = createDefaultLayerEffect('bevel-emboss', 'shaded')
+  bevel.style = 'inner-bevel'
+  bevel.size = 2
+  bevel.depth = 200
+  bevel.angle = 0
+  bevel.altitude = 30
+  bevel.useGlobalLight = false
+  bevel.highlightColor = '#ffffff'
+  bevel.highlightOpacity = 100
+  bevel.shadowColor = '#000000'
+  bevel.shadowOpacity = 100
+
+  const first = composeLayerStyleRaster(source, styles([bevel]), globalLight)
+  const second = composeLayerStyleRaster(source, styles([bevel]), globalLight)
+  assert.deepEqual([...first.data], [...second.data])
+
+  let edgeAlphaSum = 0
+  for (let y = 1; y < 7; y++) {
+    edgeAlphaSum += first.data[(y * 8 + 1) * 4 + 3]
+    edgeAlphaSum += first.data[(y * 8 + 6) * 4 + 3]
+  }
+  assert.ok(edgeAlphaSum > 0)
+})
+
+test('direção do bisel inverte o resultado da luz e a textura é recusada explicitamente', () => {
+  const source = { width: 8, height: 8, data: new Uint8ClampedArray(256).fill(0) }
+  for (let y = 1; y < 7; y++) {
+    for (let x = 1; x < 7; x++) source.data[(y * 8 + x) * 4 + 3] = 255
+  }
+  const up = createDefaultLayerEffect('bevel-emboss', 'direction-up')
+  up.style = 'inner-bevel'
+  up.size = 2
+  up.depth = 200
+  up.direction = 'up'
+  up.useGlobalLight = false
+
+  const down = { ...up, direction: 'down' }
+  const upResult = composeLayerStyleRaster(source, styles([up]), globalLight)
+  const downResult = composeLayerStyleRaster(source, styles([down]), globalLight)
+  assert.notDeepEqual([...upResult.data], [...downResult.data])
 })

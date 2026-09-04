@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import LayerStyleColorOverlayControls from './layerStyles/LayerStyleColorOverlayControls.vue'
+import LayerStyleBevelEmbossControls from './layerStyles/LayerStyleBevelEmbossControls.vue'
+import LayerStyleGradientOverlayControls from './layerStyles/LayerStyleGradientOverlayControls.vue'
+import LayerStylePatternOverlayControls from './layerStyles/LayerStylePatternOverlayControls.vue'
+import LayerStylePatternPicker from './layerStyles/LayerStylePatternPicker.vue'
+import LayerStyleSatinControls from './layerStyles/LayerStyleSatinControls.vue'
 import {
   centerFloatingWindow,
   fitFloatingWindow,
@@ -12,19 +17,25 @@ import {
 import {
   cloneLayerStyleConfig,
   createDefaultLayerEffect,
+  layerStylePatternAssets,
   normalizeLayerEffect,
   normalizeLayerStyleFillOpacity,
   normalizeLayerStyleGlobalLight
 } from '../editor/layerStyles'
 import type {
+  BevelEmbossEffect,
   ColorOverlayEffect,
   DropShadowEffect,
+  GradientOverlayEffect,
   InnerGlowEffect,
   InnerShadowEffect,
   LayerStyleConfig,
   LayerStyleGlobalLight,
   LayerStyleGradient,
+  LayerStylePatternAsset,
   OuterGlowEffect,
+  PatternOverlayEffect,
+  SatinEffect,
   StrokeEffect
 } from '../types/editor'
 
@@ -52,7 +63,11 @@ const dropShadowSettings = shallowRef(createDefaultLayerEffect('drop-shadow') as
 const innerShadowSettings = shallowRef(createDefaultLayerEffect('inner-shadow') as InnerShadowEffect)
 const strokeSettings = shallowRef(createDefaultLayerEffect('stroke') as StrokeEffect)
 const colorOverlaySettings = shallowRef(createDefaultLayerEffect('color-overlay') as ColorOverlayEffect)
-const selectedCategory = ref<'blending' | 'drop-shadow' | 'inner-shadow' | 'outer-glow' | 'inner-glow' | 'stroke' | 'color-overlay'>('blending')
+const gradientOverlaySettings = shallowRef(createDefaultLayerEffect('gradient-overlay') as GradientOverlayEffect)
+const patternOverlaySettings = shallowRef(createDefaultLayerEffect('pattern-overlay') as PatternOverlayEffect)
+const satinSettings = shallowRef(createDefaultLayerEffect('satin') as SatinEffect)
+const bevelEmbossSettings = shallowRef(createDefaultLayerEffect('bevel-emboss') as BevelEmbossEffect)
+const selectedCategory = ref<'blending' | 'drop-shadow' | 'inner-shadow' | 'outer-glow' | 'inner-glow' | 'stroke' | 'color-overlay' | 'gradient-overlay' | 'pattern-overlay' | 'satin' | 'bevel-emboss'>('blending')
 const previewEnabled = ref(true)
 let outerGlowOriginallyPresent = false
 let innerGlowOriginallyPresent = false
@@ -60,6 +75,11 @@ let dropShadowOriginallyPresent = false
 let innerShadowOriginallyPresent = false
 let strokeOriginallyPresent = false
 let colorOverlayOriginallyPresent = false
+let gradientOverlayOriginallyPresent = false
+let patternOverlayOriginallyPresent = false
+let satinOriginallyPresent = false
+let bevelEmbossOriginallyPresent = false
+const sessionPatternUrls = new Set<string>()
 
 const DEFAULT_DIALOG_SIZE = { width: 680, height: 580 }
 const MINIMUM_DIALOG_SIZE = { width: 560, height: 420 }
@@ -140,6 +160,22 @@ const colorOverlay = computed(() => draft.value.effects.find(
   (effect): effect is ColorOverlayEffect => effect.type === 'color-overlay'
 ))
 const colorOverlayActive = computed(() => Boolean(colorOverlay.value?.enabled))
+const gradientOverlay = computed(() => draft.value.effects.find(
+  (effect): effect is GradientOverlayEffect => effect.type === 'gradient-overlay'
+))
+const gradientOverlayActive = computed(() => Boolean(gradientOverlay.value?.enabled))
+const patternOverlay = computed(() => draft.value.effects.find(
+  (effect): effect is PatternOverlayEffect => effect.type === 'pattern-overlay'
+))
+const patternOverlayActive = computed(() => Boolean(patternOverlay.value?.enabled))
+const satin = computed(() => draft.value.effects.find(
+  (effect): effect is SatinEffect => effect.type === 'satin'
+))
+const satinActive = computed(() => Boolean(satin.value?.enabled))
+const bevelEmboss = computed(() => draft.value.effects.find(
+  (effect): effect is BevelEmbossEffect => effect.type === 'bevel-emboss'
+))
+const bevelEmbossActive = computed(() => Boolean(bevelEmboss.value?.enabled))
 
 function publishPreview() {
   if (previewEnabled.value) emit('preview', cloneLayerStyleConfig(draft.value), { ...draftGlobalLight.value })
@@ -397,9 +433,22 @@ function toggleStroke(event: Event) {
   publishPreview()
 }
 
-function setStrokePaint(type: 'color' | 'gradient') {
+function setStrokePaint(type: 'color' | 'gradient' | 'pattern') {
   if (type === 'color') {
     updateStroke({ paint: { type: 'color', color: strokeColor.value } })
+    return
+  }
+  if (type === 'pattern') {
+    const previous = strokeSettings.value.paint
+    updateStroke({
+      paint: {
+        type: 'pattern',
+        pattern: previous.type === 'pattern' ? previous.pattern : undefined,
+        angle: 0,
+        scale: 100,
+        linkWithLayer: true
+      }
+    })
     return
   }
   updateStroke({
@@ -441,6 +490,19 @@ function updateStrokeGradientOptions(patch: Partial<{ angle: number; scale: numb
   updateStroke({ paint: { ...paint, ...patch } })
 }
 
+function updateStrokePattern(asset: LayerStylePatternAsset) {
+  const paint = strokeSettings.value.paint
+  if (paint.type !== 'pattern') return
+  sessionPatternUrls.add(asset.sourceUrl)
+  updateStroke({ paint: { ...paint, pattern: asset } })
+}
+
+function updateStrokePatternOptions(patch: Partial<{ angle: number; scale: number }>) {
+  const paint = strokeSettings.value.paint
+  if (paint.type !== 'pattern') return
+  updateStroke({ paint: { ...paint, ...patch } })
+}
+
 function normalizedColorOverlay(value: ColorOverlayEffect) {
   return normalizeLayerEffect(value) as ColorOverlayEffect
 }
@@ -471,6 +533,150 @@ function toggleColorOverlay(event: Event) {
     replaceColorOverlay(colorOverlaySettings.value)
   }
   publishPreview()
+}
+
+function normalizedGradientOverlay(value: GradientOverlayEffect) {
+  return normalizeLayerEffect(value) as GradientOverlayEffect
+}
+
+function replaceGradientOverlay(effect: GradientOverlayEffect) {
+  const index = draft.value.effects.findIndex((item) => item.id === effect.id)
+  const effects = [...draft.value.effects]
+  if (index >= 0) effects[index] = effect
+  else effects.push(effect)
+  draft.value = { ...draft.value, effects }
+}
+
+function updateGradientOverlay(patch: Partial<GradientOverlayEffect>) {
+  gradientOverlaySettings.value = normalizedGradientOverlay({ ...gradientOverlaySettings.value, ...patch })
+  if (gradientOverlay.value) replaceGradientOverlay(gradientOverlaySettings.value)
+  publishPreview()
+}
+
+function toggleGradientOverlay(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked
+  gradientOverlaySettings.value = normalizedGradientOverlay({ ...gradientOverlaySettings.value, enabled })
+  if (!enabled && !gradientOverlayOriginallyPresent) {
+    draft.value = {
+      ...draft.value,
+      effects: draft.value.effects.filter((effect) => effect.id !== gradientOverlaySettings.value.id)
+    }
+  } else {
+    replaceGradientOverlay(gradientOverlaySettings.value)
+  }
+  publishPreview()
+}
+
+function normalizedPatternOverlay(value: PatternOverlayEffect) {
+  return normalizeLayerEffect(value) as PatternOverlayEffect
+}
+
+function replacePatternOverlay(effect: PatternOverlayEffect) {
+  const index = draft.value.effects.findIndex((item) => item.id === effect.id)
+  const effects = [...draft.value.effects]
+  if (index >= 0) effects[index] = effect
+  else effects.push(effect)
+  draft.value = { ...draft.value, effects }
+}
+
+function updatePatternOverlay(patch: Partial<PatternOverlayEffect>) {
+  if (patch.pattern) sessionPatternUrls.add(patch.pattern.sourceUrl)
+  patternOverlaySettings.value = normalizedPatternOverlay({ ...patternOverlaySettings.value, ...patch })
+  if (patternOverlay.value) replacePatternOverlay(patternOverlaySettings.value)
+  publishPreview()
+}
+
+function togglePatternOverlay(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked
+  patternOverlaySettings.value = normalizedPatternOverlay({ ...patternOverlaySettings.value, enabled })
+  if (!enabled && !patternOverlayOriginallyPresent) {
+    draft.value = {
+      ...draft.value,
+      effects: draft.value.effects.filter((effect) => effect.id !== patternOverlaySettings.value.id)
+    }
+  } else {
+    replacePatternOverlay(patternOverlaySettings.value)
+  }
+  publishPreview()
+}
+
+function normalizedSatin(value: SatinEffect) {
+  return normalizeLayerEffect(value) as SatinEffect
+}
+
+function replaceSatin(effect: SatinEffect) {
+  const index = draft.value.effects.findIndex((item) => item.id === effect.id)
+  const effects = [...draft.value.effects]
+  if (index >= 0) effects[index] = effect
+  else effects.push(effect)
+  draft.value = { ...draft.value, effects }
+}
+
+function updateSatin(patch: Partial<SatinEffect>) {
+  satinSettings.value = normalizedSatin({ ...satinSettings.value, ...patch })
+  if (satin.value) replaceSatin(satinSettings.value)
+  publishPreview()
+}
+
+function toggleSatin(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked
+  satinSettings.value = normalizedSatin({ ...satinSettings.value, enabled })
+  if (!enabled && !satinOriginallyPresent) {
+    draft.value = {
+      ...draft.value,
+      effects: draft.value.effects.filter((effect) => effect.id !== satinSettings.value.id)
+    }
+  } else {
+    replaceSatin(satinSettings.value)
+  }
+  publishPreview()
+}
+
+function normalizedBevelEmboss(value: BevelEmbossEffect) {
+  return normalizeLayerEffect(value) as BevelEmbossEffect
+}
+
+function replaceBevelEmboss(effect: BevelEmbossEffect) {
+  const index = draft.value.effects.findIndex((item) => item.id === effect.id)
+  const effects = [...draft.value.effects]
+  if (index >= 0) effects[index] = effect
+  else effects.push(effect)
+  draft.value = { ...draft.value, effects }
+}
+
+function updateBevelEmboss(patch: Partial<BevelEmbossEffect>) {
+  bevelEmbossSettings.value = normalizedBevelEmboss({ ...bevelEmbossSettings.value, ...patch })
+  if (bevelEmboss.value) replaceBevelEmboss(bevelEmbossSettings.value)
+  publishPreview()
+}
+
+function toggleBevelEmboss(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked
+  bevelEmbossSettings.value = normalizedBevelEmboss({ ...bevelEmbossSettings.value, enabled })
+  if (!enabled && !bevelEmbossOriginallyPresent) {
+    draft.value = {
+      ...draft.value,
+      effects: draft.value.effects.filter((effect) => effect.id !== bevelEmbossSettings.value.id)
+    }
+  } else {
+    replaceBevelEmboss(bevelEmbossSettings.value)
+  }
+  publishPreview()
+}
+
+function updateBevelEmbossAngle(value: number) {
+  const angle = normalizeLayerStyleGlobalLight({ ...draftGlobalLight.value, angle: value }).angle
+  bevelEmbossSettings.value = normalizedBevelEmboss({ ...bevelEmbossSettings.value, angle })
+  if (bevelEmbossSettings.value.useGlobalLight) {
+    draftGlobalLight.value = { ...draftGlobalLight.value, angle }
+  }
+  if (bevelEmboss.value) replaceBevelEmboss(bevelEmbossSettings.value)
+  publishPreview()
+}
+
+function selectBevelEmbossTexture(asset: LayerStylePatternAsset) {
+  sessionPatternUrls.add(asset.sourceUrl)
+  updateBevelEmboss({ texture: asset })
 }
 
 function togglePreview(event: Event) {
@@ -507,10 +713,26 @@ function restoreDefault() {
     const replacement = createDefaultLayerEffect('stroke', strokeSettings.value.id) as StrokeEffect
     strokeSettings.value = { ...replacement, enabled: strokeActive.value }
     if (stroke.value) replaceStroke(strokeSettings.value)
-  } else {
+  } else if (selectedCategory.value === 'color-overlay') {
     const replacement = createDefaultLayerEffect('color-overlay', colorOverlaySettings.value.id) as ColorOverlayEffect
     colorOverlaySettings.value = { ...replacement, enabled: colorOverlayActive.value }
     if (colorOverlay.value) replaceColorOverlay(colorOverlaySettings.value)
+  } else if (selectedCategory.value === 'gradient-overlay') {
+    const replacement = createDefaultLayerEffect('gradient-overlay', gradientOverlaySettings.value.id) as GradientOverlayEffect
+    gradientOverlaySettings.value = { ...replacement, enabled: gradientOverlayActive.value }
+    if (gradientOverlay.value) replaceGradientOverlay(gradientOverlaySettings.value)
+  } else if (selectedCategory.value === 'pattern-overlay') {
+    const replacement = createDefaultLayerEffect('pattern-overlay', patternOverlaySettings.value.id) as PatternOverlayEffect
+    patternOverlaySettings.value = { ...replacement, enabled: patternOverlayActive.value, pattern: patternOverlaySettings.value.pattern }
+    if (patternOverlay.value) replacePatternOverlay(patternOverlaySettings.value)
+  } else if (selectedCategory.value === 'satin') {
+    const replacement = createDefaultLayerEffect('satin', satinSettings.value.id) as SatinEffect
+    satinSettings.value = { ...replacement, enabled: satinActive.value }
+    if (satin.value) replaceSatin(satinSettings.value)
+  } else {
+    const replacement = createDefaultLayerEffect('bevel-emboss', bevelEmbossSettings.value.id) as BevelEmbossEffect
+    bevelEmbossSettings.value = { ...replacement, enabled: bevelEmbossActive.value }
+    if (bevelEmboss.value) replaceBevelEmboss(bevelEmbossSettings.value)
   }
   publishPreview()
 }
@@ -594,10 +816,28 @@ function fitDialogToViewport() {
   dialogRect.value = fitFloatingWindow(dialogRect.value, viewportSize(), MINIMUM_DIALOG_SIZE)
 }
 
+function revokeOrphanedPatternUrls(survivors: LayerStyleConfig) {
+  const keep = new Set(layerStylePatternAssets(survivors).map((asset) => asset.sourceUrl))
+  for (const url of sessionPatternUrls) {
+    if (!keep.has(url)) URL.revokeObjectURL(url)
+  }
+  sessionPatternUrls.clear()
+}
+
+function cancelDialog() {
+  revokeOrphanedPatternUrls(props.styles)
+  emit('cancel')
+}
+
+function applyDialog() {
+  revokeOrphanedPatternUrls(draft.value)
+  emit('apply', cloneLayerStyleConfig(draft.value), { ...draftGlobalLight.value })
+}
+
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
     event.preventDefault()
-    emit('cancel')
+    cancelDialog()
     return
   }
   if (event.key !== 'Tab' || !dialog.value) return
@@ -657,14 +897,39 @@ watch(() => props.open, async (open) => {
   colorOverlaySettings.value = existingColorOverlay
     ? normalizedColorOverlay(existingColorOverlay)
     : createDefaultLayerEffect('color-overlay') as ColorOverlayEffect
+  const existingGradientOverlay = draft.value.effects.find((effect): effect is GradientOverlayEffect => effect.type === 'gradient-overlay')
+  gradientOverlayOriginallyPresent = Boolean(existingGradientOverlay)
+  gradientOverlaySettings.value = existingGradientOverlay
+    ? normalizedGradientOverlay(existingGradientOverlay)
+    : createDefaultLayerEffect('gradient-overlay') as GradientOverlayEffect
+  const existingPatternOverlay = draft.value.effects.find((effect): effect is PatternOverlayEffect => effect.type === 'pattern-overlay')
+  patternOverlayOriginallyPresent = Boolean(existingPatternOverlay)
+  patternOverlaySettings.value = existingPatternOverlay
+    ? normalizedPatternOverlay(existingPatternOverlay)
+    : createDefaultLayerEffect('pattern-overlay') as PatternOverlayEffect
+  sessionPatternUrls.clear()
+  const existingSatin = draft.value.effects.find((effect): effect is SatinEffect => effect.type === 'satin')
+  satinOriginallyPresent = Boolean(existingSatin)
+  satinSettings.value = existingSatin
+    ? normalizedSatin(existingSatin)
+    : createDefaultLayerEffect('satin') as SatinEffect
+  const existingBevelEmboss = draft.value.effects.find((effect): effect is BevelEmbossEffect => effect.type === 'bevel-emboss')
+  bevelEmbossOriginallyPresent = Boolean(existingBevelEmboss)
+  bevelEmbossSettings.value = existingBevelEmboss
+    ? normalizedBevelEmboss(existingBevelEmboss)
+    : createDefaultLayerEffect('bevel-emboss') as BevelEmbossEffect
   selectedCategory.value = 'blending'
   if (props.rasterEffectsAvailable) {
     if (existingShadow?.enabled) selectedCategory.value = 'drop-shadow'
     else if (existingInnerShadow?.enabled) selectedCategory.value = 'inner-shadow'
     else if (existing?.enabled) selectedCategory.value = 'outer-glow'
     else if (existingInner?.enabled) selectedCategory.value = 'inner-glow'
-    else if (existingStroke?.enabled && existingStroke.paint.type !== 'pattern') selectedCategory.value = 'stroke'
+    else if (existingStroke?.enabled) selectedCategory.value = 'stroke'
     else if (existingColorOverlay?.enabled) selectedCategory.value = 'color-overlay'
+    else if (existingGradientOverlay?.enabled) selectedCategory.value = 'gradient-overlay'
+    else if (existingPatternOverlay?.enabled) selectedCategory.value = 'pattern-overlay'
+    else if (existingSatin?.enabled) selectedCategory.value = 'satin'
+    else if (existingBevelEmboss?.enabled) selectedCategory.value = 'bevel-emboss'
   }
   previewEnabled.value = true
   await nextTick()
@@ -699,7 +964,7 @@ onBeforeUnmount(() => {
           <h2 id="layer-style-title">Opções de mesclagem</h2>
           <span :title="layerName">{{ layerName }}</span>
         </div>
-        <button type="button" title="Fechar" aria-label="Fechar" @click="emit('cancel')">×</button>
+        <button type="button" title="Fechar" aria-label="Fechar" @click="cancelDialog">×</button>
       </header>
 
       <div class="layer-style-layout">
@@ -824,6 +1089,82 @@ onBeforeUnmount(() => {
               @click="selectedCategory = 'color-overlay'"
             >
               Sobreposição de cor
+            </button>
+          </span>
+          <span class="layer-style-effect-entry">
+            <input
+              :checked="gradientOverlayActive"
+              :disabled="!rasterEffectsAvailable"
+              type="checkbox"
+              aria-label="Ativar sobreposição de gradiente"
+              :title="rasterEffectsAvailable ? 'Ativar sobreposição de gradiente' : 'Disponível para camadas raster'"
+              @change="toggleGradientOverlay"
+            />
+            <button
+              :class="{ 'layer-style-navigation--active': selectedCategory === 'gradient-overlay' }"
+              :disabled="!rasterEffectsAvailable"
+              type="button"
+              :title="rasterEffectsAvailable ? 'Editar sobreposição de gradiente' : 'Disponível para camadas raster'"
+              @click="selectedCategory = 'gradient-overlay'"
+            >
+              Sobreposição de gradiente
+            </button>
+          </span>
+          <span class="layer-style-effect-entry">
+            <input
+              :checked="patternOverlayActive"
+              :disabled="!rasterEffectsAvailable"
+              type="checkbox"
+              aria-label="Ativar sobreposição de padrão"
+              :title="rasterEffectsAvailable ? 'Ativar sobreposição de padrão' : 'Disponível para camadas raster'"
+              @change="togglePatternOverlay"
+            />
+            <button
+              :class="{ 'layer-style-navigation--active': selectedCategory === 'pattern-overlay' }"
+              :disabled="!rasterEffectsAvailable"
+              type="button"
+              :title="rasterEffectsAvailable ? 'Editar sobreposição de padrão' : 'Disponível para camadas raster'"
+              @click="selectedCategory = 'pattern-overlay'"
+            >
+              Sobreposição de padrão
+            </button>
+          </span>
+          <span class="layer-style-effect-entry">
+            <input
+              :checked="satinActive"
+              :disabled="!rasterEffectsAvailable"
+              type="checkbox"
+              aria-label="Ativar acetinado"
+              :title="rasterEffectsAvailable ? 'Ativar acetinado' : 'Disponível para camadas raster'"
+              @change="toggleSatin"
+            />
+            <button
+              :class="{ 'layer-style-navigation--active': selectedCategory === 'satin' }"
+              :disabled="!rasterEffectsAvailable"
+              type="button"
+              :title="rasterEffectsAvailable ? 'Editar acetinado' : 'Disponível para camadas raster'"
+              @click="selectedCategory = 'satin'"
+            >
+              Acetinado
+            </button>
+          </span>
+          <span class="layer-style-effect-entry">
+            <input
+              :checked="bevelEmbossActive"
+              :disabled="!rasterEffectsAvailable"
+              type="checkbox"
+              aria-label="Ativar bisel e entalhe"
+              :title="rasterEffectsAvailable ? 'Ativar bisel e entalhe' : 'Disponível para camadas raster'"
+              @change="toggleBevelEmboss"
+            />
+            <button
+              :class="{ 'layer-style-navigation--active': selectedCategory === 'bevel-emboss' }"
+              :disabled="!rasterEffectsAvailable"
+              type="button"
+              :title="rasterEffectsAvailable ? 'Editar bisel e entalhe' : 'Disponível para camadas raster'"
+              @click="selectedCategory = 'bevel-emboss'"
+            >
+              Bisel e entalhe
             </button>
           </span>
         </nav>
@@ -1280,13 +1621,18 @@ onBeforeUnmount(() => {
             </label>
             <label>
               Preenchimento
-              <select :value="strokeSettings.paint.type" @change="setStrokePaint(($event.target as HTMLSelectElement).value as 'color' | 'gradient')">
+              <select :value="strokeSettings.paint.type" @change="setStrokePaint(($event.target as HTMLSelectElement).value as 'color' | 'gradient' | 'pattern')">
                 <option value="color">Cor</option>
                 <option value="gradient">Gradiente</option>
-                <option v-if="strokeSettings.paint.type === 'pattern'" value="pattern" disabled>Padrão (em breve)</option>
+                <option value="pattern">Padrão</option>
               </select>
             </label>
-            <label>
+            <LayerStylePatternPicker
+              v-if="strokeSettings.paint.type === 'pattern'"
+              :pattern="strokeSettings.paint.pattern"
+              @select="updateStrokePattern"
+            />
+            <label v-else>
               {{ strokeSettings.paint.type === 'gradient' ? 'Cor inicial' : 'Cor' }}
               <input
                 class="layer-style-color"
@@ -1346,6 +1692,19 @@ onBeforeUnmount(() => {
                 <span aria-hidden="true">°</span>
               </span>
             </label>
+            <label v-if="strokeSettings.paint.type === 'pattern'">
+              Ângulo
+              <span class="layer-style-number">
+                <input
+                  :value="strokeSettings.paint.angle"
+                  max="180"
+                  min="-180"
+                  type="number"
+                  @input="updateStrokePatternOptions({ angle: Number(($event.target as HTMLInputElement).value) })"
+                />
+                <span aria-hidden="true">°</span>
+              </span>
+            </label>
             <label v-if="strokeSettings.paint.type === 'gradient'" class="layer-style-preview-toggle">
               <input
                 :checked="strokeSettings.paint.reverse"
@@ -1400,12 +1759,55 @@ onBeforeUnmount(() => {
                 <span aria-hidden="true">%</span>
               </span>
             </label>
+            <label v-if="strokeSettings.paint.type === 'pattern'" class="layer-style-parameter">
+              <span>Escala</span>
+              <input
+                :value="strokeSettings.paint.scale"
+                max="1000"
+                min="1"
+                type="range"
+                @input="updateStrokePatternOptions({ scale: Number(($event.target as HTMLInputElement).value) })"
+              />
+              <span class="layer-style-parameter-value">
+                <input
+                  :value="strokeSettings.paint.scale"
+                  max="1000"
+                  min="1"
+                  type="number"
+                  @input="updateStrokePatternOptions({ scale: Number(($event.target as HTMLInputElement).value) })"
+                />
+                <span aria-hidden="true">%</span>
+              </span>
+            </label>
           </div>
         </div>
         <LayerStyleColorOverlayControls
-          v-else
+          v-else-if="selectedCategory === 'color-overlay'"
           :effect="colorOverlaySettings"
           @update="updateColorOverlay"
+        />
+        <LayerStyleGradientOverlayControls
+          v-else-if="selectedCategory === 'gradient-overlay'"
+          :effect="gradientOverlaySettings"
+          @update="updateGradientOverlay"
+        />
+        <LayerStylePatternOverlayControls
+          v-else-if="selectedCategory === 'pattern-overlay'"
+          :effect="patternOverlaySettings"
+          @update="updatePatternOverlay"
+        />
+        <LayerStyleSatinControls
+          v-else-if="selectedCategory === 'satin'"
+          :effect="satinSettings"
+          @update="updateSatin"
+        />
+        <LayerStyleBevelEmbossControls
+          v-else
+          :effect="bevelEmbossSettings"
+          :global-light="draftGlobalLight"
+          @update="updateBevelEmboss"
+          @update-angle="updateBevelEmbossAngle"
+          @select-texture="selectBevelEmbossTexture"
         />
       </div>
 
@@ -1416,8 +1818,8 @@ onBeforeUnmount(() => {
           <span>Visualizar</span>
         </label>
         <div class="dialog-actions">
-          <button type="button" @click="emit('cancel')">Cancelar</button>
-          <button class="primary-button" type="button" @click="emit('apply', cloneLayerStyleConfig(draft), { ...draftGlobalLight })">OK</button>
+          <button type="button" @click="cancelDialog">Cancelar</button>
+          <button class="primary-button" type="button" @click="applyDialog">OK</button>
         </div>
       </footer>
       <span

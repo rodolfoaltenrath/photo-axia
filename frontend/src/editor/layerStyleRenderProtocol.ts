@@ -11,6 +11,7 @@ export interface LayerStyleWorkerRenderRequest {
   globalLight: LayerStyleGlobalLight
   resolutionScale: number
   quality: LayerStyleRenderQuality
+  patterns: Record<string, Blob>
 }
 
 export interface LayerStyleWorkerCancelRequest {
