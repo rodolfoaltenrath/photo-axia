@@ -42,6 +42,7 @@ import type {
 const props = defineProps<{
   globalLight: LayerStyleGlobalLight
   layerName: string
+  nativeWindow?: boolean
   open: boolean
   rasterEffectsAvailable: boolean
   styles: LayerStyleConfig
@@ -97,12 +98,14 @@ let pointerInteraction: {
 let previousBodyCursor = ''
 let previousBodyUserSelect = ''
 
-const dialogStyle = computed(() => ({
-  height: `${dialogRect.value.height}px`,
-  left: `${dialogRect.value.left}px`,
-  top: `${dialogRect.value.top}px`,
-  width: `${dialogRect.value.width}px`
-}))
+const dialogStyle = computed(() => props.nativeWindow
+  ? { height: '100%', left: '0', top: '0', width: '100%' }
+  : {
+      height: `${dialogRect.value.height}px`,
+      left: `${dialogRect.value.left}px`,
+      top: `${dialogRect.value.top}px`,
+      width: `${dialogRect.value.width}px`
+    })
 
 const outerGlow = computed(() => draft.value.effects.find(
   (effect): effect is OuterGlowEffect => effect.type === 'outer-glow'
@@ -803,6 +806,7 @@ function startPointerInteraction(
 }
 
 function beginMove(event: PointerEvent) {
+  if (props.nativeWindow) return
   if ((event.target as HTMLElement).closest('button, input, select, textarea, a')) return
   startPointerInteraction(event, 'move')
 }
@@ -812,7 +816,7 @@ function beginResize(event: PointerEvent, corner: FloatingWindowCorner) {
 }
 
 function fitDialogToViewport() {
-  if (!props.open) return
+  if (!props.open || props.nativeWindow) return
   dialogRect.value = fitFloatingWindow(dialogRect.value, viewportSize(), MINIMUM_DIALOG_SIZE)
 }
 
@@ -861,10 +865,12 @@ watch(() => props.open, async (open) => {
     finishPointerInteraction()
     return
   }
-  dialogRect.value = dialogPositioned
-    ? fitFloatingWindow(dialogRect.value, viewportSize(), MINIMUM_DIALOG_SIZE)
-    : centerFloatingWindow(viewportSize(), DEFAULT_DIALOG_SIZE, MINIMUM_DIALOG_SIZE)
-  dialogPositioned = true
+  if (!props.nativeWindow) {
+    dialogRect.value = dialogPositioned
+      ? fitFloatingWindow(dialogRect.value, viewportSize(), MINIMUM_DIALOG_SIZE)
+      : centerFloatingWindow(viewportSize(), DEFAULT_DIALOG_SIZE, MINIMUM_DIALOG_SIZE)
+    dialogPositioned = true
+  }
   draft.value = cloneLayerStyleConfig(props.styles)
   draftGlobalLight.value = normalizeLayerStyleGlobalLight(props.globalLight)
   const existing = draft.value.effects.find((effect): effect is OuterGlowEffect => effect.type === 'outer-glow')
@@ -948,11 +954,13 @@ onBeforeUnmount(() => {
   <div
     v-if="open"
     class="dialog-backdrop dialog-backdrop--layer-style"
+    :class="{ 'dialog-backdrop--native-window': nativeWindow }"
     role="presentation"
   >
     <section
       ref="dialog"
       class="layer-style-dialog"
+      :class="{ 'layer-style-dialog--native-window': nativeWindow }"
       :style="dialogStyle"
       aria-modal="true"
       role="dialog"
@@ -1823,21 +1831,25 @@ onBeforeUnmount(() => {
         </div>
       </footer>
       <span
+        v-if="!nativeWindow"
         class="layer-style-resize-handle layer-style-resize-handle--north-west"
         aria-hidden="true"
         @pointerdown="beginResize($event, 'north-west')"
       ></span>
       <span
+        v-if="!nativeWindow"
         class="layer-style-resize-handle layer-style-resize-handle--north-east"
         aria-hidden="true"
         @pointerdown="beginResize($event, 'north-east')"
       ></span>
       <span
+        v-if="!nativeWindow"
         class="layer-style-resize-handle layer-style-resize-handle--south-west"
         aria-hidden="true"
         @pointerdown="beginResize($event, 'south-west')"
       ></span>
       <span
+        v-if="!nativeWindow"
         class="layer-style-resize-handle layer-style-resize-handle--south-east"
         aria-hidden="true"
         @pointerdown="beginResize($event, 'south-east')"

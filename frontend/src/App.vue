@@ -140,6 +140,21 @@ import { applyGradient, disposeGradientEngine } from './services/gradientEngine'
 import { applyPaintBucket, applySolidFill, disposePaintBucketEngine } from './services/paintBucketEngine'
 import { clearLayerStyleRenderCache, disposeLayerStyleCompositor } from './services/layerStyleCompositor'
 import {
+  closeLayerStyleNativeWindow,
+  openLayerStyleNativeWindow,
+  registerLayerStyleWindowHost,
+  sendLayerStyleWindowSession,
+  type LayerStyleWindowChange,
+  type LayerStyleWindowSession
+} from './services/layerStyleWindow'
+import { layerStyleNeedsCompositing } from './editor/layerStyleCompositor'
+import {
+  clearedLayerStyleChange,
+  copyLayerStyleConfig,
+  layerCanPasteStyle,
+  pastedLayerStyleChange
+} from './editor/layerStyleOperations'
+import {
   clearSmartLayerRenderCache,
   invalidateSmartLayerContent,
   renderSmartLayer,
@@ -247,10 +262,15 @@ const recentProjectsLoading = ref(true)
 const showUnsavedChangesDialog = ref(false)
 const showFlattenImageDialog = ref(false)
 const layerStyleDialog = shallowRef<{
+  sessionId: string
   layerId: string
   before: LayerStyleConfig
   beforeGlobalLight: LayerStyleGlobalLight
 }>()
+const nativeLayerStyleWindowEnabled = hasDesktopBackend()
+const nativeLayerStyleDialogFallback = ref(false)
+let nativeLayerStyleRevision = 0
+const copiedLayerStyles = shallowRef<LayerStyleConfig>()
 const fileInput = ref<HTMLInputElement | null>(null)
 const documentImageInput = ref<HTMLInputElement | null>(null)
 const pdfFileInput = ref<HTMLInputElement | null>(null)
@@ -391,6 +411,8 @@ const selectedLayerItems = computed(() => {
 })
 const canConvertSelectedLayersToSmart = computed(() => layersCanConvertToSmart(selectedLayerItems.value))
 const canFlattenImage = computed(() => documentCanFlatten(activeDocument.value, layers.value))
+const canClearActiveLayerStyles = computed(() => layerStyleNeedsCompositing(activeLayer.value.styles))
+const canPasteActiveLayerStyles = computed(() => layerCanPasteStyle(activeLayer.value, copiedLayerStyles.value))
 const hiddenLayerCount = computed(() => layers.value.reduce((count, layer) => count + Number(!layer.visible), 0))
 
 function selectSingleLayer(layerId: string) {
@@ -686,6 +708,9 @@ function collectUnusedObjectUrls() {
     for (const source of historyDeltaObjectUrls(entry.delta)) retainedUrls.add(source)
   }
   for (const source of transientObjectUrls) retainedUrls.add(source)
+  for (const asset of layerStylePatternAssets(copiedLayerStyles.value)) {
+    if (asset.sourceUrl.startsWith('blob:')) retainedUrls.add(asset.sourceUrl)
+  }
   for (const session of smartLayerEditSessions.value) {
     for (const source of session.retainedObjectUrls) retainedUrls.add(source)
   }
@@ -713,6 +738,7 @@ function releaseAllEditorAssets(preserveSmartCache = false) {
   clearLayerStyleRenderCache()
   if (!preserveSmartCache) clearSmartLayerRenderCache()
   const releasedLayers = [...layers.value, ...retainedHistoryLayers()]
+  copiedLayerStyles.value = undefined
   const nativeImageIDs = new Set([
     ...trackedNativeImageIDs,
     ...releasedLayers.flatMap(layerNativeImageIDs)
@@ -1668,16 +1694,39 @@ function updateLayerOpacity(value: number) {
   )
 }
 
+function currentLayerStyleWindowSession(): LayerStyleWindowSession | null {
+  const session = layerStyleDialog.value
+  const layer = layerStyleDialogLayer.value
+  if (!session || !layer) return null
+  return {
+    globalLight: { ...session.beforeGlobalLight },
+    layerName: layer.name,
+    rasterEffectsAvailable: Boolean(layer.image),
+    sessionId: session.sessionId,
+    styles: cloneLayerStyleConfig(session.before)
+  }
+}
+
 function openLayerStyles(layerId: string) {
   if (isBusy.value || layerStyleDialog.value) return
   const layer = layers.value.find((item) => item.id === layerId)
   if (!layer) return
   selectSingleLayer(layerId)
   layerStyleDialog.value = {
+    sessionId: crypto.randomUUID(),
     layerId,
     before: cloneLayerStyleConfig(layer.styles),
     beforeGlobalLight: { ...activeDocument.value.layerStyleGlobalLight }
   }
+  nativeLayerStyleRevision = 0
+  nativeLayerStyleDialogFallback.value = false
+  if (!nativeLayerStyleWindowEnabled) return
+  const session = currentLayerStyleWindowSession()
+  if (!session) return
+  void openLayerStyleNativeWindow(session).catch((error) => {
+    nativeLayerStyleDialogFallback.value = true
+    showError(error, 'As opções de mesclagem foram abertas dentro do editor.')
+  })
 }
 
 function previewLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGlobalLight) {
@@ -1687,7 +1736,7 @@ function previewLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGlo
   activeDocument.value.layerStyleGlobalLight = normalizeLayerStyleGlobalLight(globalLight)
 }
 
-function cancelLayerStyles() {
+function cancelLayerStyles(closeNativeWindow = true) {
   const session = layerStyleDialog.value
   const layer = layerStyleDialogLayer.value
   if (session && layer) {
@@ -1695,6 +1744,9 @@ function cancelLayerStyles() {
     activeDocument.value.layerStyleGlobalLight = { ...session.beforeGlobalLight }
   }
   layerStyleDialog.value = undefined
+  if (closeNativeWindow && nativeLayerStyleWindowEnabled && !nativeLayerStyleDialogFallback.value) {
+    void closeLayerStyleNativeWindow()
+  }
 }
 
 function applyLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGlobalLight) {
@@ -1712,6 +1764,9 @@ function applyLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGloba
   layer.styles = after
   activeDocument.value.layerStyleGlobalLight = globalLightAfter
   layerStyleDialog.value = undefined
+  if (nativeLayerStyleWindowEnabled && !nativeLayerStyleDialogFallback.value) {
+    void closeLayerStyleNativeWindow()
+  }
   if (JSON.stringify(before) === JSON.stringify(after) && JSON.stringify(globalLightBefore) === JSON.stringify(globalLightAfter)) return
   recordHistory('Alterar estilos de camada', {
     type: 'layer-styles:change',
@@ -1722,6 +1777,86 @@ function applyLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGloba
     globalLightAfter
   })
   statusText.value = 'Estilos de camada atualizados'
+}
+
+function acceptNativeLayerStyleChange(change: LayerStyleWindowChange) {
+  const session = layerStyleDialog.value
+  if (!session || change.sessionId !== session.sessionId || change.revision <= nativeLayerStyleRevision) return false
+  nativeLayerStyleRevision = change.revision
+  return true
+}
+
+function previewNativeLayerStyles(change: LayerStyleWindowChange) {
+  if (!acceptNativeLayerStyleChange(change)) return
+  previewLayerStyles(change.styles, change.globalLight)
+}
+
+function applyNativeLayerStyles(change: LayerStyleWindowChange) {
+  if (!acceptNativeLayerStyleChange(change)) return
+  applyLayerStyles(change.styles, change.globalLight)
+}
+
+function cancelNativeLayerStyles(sessionId: string) {
+  if (layerStyleDialog.value?.sessionId === sessionId) cancelLayerStyles()
+}
+
+function resendLayerStyleWindowSession() {
+  const session = currentLayerStyleWindowSession()
+  if (session) void sendLayerStyleWindowSession(session)
+}
+
+function copyLayerStyles(layerId = activeLayerId.value) {
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (!layer) return
+  copiedLayerStyles.value = copyLayerStyleConfig(layer.styles)
+  for (const asset of layerStylePatternAssets(copiedLayerStyles.value)) {
+    if (asset.sourceUrl.startsWith('blob:')) trackedObjectUrls.add(asset.sourceUrl)
+  }
+  collectUnusedObjectUrls()
+  statusText.value = `Estilo de “${layer.name}” copiado`
+}
+
+function pasteLayerStyles(layerId = activeLayerId.value) {
+  const layer = layers.value.find((item) => item.id === layerId)
+  const clipboard = copiedLayerStyles.value
+  if (!layer || !clipboard) return
+  if (!layerCanPasteStyle(layer, clipboard)) {
+    showError(
+      new Error('Rasterize a camada antes de colar efeitos de camada.'),
+      'Esta camada aceita somente a opacidade de preenchimento.'
+    )
+    return
+  }
+  const change = pastedLayerStyleChange(layer, clipboard)
+  if (!change) {
+    statusText.value = 'A camada já possui esse estilo'
+    return
+  }
+  layer.styles = change.after
+  trackLayerAssets([layer])
+  recordHistory('Colar estilo de camada', {
+    type: 'layer:patch',
+    layerId: layer.id,
+    before: { styles: change.before },
+    after: { styles: change.after }
+  })
+  statusText.value = `Estilo colado em “${layer.name}”`
+}
+
+function clearLayerStyles(layerId = activeLayerId.value) {
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (!layer) return
+  const change = clearedLayerStyleChange(layer)
+  if (!change) return
+  layer.styles = change.after
+  recordHistory('Limpar estilo de camada', {
+    type: 'layer:patch',
+    layerId: layer.id,
+    before: { styles: change.before },
+    after: { styles: change.after }
+  })
+  collectUnusedObjectUrls()
+  statusText.value = `Estilo removido de “${layer.name}”`
 }
 
 function updateLayerBlendMode(blendMode: LayerBlendMode) {
@@ -4389,12 +4524,22 @@ function handleShortcut(event: KeyboardEvent) {
 }
 
 let unregisterNativeFileDrop: (() => void) | undefined
+let unregisterLayerStyleWindowHost: (() => void) | undefined
 
 onMounted(async () => {
   window.addEventListener('wheel', blockBrowserWheelZoom, zoomEventOptions)
   window.addEventListener('keydown', handleShortcut)
   window.addEventListener('beforeunload', protectUnsavedDocument)
   unregisterNativeFileDrop = registerNativeFileDrop(handleNativeFileDrop)
+  if (nativeLayerStyleWindowEnabled) {
+    unregisterLayerStyleWindowHost = registerLayerStyleWindowHost({
+      apply: applyNativeLayerStyles,
+      cancel: cancelNativeLayerStyles,
+      closed: () => cancelLayerStyles(false),
+      preview: previewNativeLayerStyles,
+      ready: resendLayerStyleWindowSession
+    })
+  }
 
   try {
     const [status] = await Promise.all([getEditorStatus(), refreshRecentProjects()])
@@ -4406,6 +4551,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   unregisterNativeFileDrop?.()
+  unregisterLayerStyleWindowHost?.()
   pdfImportController?.abort()
   void releasePDFSource()
   if (previewRefreshTimer) clearTimeout(previewRefreshTimer)
@@ -4457,11 +4603,13 @@ onBeforeUnmount(() => {
       :inert="modalOpen || undefined"
       :can-delete-layer="layers.length > 1"
       :can-convert-to-smart-layer="canConvertSelectedLayersToSmart"
+      :can-clear-layer-styles="canClearActiveLayerStyles"
       :can-duplicate-layer="Boolean(activeLayer.image || activeLayer.text || activeLayer.shape)"
       :can-edit-smart-layer="activeLayer.kind === 'smart'"
       :can-fill-layer="activeLayer.visible && ['image', 'background', 'pixel'].includes(activeLayer.kind) && Boolean(activeLayer.image && activeLayer.transform)"
       :can-flatten-image="canFlattenImage"
       :can-merge-layers="selectedLayerIds.length > 1"
+      :can-paste-layer-styles="canPasteActiveLayerStyles"
       :can-rasterize-layer="layerCanRasterize(activeLayer)"
       :can-redo="canRedo"
       :can-undo="canUndo"
@@ -4477,7 +4625,9 @@ onBeforeUnmount(() => {
       :undo-label="undoLabel"
       @add-layer="addLayer"
       @clear-selection="updateSelection(null)"
+      @clear-layer-styles="clearLayerStyles()"
       @convert-to-smart-layer="convertSelectedLayersToSmart"
+      @copy-layer-styles="copyLayerStyles()"
       @delete-layer="deleteLayer(activeLayerId)"
       @delete-selection="deleteSelectedPixels"
       @duplicate-layer="duplicateLayer()"
@@ -4496,6 +4646,7 @@ onBeforeUnmount(() => {
       @open-image-document="openImageAsDocument"
       @open-pdf-document="openPDFAsDocument"
       @open-project="openProject"
+      @paste-layer-styles="pasteLayerStyles()"
       @rasterize-layer="rasterizeLayer()"
       @redo="redoHistory"
       @save-project="saveProject()"
@@ -4543,7 +4694,7 @@ onBeforeUnmount(() => {
       </div>
       <header v-if="activeSmartLayerEditSession" class="smart-edit-bar">
         <div class="smart-edit-context">
-          <strong>Conteúdo inteligente</strong>
+          <strong>Objeto inteligente</strong>
           <span aria-hidden="true">/</span>
           <span v-for="(name, index) in smartLayerEditBreadcrumb" :key="`${index}:${name}`">
             <span v-if="index" aria-hidden="true">/</span>
@@ -4654,12 +4805,15 @@ onBeforeUnmount(() => {
 
         <LayersPanel
           :active-layer-id="activeLayerId"
+          :can-paste-layer-styles="canPasteActiveLayerStyles"
           :document-background="activeDocument.background"
           :layers="layers"
           :layer-style-global-light="activeDocument.layerStyleGlobalLight"
           :selected-layer-ids="selectedLayerIds"
           @add-layer="addLayer"
           @convert-to-smart-layer="convertSelectedLayersToSmart"
+          @clear-layer-styles="clearLayerStyles"
+          @copy-layer-styles="copyLayerStyles"
           @delete-layer="deleteLayer"
           @duplicate-layer="duplicateLayer"
           @edit-smart-layer="editSmartLayerContent"
@@ -4667,6 +4821,7 @@ onBeforeUnmount(() => {
           @move-layer="moveLayer"
           @merge-layers="mergeSelectedLayers"
           @open-layer-styles="openLayerStyles"
+          @paste-layer-styles="pasteLayerStyles"
           @rasterize-layer="rasterizeLayer"
           @rename-layer="renameLayer"
           @reorder-layer="reorderLayer"
@@ -4708,6 +4863,7 @@ onBeforeUnmount(() => {
       @import="performPDFImport"
     />
     <LayerStyleDialog
+      v-if="!nativeLayerStyleWindowEnabled || nativeLayerStyleDialogFallback"
       :global-light="layerStyleDialog?.beforeGlobalLight ?? activeDocument.layerStyleGlobalLight"
       :layer-name="layerStyleDialogLayer?.name ?? ''"
       :open="Boolean(layerStyleDialog)"

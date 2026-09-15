@@ -7,12 +7,14 @@ type MenuName = 'file' | 'edit' | 'layer' | 'select' | 'window'
 
 const props = defineProps<{
   canConvertToSmartLayer: boolean
+  canClearLayerStyles: boolean
   canDeleteLayer: boolean
   canDuplicateLayer: boolean
   canEditSmartLayer: boolean
   canFillLayer: boolean
   canFlattenImage: boolean
   canMergeLayers: boolean
+  canPasteLayerStyles: boolean
   canRasterizeLayer: boolean
   canRedo: boolean
   canUndo: boolean
@@ -31,7 +33,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'addLayer'): void
   (event: 'clearSelection'): void
+  (event: 'clearLayerStyles'): void
   (event: 'convertToSmartLayer'): void
+  (event: 'copyLayerStyles'): void
   (event: 'deleteLayer'): void
   (event: 'deleteSelection'): void
   (event: 'duplicateLayer'): void
@@ -50,6 +54,7 @@ const emit = defineEmits<{
   (event: 'openImageDocument'): void
   (event: 'openPdfDocument'): void
   (event: 'openProject'): void
+  (event: 'pasteLayerStyles'): void
   (event: 'rasterizeLayer'): void
   (event: 'redo'): void
   (event: 'saveProject'): void
@@ -167,9 +172,12 @@ onBeforeUnmount(() => {
           <button type="button" role="menuitem" :disabled="isBusy || !canDeleteLayer" @click="runCommand(() => emit('deleteLayer'))">Excluir camada</button>
           <button type="button" role="menuitem" :disabled="isBusy || !canMergeLayers" @click="runCommand(() => emit('mergeLayers'))">Mesclar selecionadas</button>
           <div class="application-menu-separator" role="separator"></div>
-          <button v-if="canConvertToSmartLayer" type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('convertToSmartLayer'))">Converter em camada inteligente</button>
-          <button v-if="canEditSmartLayer" type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('editSmartLayer'))">Editar conteúdo</button>
+          <button v-if="canConvertToSmartLayer" type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('convertToSmartLayer'))">Converter em Objeto Inteligente</button>
+          <button v-if="canEditSmartLayer" type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('editSmartLayer'))">Editar conteúdo…</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openLayerStyles'))">Opções de mesclagem…</button>
+          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('copyLayerStyles'))">Copiar estilo da camada</button>
+          <button type="button" role="menuitem" :disabled="isBusy || !canPasteLayerStyles" @click="runCommand(() => emit('pasteLayerStyles'))">Colar estilo da camada</button>
+          <button type="button" role="menuitem" :disabled="isBusy || !canClearLayerStyles" @click="runCommand(() => emit('clearLayerStyles'))">Limpar estilo da camada</button>
           <button v-if="canRasterizeLayer" type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('rasterizeLayer'))">Rasterizar camada</button>
           <div class="application-menu-separator" role="separator"></div>
           <button type="button" role="menuitem" :disabled="isBusy || !canFlattenImage" @click="runCommand(() => emit('flattenImage'))">Achatar imagem</button>

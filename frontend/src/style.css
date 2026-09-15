@@ -277,6 +277,18 @@ textarea:focus-visible,
   grid-row: 2;
 }
 
+.workspace--smart-edit > .tool-bar {
+  grid-column: 1;
+}
+
+.workspace--smart-edit > .canvas-workspace {
+  grid-column: 2;
+}
+
+.workspace--smart-edit > .side-panels {
+  grid-column: 3;
+}
+
 .smart-edit-bar {
   z-index: 46;
   display: flex;
@@ -2078,12 +2090,12 @@ textarea:focus-visible,
   right: -1px;
   bottom: -1px;
   display: grid;
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   place-items: center;
-  color: #f4f4f5;
-  background: #202126;
-  border: 1px solid #777982;
+  color: #ffffff;
+  background: var(--ui-accent, #686872);
+  border: 1px solid #d4d4d8;
 }
 
 .layer-thumb-smart svg {
@@ -2244,6 +2256,15 @@ textarea:focus-visible,
   background: transparent;
 }
 
+html.layer-style-native-window body {
+  min-width: 0;
+  background: var(--ui-surface-raised, #18181b);
+}
+
+.dialog-backdrop.dialog-backdrop--native-window {
+  background: var(--ui-surface-raised, #18181b);
+}
+
 .new-document-dialog {
   width: min(560px, calc(100vw - 32px));
   border: 1px solid #343d48;
@@ -2367,6 +2388,25 @@ textarea:focus-visible,
   cursor: move;
   touch-action: none;
   user-select: none;
+}
+
+.layer-style-dialog--native-window {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.layer-style-dialog--native-window .layer-style-dialog-header {
+  --wails-draggable: drag;
+  cursor: default;
+}
+
+.layer-style-dialog--native-window button,
+.layer-style-dialog--native-window input,
+.layer-style-dialog--native-window select,
+.layer-style-dialog--native-window textarea,
+.layer-style-dialog--native-window a {
+  --wails-draggable: no-drag;
 }
 
 .layer-style-dialog-header button {

@@ -6,6 +6,7 @@ import visibleIcon from '../assets/icons/visible.svg'
 import { blendModeLabel } from '../editor/blendModes'
 import { layerStyleNeedsCompositing } from '../editor/layerStyleCompositor'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
+import { layerKindHelp, layerKindLabel } from '../editor/layerPresentation'
 import type { LayerSelectionMode } from '../editor/layerSelection'
 import { useLayerStyleRaster } from './canvas/composables/useLayerStyleRaster'
 
@@ -107,16 +108,6 @@ watch(desiredThumbnailSource, (source) => {
   thumbnailReady.value = readiness
   if (replacedSource && replacedSource !== source) releaseSource(replacedSource)
 })
-
-const kindLabels: Record<LayerItem['kind'], string> = {
-  pixel: 'Pixels',
-  image: 'Imagem',
-  text: 'Texto',
-  shape: 'Forma',
-  smart: 'Inteligente',
-  adjustment: 'Ajuste',
-  background: 'Fundo'
-}
 
 watch(
   () => props.editing,
@@ -261,7 +252,9 @@ function openThumbnailAction() {
         class="layer-thumb"
         :class="{ 'layer-thumb--transparent': !layer.image }"
         :style="thumbnailStyle"
-        :title="layer.kind === 'smart' ? 'Editar conteúdo inteligente' : 'Abrir opções de mesclagem'"
+        :title="layer.kind === 'smart'
+          ? 'Editar conteúdo do Objeto Inteligente'
+          : `${layerKindHelp(layer)} — dê dois cliques para abrir Opções de mesclagem`"
         @dblclick.stop="openThumbnailAction"
       >
         <template v-if="layer.image">
@@ -287,7 +280,7 @@ function openThumbnailAction() {
         <svg v-else-if="layer.kind === 'shape' && layer.shape && shapeThumbnail" class="layer-thumb-shape" aria-hidden="true" :viewBox="shapeThumbnail.viewBox" preserveAspectRatio="xMidYMid meet">
           <path :d="shapeThumbnail.path" :fill="layer.shape.color" />
         </svg>
-        <span v-if="layer.kind === 'smart'" class="layer-thumb-smart" aria-label="Camada inteligente" title="Camada inteligente">
+        <span v-if="layer.kind === 'smart'" class="layer-thumb-smart" aria-label="Objeto inteligente" title="Objeto inteligente">
           <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 2.5h6l3 3v8h-9zM9.5 2.5v3h3M5.5 10.5h5M8 8v5" /></svg>
         </span>
       </span>
@@ -310,7 +303,7 @@ function openThumbnailAction() {
           <span v-if="hasLayerStyle" class="layer-style-indicator" title="Estilo de camada ativo">fx</span>
         </span>
         <small>
-          {{ kindLabels[layer.kind] }} · {{ layer.opacity }}%
+          <span :title="layerKindHelp(layer)">{{ layerKindLabel(layer) }}</span> · {{ layer.opacity }}%
           <template v-if="layer.blendMode !== 'normal'"> · {{ blendModeLabel(layer.blendMode) }}</template>
         </small>
       </span>

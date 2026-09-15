@@ -48,6 +48,15 @@ export function OpenAxiaProject(): $CancellablePromise<$models.OpenedAxiaProject
     return $Call.ByID(1342011991);
 }
 
+/**
+ * OpenLayerStyleWindow creates the layer-style editor as a real native window.
+ * A webview cannot draw beyond its native window, so keeping this dialog in the
+ * main DOM would always clip it at the editor borders.
+ */
+export function OpenLayerStyleWindow(): $CancellablePromise<void> {
+    return $Call.ByID(2885893791);
+}
+
 export function OpenRecentProject(path: string): $CancellablePromise<$models.OpenedAxiaProject> {
     return $Call.ByID(1491084571, path);
 }

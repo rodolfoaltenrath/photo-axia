@@ -1,4 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { shouldUpdateActiveImageTransform } from '../../../editor/preview'
 import { releasePreparedImage } from '../../../services/imageImport'
 import type { LayerItem, LayerTransform } from '../../../types/editor'
 import type { LayerReadyWaiter } from '../canvas.types'
@@ -99,10 +100,17 @@ export function useLayerImageBuffer(options: LayerImageBufferOptions) {
   }
 
   function finishInteractiveTransform(event: Event) {
+    const transform = (event as CustomEvent<LayerTransform>).detail
+    if (transform) {
+      const transforms = [...imageTransforms.value] as [LayerTransform, LayerTransform]
+      transforms[activeImageSlot.value] = copyTransform(transform)
+      imageTransforms.value = transforms
+      activeImageTransform.value = copyTransform(transform)
+    }
+
     const pending = deferredActivation
     deferredActivation = undefined
     if (!pending) return
-    const transform = (event as CustomEvent<LayerTransform>).detail
     if (transform) {
       const transforms = [...imageTransforms.value] as [LayerTransform, LayerTransform]
       transforms[pending.slot] = copyTransform(transform)
@@ -171,9 +179,16 @@ export function useLayerImageBuffer(options: LayerImageBufferOptions) {
       transforms[slot] = transform
       imageTransforms.value = transforms
 
-      // Interações comuns continuam imediatas. Durante uma troca de raster,
-      // somente o buffer invisível recebe a geometria nova.
-      if (slot === activeImageSlot.value) activeImageTransform.value = transform
+      // Fora da interação, fonte e geometria continuam trocando juntas. No
+      // Ctrl+T, o raster ainda visível também acompanha a geometria ao vivo.
+      const root = options.layerRoot.value
+      const interacting = Boolean(
+        root?.classList.contains('document-layer--dragging') ||
+        root?.classList.contains('document-layer--transforming')
+      )
+      if (shouldUpdateActiveImageTransform(slot, activeImageSlot.value, interacting)) {
+        activeImageTransform.value = transform
+      }
     }
   )
 

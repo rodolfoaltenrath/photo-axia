@@ -26,6 +26,30 @@ export function snapCanvasTranslation(value: number) {
   return Number.isFinite(value) ? Math.round(value) : 0
 }
 
+export function imageSourceForImmediateInteraction(asset: ImageAsset) {
+  return asset.previewUrl ?? asset.sourceUrl
+}
+
+export function shouldUpdateActiveImageTransform(
+  transformedSlot: number,
+  activeSlot: number,
+  interacting: boolean
+) {
+  return transformedSlot === activeSlot || interacting
+}
+
+export function canReuseVisibleRasterForInteraction(
+  raster: Pick<HTMLImageElement, 'complete' | 'naturalWidth' | 'naturalHeight'> | null | undefined,
+  styled: boolean
+) {
+  return Boolean(
+    raster?.complete &&
+    raster.naturalWidth > 0 &&
+    raster.naturalHeight > 0 &&
+    !styled
+  )
+}
+
 interface RectLike {
   left: number
   top: number

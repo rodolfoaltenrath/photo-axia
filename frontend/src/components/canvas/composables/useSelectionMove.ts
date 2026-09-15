@@ -1,7 +1,8 @@
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
 import { snapBoundsTranslation } from '../../../editor/guides'
 import {
-  imageSourceForRasterSize,
+  canReuseVisibleRasterForInteraction,
+  imageSourceForImmediateInteraction,
   snapCanvasTranslation,
   viewportPreviewGeometry
 } from '../../../editor/preview'
@@ -57,6 +58,7 @@ export function useSelectionMove(options: SelectionMoveOptions) {
   let pendingSelectionMoveCommittedSource: string | undefined
   let cachedSelectionMoveImage: { source: string; image: HTMLImageElement } | undefined
   let keyboardSelectionCommitTimeout: ReturnType<typeof setTimeout> | undefined
+  let selectionMoveCommitRequested = false
 
   const selectionMovePreviewStyle = computed(() => {
     const interaction = selectionMoveInteraction.value
@@ -101,6 +103,7 @@ export function useSelectionMove(options: SelectionMoveOptions) {
     options.selectionDraft.value = null
     pendingSelectionMoveBaseSource = undefined
     pendingSelectionMoveCommittedSource = undefined
+    selectionMoveCommitRequested = false
   }
 
   function redrawSelectionMovePreview() {
@@ -150,17 +153,22 @@ export function useSelectionMove(options: SelectionMoveOptions) {
     const interaction = selectionMoveInteraction.value
     const canvas = selectionMoveCanvas.value
     const layer = options.paintableLayer()
-    if (!interaction || !canvas || !layer?.image || !layer.transform) return
+    if (!interaction || !canvas || !layer?.image || !layer.transform) return false
     const layerElements = options.surface.value?.querySelectorAll<HTMLElement>('.document-layer')
     const layerElement = layerElements
       ? Array.from(layerElements).find((element) => element.dataset.layerId === interaction.layerId)
       : undefined
     const activeImage = layerElement?.querySelector<HTMLImageElement>('img.layer-image-buffer--active')
-    const activeSource = activeImage?.currentSrc || activeImage?.src
-    const image = activeImage?.complete && activeImage.naturalWidth > 0 && activeSource === interaction.previewImageSource
-      ? activeImage
+    // Reuse the decoded raster that is already visible. Waiting for the full
+    // source here made the marquee move while the pixels appeared frozen.
+    const activeImageIsUsable = canReuseVisibleRasterForInteraction(
+      activeImage,
+      Boolean(activeImage?.classList.contains('layer-image-buffer--styled'))
+    )
+    const image = activeImageIsUsable
+      ? activeImage!
       : await loadSelectionMovePreviewImage(interaction.previewImageSource)
-    if (selectionMoveInteraction.value !== interaction || image.naturalWidth === 0) return
+    if (selectionMoveInteraction.value !== interaction || image.naturalWidth === 0) return false
 
     const baseCanvas = document.createElement('canvas')
     baseCanvas.width = canvas.width
@@ -170,7 +178,7 @@ export function useSelectionMove(options: SelectionMoveOptions) {
     contentCanvas.width = canvas.width
     contentCanvas.height = canvas.height
     const contentContext = contentCanvas.getContext('2d', { alpha: true })
-    if (!baseContext || !contentContext) return
+    if (!baseContext || !contentContext) return false
     baseContext.imageSmoothingEnabled = true
     baseContext.imageSmoothingQuality = 'high'
     contentContext.imageSmoothingEnabled = true
@@ -203,11 +211,33 @@ export function useSelectionMove(options: SelectionMoveOptions) {
     baseContext.fillRect(0, 0, canvas.width, canvas.height)
     baseContext.restore()
 
-    if (selectionMoveInteraction.value !== interaction) return
+    if (selectionMoveInteraction.value !== interaction) return false
     interaction.baseCanvas = baseCanvas
     interaction.contentCanvas = contentCanvas
-    redrawSelectionMovePreview()
     selectionMoveReady.value = true
+    options.selectionDraft.value = translateSelection(
+      interaction.originalSelection,
+      interaction.deltaX,
+      interaction.deltaY
+    )
+    redrawSelectionMovePreview()
+    if (selectionMoveCommitRequested) {
+      selectionMoveCommitRequested = false
+      emitSelectionMove(interaction)
+    }
+    return true
+  }
+
+  function prepareSelectionMovePreviewSafely() {
+    const interaction = selectionMoveInteraction.value
+    void prepareSelectionMovePreview().then((prepared) => {
+      if (!prepared && selectionMoveInteraction.value === interaction) clearSelectionMovePreview()
+    }).catch((error) => {
+      if (selectionMoveInteraction.value === interaction) {
+        console.error('Unable to prepare the selection preview.', error)
+        clearSelectionMovePreview()
+      }
+    })
   }
 
   function beginSelectionMove(pointerId: number, start: SelectionPoint, selection: SelectionRegion) {
@@ -230,11 +260,7 @@ export function useSelectionMove(options: SelectionMoveOptions) {
     )
     const previewAsset = anchor?.image ?? layer.image
     const previewTransform = anchor?.transform ?? layer.transform
-    const previewImageSource = imageSourceForRasterSize(
-      previewAsset,
-      Math.abs(previewTransform.width) * (previewGeometry.rasterWidth / previewGeometry.width),
-      Math.abs(previewTransform.height) * (previewGeometry.rasterHeight / previewGeometry.height)
-    )
+    const previewImageSource = imageSourceForImmediateInteraction(previewAsset)
     selectionMoveInteraction.value = {
       pointerId,
       layerId: layer.id,
@@ -256,7 +282,7 @@ export function useSelectionMove(options: SelectionMoveOptions) {
       transform: { ...previewTransform }
     }
     options.selectionDraft.value = selection
-    void nextTick(() => void prepareSelectionMovePreview())
+    void nextTick(prepareSelectionMovePreviewSafely)
     return true
   }
 
@@ -306,12 +332,14 @@ export function useSelectionMove(options: SelectionMoveOptions) {
       if (!current || current.pointerId !== event.pointerId) return
       current.deltaX = delta.deltaX
       current.deltaY = delta.deltaY
-      options.selectionDraft.value = translateSelection(
-        current.originalSelection,
-        current.deltaX,
-        current.deltaY
-      )
-      redrawSelectionMovePreview()
+      if (selectionMoveReady.value) {
+        options.selectionDraft.value = translateSelection(
+          current.originalSelection,
+          current.deltaX,
+          current.deltaY
+        )
+        redrawSelectionMovePreview()
+      }
     })
     return true
   }
@@ -337,6 +365,15 @@ export function useSelectionMove(options: SelectionMoveOptions) {
     )
   }
 
+  function commitSelectionMoveWhenReady(interaction: SelectionMoveInteraction) {
+    if (selectionMoveReady.value) {
+      emitSelectionMove(interaction)
+      return
+    }
+    interaction.pointerId = -3
+    selectionMoveCommitRequested = true
+  }
+
   function stopSelectionMovePointer(event: PointerEvent) {
     const interaction = selectionMoveInteraction.value
     if (interaction?.pointerId !== event.pointerId) return false
@@ -344,7 +381,7 @@ export function useSelectionMove(options: SelectionMoveOptions) {
     if (event.type === 'pointercancel' || (!interaction.deltaX && !interaction.deltaY)) {
       clearSelectionMovePreview()
     } else {
-      emitSelectionMove(interaction)
+      commitSelectionMoveWhenReady(interaction)
     }
     return true
   }
@@ -358,12 +395,14 @@ export function useSelectionMove(options: SelectionMoveOptions) {
     if (!interaction) return true
     interaction.deltaX += nudge.x
     interaction.deltaY += nudge.y
-    options.selectionDraft.value = translateSelection(
-      interaction.originalSelection,
-      interaction.deltaX,
-      interaction.deltaY
-    )
-    redrawSelectionMovePreview()
+    if (selectionMoveReady.value) {
+      options.selectionDraft.value = translateSelection(
+        interaction.originalSelection,
+        interaction.deltaX,
+        interaction.deltaY
+      )
+      redrawSelectionMovePreview()
+    }
     if (keyboardSelectionCommitTimeout) clearTimeout(keyboardSelectionCommitTimeout)
     keyboardSelectionCommitTimeout = setTimeout(commitKeyboardSelectionMove, 2000)
     return true
@@ -378,7 +417,7 @@ export function useSelectionMove(options: SelectionMoveOptions) {
       clearSelectionMovePreview()
       return
     }
-    emitSelectionMove(interaction)
+    commitSelectionMoveWhenReady(interaction)
   }
 
   function cancelSelectionMove() {

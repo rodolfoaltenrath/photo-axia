@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import type { EditorTool, LayerItem, TextLayerContent } from '../types/editor'
+import { layerKindHelp, layerKindLabel } from '../editor/layerPresentation'
 
 const props = defineProps<{
   activeLayer: LayerItem
@@ -39,6 +40,8 @@ watch(
         <strong class="property-summary-tool">{{ activeTool === 'brush' ? 'Pincel' : activeTool === 'eraser' ? 'Borracha' : activeTool === 'shape' ? 'Forma' : activeTool }}</strong>
         <span>Camada</span>
         <strong :title="activeLayer.name">{{ activeLayer.name }}</strong>
+        <span>Tipo</span>
+        <strong :title="layerKindHelp(activeLayer)">{{ layerKindLabel(activeLayer) }}</strong>
       </div>
 
       <section v-if="activeLayer.kind === 'text' && activeLayer.text" class="property-section text-properties">

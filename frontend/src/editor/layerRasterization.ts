@@ -3,7 +3,7 @@ import { createLayerStyleConfig } from './layerStyles.ts'
 import type { RenderedLayerAppearance } from '../services/renderDocument.ts'
 
 export function layerCanRasterize(layer?: LayerItem) {
-  if (!layer || layer.kind === 'adjustment' || layer.kind === 'pixel') return false
+  if (!layer || layer.kind === 'adjustment' || layer.kind === 'pixel' || layer.kind === 'image') return false
   return Boolean((layer.transform && (layer.image || layer.text || layer.shape)) || (layer.kind === 'background' && !layer.image))
 }
 

@@ -1,10 +1,43 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  canReuseVisibleRasterForInteraction,
+  imageSourceForImmediateInteraction,
   imageSourceForRasterSize,
+  shouldUpdateActiveImageTransform,
   snapCanvasTranslation,
   viewportPreviewGeometry
 } from '../src/editor/preview.ts'
+
+test('raster visível acompanha Ctrl+T enquanto a nova prévia carrega em outro buffer', () => {
+  assert.equal(shouldUpdateActiveImageTransform(1, 0, true), true)
+  assert.equal(shouldUpdateActiveImageTransform(1, 0, false), false)
+  assert.equal(shouldUpdateActiveImageTransform(0, 0, false), true)
+})
+
+test('movimento de seleção reutiliza o raster decodificado que já está visível', () => {
+  const visible = { complete: true, naturalWidth: 800, naturalHeight: 600 }
+  assert.equal(canReuseVisibleRasterForInteraction(visible, false), true)
+  assert.equal(canReuseVisibleRasterForInteraction(visible, true), false)
+  assert.equal(canReuseVisibleRasterForInteraction({ ...visible, complete: false }, false), false)
+  assert.equal(canReuseVisibleRasterForInteraction({ ...visible, naturalWidth: 0 }, false), false)
+})
+
+test('interação imediata prefere a prévia mesmo quando o raster definitivo é maior', () => {
+  assert.equal(imageSourceForImmediateInteraction({
+    width: 4000,
+    height: 3000,
+    mimeType: 'image/png',
+    sourceUrl: 'original.png',
+    previewUrl: 'preview.webp'
+  }), 'preview.webp')
+  assert.equal(imageSourceForImmediateInteraction({
+    width: 4000,
+    height: 3000,
+    mimeType: 'image/png',
+    sourceUrl: 'original.png'
+  }), 'original.png')
+})
 
 const asset = {
   width: 4000,

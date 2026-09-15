@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 	"golang.org/x/image/draw"
 )
 
@@ -195,6 +197,46 @@ func NewApp() *App {
 func (a *App) configureDesktop(desktop *application.App, window application.Window) {
 	a.desktop = desktop
 	a.mainWindow = window
+}
+
+// OpenLayerStyleWindow creates the layer-style editor as a real native window.
+// A webview cannot draw beyond its native window, so keeping this dialog in the
+// main DOM would always clip it at the editor borders.
+func (a *App) OpenLayerStyleWindow() error {
+	if a.desktop == nil {
+		return fmt.Errorf("aplicativo desktop indisponivel")
+	}
+	if existing, ok := a.desktop.Window.GetByName("layer-styles"); ok {
+		existing.Show()
+		existing.Focus()
+		return nil
+	}
+
+	window := a.desktop.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:                       "layer-styles",
+		Title:                      "Opções de mesclagem — Axia",
+		URL:                        "/?window=layer-styles",
+		Width:                      680,
+		Height:                     580,
+		MinWidth:                   560,
+		MinHeight:                  420,
+		Frameless:                  runtime.GOOS == "windows",
+		BackgroundColour:           application.NewRGB(32, 38, 46),
+		DefaultContextMenuDisabled: true,
+		Windows: application.WindowsWindow{
+			HiddenOnTaskbar: true,
+		},
+		Linux: application.LinuxWindow{
+			WebviewGpuPolicy: application.WebviewGpuPolicyAlways,
+		},
+	})
+	window.RegisterHook(events.Common.WindowClosing, func(_ *application.WindowEvent) {
+		a.desktop.Event.Emit(layerStyleWindowClosedEvent)
+	})
+	if a.mainWindow != nil {
+		a.mainWindow.AttachModal(window)
+	}
+	return nil
 }
 
 func (a *App) newSaveFileDialog(title, filename, filterName, pattern string) (*application.SaveFileDialogStruct, error) {

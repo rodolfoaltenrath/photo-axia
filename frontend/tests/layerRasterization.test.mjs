@@ -20,7 +20,7 @@ test('somente conteúdo visual suportado pode ser rasterizado', () => {
   assert.equal(layerCanRasterize(baseLayer({
     image: { width: 20, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
     transform: { x: 0, y: 0, width: 20, height: 10 }
-  })), true)
+  })), false)
   assert.equal(layerCanRasterize(baseLayer({
     kind: 'text',
     text: { content: 'Axia', fontFamily: 'Arial', fontSize: 20, fontWeight: 400, color: '#fff', alignment: 'left', lineHeight: 1.2, baseWidth: 50, baseHeight: 24 },

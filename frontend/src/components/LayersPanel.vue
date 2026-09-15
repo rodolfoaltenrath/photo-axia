@@ -7,11 +7,13 @@ import addLayerIcon from '../assets/icons/add-layer.svg'
 import { layerCanRasterize } from '../editor/layerRasterization'
 import { layerCanExportPNG } from '../editor/layerExport'
 import { layersCanConvertToSmart } from '../editor/smartLayers'
+import { layerStyleNeedsCompositing } from '../editor/layerStyleCompositor'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
 import type { LayerSelectionMode } from '../editor/layerSelection'
 
 const props = defineProps<{
   activeLayerId: string
+  canPasteLayerStyles: boolean
   documentBackground: DocumentBackground
   selectedLayerIds: string[]
   layers: LayerItem[]
@@ -20,7 +22,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'addLayer'): void
+  (event: 'clearLayerStyles', layerId: string): void
   (event: 'convertToSmartLayer'): void
+  (event: 'copyLayerStyles', layerId: string): void
   (event: 'deleteLayer', layerId: string): void
   (event: 'duplicateLayer', layerId: string): void
   (event: 'editSmartLayer', layerId: string): void
@@ -30,6 +34,7 @@ const emit = defineEmits<{
   (event: 'reorderLayer', layerId: string, targetId: string, position: 'before' | 'after'): void
   (event: 'mergeLayers'): void
   (event: 'openLayerStyles', layerId: string): void
+  (event: 'pasteLayerStyles', layerId: string): void
   (event: 'rasterizeLayer', layerId: string): void
   (event: 'selectLayer', layerId: string, mode: LayerSelectionMode): void
   (event: 'toggleLayer', layerId: string): void
@@ -68,6 +73,9 @@ const contextCanConvertToSmart = computed(() => layersCanConvertToSmart(contextS
 const contextCanEditSmart = computed(() => contextLayer.value?.kind === 'smart' && Boolean(contextLayer.value.smart))
 const contextCanExport = computed(() => layerCanExportPNG(contextLayer.value, props.documentBackground))
 const contextCanRasterize = computed(() => layerCanRasterize(contextLayer.value))
+const contextHasLayerStyle = computed(() => Boolean(
+  contextLayer.value && layerStyleNeedsCompositing(contextLayer.value.styles)
+))
 const draggedLayer = computed(() => props.layers.find((layer) => layer.id === draggedLayerId.value))
 const draggedLayerFillStyle = computed(() => ({
   '--layer-fill-opacity': String(layerStyleFillOpacity(draggedLayer.value?.styles))
@@ -120,7 +128,7 @@ async function openContextMenu(layerId: string, clientX: number, clientY: number
     : [{ index: props.layers.indexOf(layer), layer }]
   if (!selectedIdSet.value.has(layerId)) emit('selectLayer', layerId, 'replace')
   const menuWidth = 224
-  const menuHeight = 120 + 32 * (
+  const menuHeight = 216 + 32 * (
     Number(layersCanConvertToSmart(contextualItems)) +
     Number(layer.kind === 'smart' && Boolean(layer.smart)) +
     Number(layerCanRasterize(layer))
@@ -150,6 +158,27 @@ function openStylesFromContextMenu() {
   if (!layerId) return
   closeContextMenu()
   emit('openLayerStyles', layerId)
+}
+
+function copyStylesFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId) return
+  closeContextMenu()
+  emit('copyLayerStyles', layerId)
+}
+
+function pasteStylesFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId || !props.canPasteLayerStyles) return
+  closeContextMenu()
+  emit('pasteLayerStyles', layerId)
+}
+
+function clearStylesFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId || !contextHasLayerStyle.value) return
+  closeContextMenu()
+  emit('clearLayerStyles', layerId)
 }
 
 function rasterizeFromContextMenu() {
@@ -366,6 +395,25 @@ onBeforeUnmount(() => {
         >
           <span>Opções de mesclagem…</span>
         </button>
+        <button type="button" role="menuitem" @click="copyStylesFromContextMenu">
+          <span>Copiar estilo da camada</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          :disabled="!canPasteLayerStyles"
+          @click="pasteStylesFromContextMenu"
+        >
+          <span>Colar estilo da camada</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          :disabled="!contextHasLayerStyle"
+          @click="clearStylesFromContextMenu"
+        >
+          <span>Limpar estilo da camada</span>
+        </button>
         <button
           type="button"
           role="menuitem"
@@ -380,7 +428,7 @@ onBeforeUnmount(() => {
           role="menuitem"
           @click="convertToSmartFromContextMenu"
         >
-          <span>Converter em camada inteligente</span>
+          <span>Converter em Objeto Inteligente</span>
         </button>
         <button
           v-if="contextCanEditSmart"
@@ -388,7 +436,7 @@ onBeforeUnmount(() => {
           role="menuitem"
           @click="editSmartFromContextMenu"
         >
-          <span>Editar conteúdo</span>
+          <span>Editar conteúdo…</span>
         </button>
         <button
           v-if="contextCanRasterize"

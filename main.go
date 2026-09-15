@@ -12,6 +12,7 @@ import (
 var assets embed.FS
 
 const nativeFilesDroppedEvent = "axia:files-dropped"
+const layerStyleWindowClosedEvent = "axia:layer-styles:window-closed"
 
 func init() {
 	// Registering the payload type allows the Wails v3 binding generator and
