@@ -40,12 +40,8 @@ export function sendLayerStyleWindowSession(session: LayerStyleWindowSession) {
   return Events.Emit(OPEN_EVENT, session)
 }
 
-export async function closeLayerStyleNativeWindow() {
-  try {
-    await Window.Get(LAYER_STYLE_WINDOW_NAME).Close()
-  } catch {
-    // The user may already have closed the native window with Alt+F4.
-  }
+export async function closeCurrentLayerStyleWindow() {
+  await Window.Close()
 }
 
 export function registerLayerStyleWindowHost(handlers: {

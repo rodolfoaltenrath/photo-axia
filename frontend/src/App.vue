@@ -9,7 +9,7 @@ import NewDocumentDialog from './components/NewDocumentDialog.vue'
 import ExportImageDialog from './components/ExportImageDialog.vue'
 import ProjectHome from './components/ProjectHome.vue'
 import PropertiesPanel from './components/PropertiesPanel.vue'
-import LayerStylePresetsDialog from './components/LayerStylePresetsDialog.vue'
+import LayerStylesPanel from './components/LayerStylesPanel.vue'
 import ScaleLayerEffectsDialog from './components/ScaleLayerEffectsDialog.vue'
 import ToolBar from './components/ToolBar.vue'
 import TopMenu from './components/TopMenu.vue'
@@ -144,7 +144,6 @@ import { applyGradient, disposeGradientEngine } from './services/gradientEngine'
 import { applyPaintBucket, applySolidFill, disposePaintBucketEngine } from './services/paintBucketEngine'
 import { clearLayerStyleRenderCache, disposeLayerStyleCompositor } from './services/layerStyleCompositor'
 import {
-  closeLayerStyleNativeWindow,
   openLayerStyleNativeWindow,
   registerLayerStyleWindowHost,
   sendLayerStyleWindowSession,
@@ -168,7 +167,6 @@ import {
   deleteLayerStylePreset,
   listLayerStylePresets,
   presetStyles,
-  renameLayerStylePreset,
   saveLayerStylePreset,
   type LayerStylePreset
 } from './editor/layerStylePresets'
@@ -280,8 +278,8 @@ const recentProjects = ref<RecentProject[]>([])
 const recentProjectsLoading = ref(true)
 const showUnsavedChangesDialog = ref(false)
 const showFlattenImageDialog = ref(false)
-const layerStylePresetsLayerId = ref<string>()
 const layerStylePresets = shallowRef<LayerStylePreset[]>([])
+const inspectorTab = ref<'properties' | 'styles'>('properties')
 const scaleLayerEffectsSession = shallowRef<{
   items: Array<{ layerId: string; before: LayerStyleConfig }>
 }>()
@@ -414,7 +412,7 @@ const documentDirty = computed(() => {
 const modalOpen = computed(() => editorIsBlockedByModal(
   showNewDocumentDialog.value || showExportImageDialog.value || showImportPdfDialog.value,
   showUnsavedChangesDialog.value,
-  Boolean(layerStyleDialog.value) || showFlattenImageDialog.value || Boolean(scaleLayerEffectsSession.value) || Boolean(layerStylePresetsLayerId.value)
+  Boolean(layerStyleDialog.value) || showFlattenImageDialog.value || Boolean(scaleLayerEffectsSession.value)
 ))
 const layerStyleDialogLayer = computed(() => {
   const session = layerStyleDialog.value
@@ -428,7 +426,6 @@ watch(documentDirty, (dirty) => {
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
 })
-const layerStylePresetsLayer = computed(() => layers.value.find((layer) => layer.id === layerStylePresetsLayerId.value))
 const selectedLayerItems = computed(() => {
   const selected = new Set(selectedLayerIds.value)
   return layers.value
@@ -450,7 +447,7 @@ const scaleLayerEffectsLayers = computed(() => {
 const scaleLayerEffectsLabel = computed(() => scaleLayerEffectsLayers.value.length === 1
   ? scaleLayerEffectsLayers.value[0]?.name
   : `${scaleLayerEffectsLayers.value.length} camadas`)
-const layerStylePresetsTargetCount = computed(() => styleTargetLayers(layerStylePresetsLayerId.value).length)
+const layerStylePresetsTargetCount = computed(() => styleTargetLayers().length)
 const canConvertSelectedLayersToSmart = computed(() => layersCanConvertToSmart(selectedLayerItems.value))
 const canFlattenImage = computed(() => documentCanFlatten(activeDocument.value, layers.value))
 const canClearActiveLayerStyles = computed(() => activeStyleTargetLayers.value.some((layer) => layerStyleCanClear(layer.styles)))
@@ -1784,7 +1781,7 @@ function previewLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGlo
   activeDocument.value.layerStyleGlobalLight = normalizeLayerStyleGlobalLight(globalLight)
 }
 
-function cancelLayerStyles(closeNativeWindow = true) {
+function cancelLayerStyles() {
   const session = layerStyleDialog.value
   const layer = layerStyleDialogLayer.value
   if (session && layer) {
@@ -1792,9 +1789,6 @@ function cancelLayerStyles(closeNativeWindow = true) {
     activeDocument.value.layerStyleGlobalLight = { ...session.beforeGlobalLight }
   }
   layerStyleDialog.value = undefined
-  if (closeNativeWindow && nativeLayerStyleWindowEnabled && !nativeLayerStyleDialogFallback.value) {
-    void closeLayerStyleNativeWindow()
-  }
 }
 
 function applyLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGlobalLight) {
@@ -1812,9 +1806,6 @@ function applyLayerStyles(styles: LayerStyleConfig, globalLight: LayerStyleGloba
   layer.styles = after
   activeDocument.value.layerStyleGlobalLight = globalLightAfter
   layerStyleDialog.value = undefined
-  if (nativeLayerStyleWindowEnabled && !nativeLayerStyleDialogFallback.value) {
-    void closeLayerStyleNativeWindow()
-  }
   if (JSON.stringify(before) === JSON.stringify(after) && JSON.stringify(globalLightBefore) === JSON.stringify(globalLightAfter)) return
   recordHistory('Alterar estilos de camada', {
     type: 'layer-styles:change',
@@ -2000,15 +1991,13 @@ async function refreshLayerStylePresets() {
 
 function openLayerStylePresets(layerId = activeLayerId.value) {
   if (isBusy.value || modalOpen.value || !layers.value.some((layer) => layer.id === layerId)) return
-  layerStylePresetsLayerId.value = layerId
-}
-
-function closeLayerStylePresets() {
-  if (!isBusy.value) layerStylePresetsLayerId.value = undefined
+  if (!selectedLayerIds.value.includes(layerId)) selectSingleLayer(layerId)
+  else activeLayerId.value = layerId
+  inspectorTab.value = 'styles'
 }
 
 async function saveCurrentLayerStylePreset(name: string) {
-  const layer = layerStylePresetsLayer.value
+  const layer = activeLayer.value
   if (!layer || isBusy.value) return
   isBusy.value = true
   try {
@@ -2021,7 +2010,7 @@ async function saveCurrentLayerStylePreset(name: string) {
 }
 
 async function applySavedLayerStylePreset(id: string) {
-  const targets = styleTargetLayers(layerStylePresetsLayerId.value)
+  const targets = styleTargetLayers()
   const preset = layerStylePresets.value.find((item) => item.id === id)
   if (!targets.length || !preset || isBusy.value) return
   const styles = presetStyles(preset)
@@ -2037,14 +2026,6 @@ async function applySavedLayerStylePreset(id: string) {
   statusText.value = changes.length === 1
     ? `Estilo “${preset.name}” aplicado`
     : `Estilo “${preset.name}” aplicado em ${changes.length} camadas`
-}
-
-async function renameSavedLayerStylePreset(id: string, name: string) {
-  if (isBusy.value) return
-  isBusy.value = true
-  try { await renameLayerStylePreset(id, name); await refreshLayerStylePresets() }
-  catch (error) { showError(error, 'Não foi possível renomear o estilo.') }
-  finally { isBusy.value = false }
 }
 
 async function deleteSavedLayerStylePreset(id: string) {
@@ -4715,7 +4696,7 @@ onMounted(async () => {
     unregisterLayerStyleWindowHost = registerLayerStyleWindowHost({
       apply: applyNativeLayerStyles,
       cancel: cancelNativeLayerStyles,
-      closed: () => cancelLayerStyles(false),
+      closed: cancelLayerStyles,
       preview: previewNativeLayerStyles,
       ready: resendLayerStyleWindowSession
     })
@@ -4987,10 +4968,24 @@ onBeforeUnmount(() => {
         <PropertiesPanel
           :active-layer="activeLayer"
           :active-tool="activeTool"
+          :active-tab="inspectorTab"
           :zoom="zoom"
+          @update:active-tab="inspectorTab = $event"
           @update:text="updateTextLayer(activeLayer.id, $event)"
           @update:zoom="setZoom"
-        />
+        >
+          <template #styles>
+            <LayerStylesPanel
+              :busy="isBusy"
+              :layer-name="activeLayer.name"
+              :presets="layerStylePresets"
+              :target-count="layerStylePresetsTargetCount"
+              @apply="applySavedLayerStylePreset"
+              @delete="deleteSavedLayerStylePreset"
+              @save="saveCurrentLayerStylePreset"
+            />
+          </template>
+        </PropertiesPanel>
 
         <LayersPanel
           :active-layer-id="activeLayerId"
@@ -5082,18 +5077,6 @@ onBeforeUnmount(() => {
       @cancel="cancelScaleLayerEffects"
       @confirm="applyScaleLayerEffects"
       @preview="previewScaleLayerEffects"
-    />
-    <LayerStylePresetsDialog
-      :busy="isBusy"
-      :layer-name="layerStylePresetsLayer?.name"
-      :open="Boolean(layerStylePresetsLayer)"
-      :presets="layerStylePresets"
-      :target-count="layerStylePresetsTargetCount"
-      @apply="applySavedLayerStylePreset"
-      @cancel="closeLayerStylePresets"
-      @delete="deleteSavedLayerStylePreset"
-      @rename="renameSavedLayerStylePreset"
-      @save="saveCurrentLayerStylePreset"
     />
     <UnsavedChangesDialog
       :busy="isBusy"

@@ -6,10 +6,12 @@ import { layerKindHelp, layerKindLabel } from '../editor/layerPresentation'
 const props = defineProps<{
   activeLayer: LayerItem
   activeTool: EditorTool
+  activeTab: 'properties' | 'styles'
   zoom: number
 }>()
 
 const emit = defineEmits<{
+  (event: 'update:activeTab', value: 'properties' | 'styles'): void
   (event: 'update:text', patch: Partial<TextLayerContent>): void
   (event: 'update:zoom', value: number): void
 }>()
@@ -30,11 +32,24 @@ watch(
 
 <template>
   <section class="panel properties-panel">
-    <div class="panel-title properties-panel-title">
-      <h2>Propriedades</h2>
+    <div class="panel-title properties-panel-title inspector-tabs" role="tablist" aria-label="Painel de edição">
+      <button
+        :aria-selected="activeTab === 'properties'"
+        :class="{ 'inspector-tab--active': activeTab === 'properties' }"
+        role="tab"
+        type="button"
+        @click="emit('update:activeTab', 'properties')"
+      >Propriedades</button>
+      <button
+        :aria-selected="activeTab === 'styles'"
+        :class="{ 'inspector-tab--active': activeTab === 'styles' }"
+        role="tab"
+        type="button"
+        @click="emit('update:activeTab', 'styles')"
+      >Estilos</button>
     </div>
 
-    <div class="properties-scroll">
+    <div v-if="activeTab === 'properties'" class="properties-scroll" role="tabpanel">
       <div class="property-summary">
         <span>Ferramenta</span>
         <strong class="property-summary-tool">{{ activeTool === 'brush' ? 'Pincel' : activeTool === 'eraser' ? 'Borracha' : activeTool === 'shape' ? 'Forma' : activeTool }}</strong>
@@ -173,6 +188,10 @@ watch(
           @input="$emit('update:zoom', Number(($event.target as HTMLInputElement).value))"
         />
       </label>
+    </div>
+
+    <div v-else class="properties-scroll styles-panel-scroll" role="tabpanel">
+      <slot name="styles"></slot>
     </div>
 
   </section>

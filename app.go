@@ -199,6 +199,19 @@ func (a *App) configureDesktop(desktop *application.App, window application.Wind
 	a.mainWindow = window
 }
 
+func (a *App) restoreMainWindowFocusAfterModalClose() {
+	mainWindow := a.mainWindow
+	if mainWindow == nil {
+		return
+	}
+	// Wails re-enables a modal's parent while processing the native close
+	// message. Focusing from WindowClosing itself is too early because the
+	// parent is still disabled at that point, so let that message finish first.
+	time.AfterFunc(25*time.Millisecond, func() {
+		mainWindow.Focus()
+	})
+}
+
 // OpenLayerStyleWindow creates the layer-style editor as a real native window.
 // A webview cannot draw beyond its native window, so keeping this dialog in the
 // main DOM would always clip it at the editor borders.
@@ -232,6 +245,7 @@ func (a *App) OpenLayerStyleWindow() error {
 	})
 	window.RegisterHook(events.Common.WindowClosing, func(_ *application.WindowEvent) {
 		a.desktop.Event.Emit(layerStyleWindowClosedEvent)
+		a.restoreMainWindowFocusAfterModalClose()
 	})
 	if a.mainWindow != nil {
 		a.mainWindow.AttachModal(window)

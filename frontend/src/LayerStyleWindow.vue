@@ -4,6 +4,7 @@ import LayerStyleDialog from './components/LayerStyleDialog.vue'
 import { LatestFrameEmitter } from './editor/latestFrameEmitter.ts'
 import { cloneLayerStyleConfig, normalizeLayerStyleGlobalLight } from './editor/layerStyles.ts'
 import {
+  closeCurrentLayerStyleWindow,
   emitLayerStyleWindowApply,
   emitLayerStyleWindowCancel,
   emitLayerStyleWindowPreview,
@@ -45,15 +46,19 @@ function preview(styles: LayerStyleConfig, globalLight: LayerStyleGlobalLight) {
   if (payload) previewEmitter.enqueue(payload)
 }
 
-function apply(styles: LayerStyleConfig, globalLight: LayerStyleGlobalLight) {
+async function apply(styles: LayerStyleConfig, globalLight: LayerStyleGlobalLight) {
   previewEmitter.clear()
   const payload = change(styles, globalLight)
-  if (payload) void emitLayerStyleWindowApply(payload)
+  if (!payload) return
+  await emitLayerStyleWindowApply(payload)
+  await closeCurrentLayerStyleWindow()
 }
 
-function cancel() {
+async function cancel() {
   previewEmitter.clear()
-  if (session.value) void emitLayerStyleWindowCancel(session.value.sessionId)
+  if (!session.value) return
+  await emitLayerStyleWindowCancel(session.value.sessionId)
+  await closeCurrentLayerStyleWindow()
 }
 
 onMounted(() => {
