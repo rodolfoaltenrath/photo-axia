@@ -16,7 +16,7 @@ const document = {
 
 const defaultStyles = () => ({ enabled: true, fillOpacity: 100, effects: [] })
 const imageLayer = (overrides = {}) => ({
-  id: 'image', name: 'Imagem', visible: true, opacity: 70, blendMode: 'multiply', kind: 'image',
+  id: 'image', name: 'Imagem', visible: true, opacity: 70, blendMode: 'multiply', kind: 'pixel',
   styles: defaultStyles(),
   image: { width: 100, height: 80, mimeType: 'image/png', sourceUrl: 'blob:image' },
   transform: { x: 40, y: 25, width: 100, height: 80, rotation: 15 },

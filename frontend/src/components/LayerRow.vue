@@ -253,7 +253,7 @@ function openThumbnailAction() {
         :class="{ 'layer-thumb--transparent': !layer.image }"
         :style="thumbnailStyle"
         :title="layer.kind === 'smart'
-          ? 'Editar conteúdo do Objeto Inteligente'
+          ? 'Objeto Inteligente — dê dois cliques para editar o conteúdo'
           : `${layerKindHelp(layer)} — dê dois cliques para abrir Opções de mesclagem`"
         @dblclick.stop="openThumbnailAction"
       >
@@ -280,7 +280,7 @@ function openThumbnailAction() {
         <svg v-else-if="layer.kind === 'shape' && layer.shape && shapeThumbnail" class="layer-thumb-shape" aria-hidden="true" :viewBox="shapeThumbnail.viewBox" preserveAspectRatio="xMidYMid meet">
           <path :d="shapeThumbnail.path" :fill="layer.shape.color" />
         </svg>
-        <span v-if="layer.kind === 'smart'" class="layer-thumb-smart" aria-label="Objeto inteligente" title="Objeto inteligente">
+        <span v-if="layer.kind === 'smart'" class="layer-thumb-smart" aria-label="Objeto Inteligente" title="Objeto Inteligente">
           <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3.5 2.5h6l3 3v8h-9zM9.5 2.5v3h3M5.5 10.5h5M8 8v5" /></svg>
         </span>
       </span>

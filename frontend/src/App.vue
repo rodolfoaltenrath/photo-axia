@@ -79,7 +79,8 @@ import type { ExportSettings } from './editor/exportSettings'
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
 import {
-  createNativeImageLayer,
+  createNativePixelLayer,
+  createPlacedImageSmartLayer,
   importedImageDocumentSettings,
   validateImportedImageDocument
 } from './editor/mediaDocument'
@@ -1076,7 +1077,7 @@ function duplicateLayer(layerId = activeLayerId.value) {
     ...cloneLayerState(source),
     id: crypto.randomUUID(),
     name: `${source.name} cópia`,
-    kind: source.kind === 'background' ? 'image' : source.kind,
+    kind: source.kind === 'background' ? 'pixel' : source.kind,
     transform: source.transform
       ? {
           ...source.transform,
@@ -1243,7 +1244,7 @@ async function duplicateSelectionOrLayer() {
   if (isBusy.value) return
   clearFloatingSelectionSession()
   const source = activeLayer.value
-  if ((source.kind !== 'image' && source.kind !== 'background' && source.kind !== 'pixel') || !source.image || !source.transform) {
+  if ((source.kind !== 'background' && source.kind !== 'pixel') || !source.image || !source.transform) {
     showError(new Error('A seleção precisa estar sobre uma camada de imagem.'), 'Não foi possível copiar a seleção.')
     return
   }
@@ -1299,7 +1300,7 @@ async function duplicateSelectionOrLayer() {
       visible: true,
       opacity: 100,
       blendMode: source.blendMode,
-      kind: 'image',
+      kind: 'pixel',
       styles: cloneLayerStyleConfig(source.styles),
       image: {
         ...asset,
@@ -1470,7 +1471,7 @@ async function mergeSelectedLayers() {
       visible: true,
       opacity: 100,
       blendMode: 'normal',
-      kind: includesBackground ? 'background' : 'image',
+      kind: includesBackground ? 'background' : 'pixel',
       styles: createLayerStyleConfig(),
       image: {
         width: result.width,
@@ -2160,7 +2161,7 @@ async function replaceDocumentWithImportedImage(
 
   const settings = importedImageDocumentSettings(image, documentName, background)
   const document = await createEditorDocument(settings, image.width, image.height)
-  const layer = createNativeImageLayer(image)
+  const layer = createNativePixelLayer(image)
   let documentAdopted = false
 
   try {
@@ -2571,65 +2572,50 @@ async function finishSmartLayerEdit() {
 
 async function addImportedImages(images: ImportedImage[], errors: string[] = []) {
   if (images.length) {
-    const imageLayers: LayerItem[] = images.map((image) => ({
-      id: image.id || crypto.randomUUID(),
-      name: image.name,
-      visible: true,
-      opacity: 100,
-      blendMode: 'normal',
-      kind: 'image',
-      styles: createLayerStyleConfig(),
-      image: {
-        width: image.width,
-        height: image.height,
-        mimeType: image.mimeType,
-        sourceUrl: image.sourceUrl,
-        byteSize: image.byteSize,
-        resolutionDpiX: image.resolutionDpiX,
-        resolutionDpiY: image.resolutionDpiY,
-        resolutionSource: image.resolutionSource
-      },
-      transform: imageTransform(image)
-    }))
-    const importedIds = new Set(imageLayers.map((layer) => layer.id))
+    const placedLayers = images.map((image) => createPlacedImageSmartLayer(
+      image,
+      activeDocument.value,
+      imageTransform(image)
+    ))
+    const importedIds = new Set(placedLayers.map((layer) => layer.id))
     const activeBefore = activeLayerId.value
     const toolBefore = activeTool.value
     const selectionBefore = selection.value
     let inserted = false
-    trackLayerAssets(imageLayers)
-    previewLayerCountHint = imageLayers.length + layers.value.filter((layer) => layer.visible && layer.image).length
+    trackLayerAssets(placedLayers)
+    previewLayerCountHint = placedLayers.length + layers.value.filter((layer) => layer.visible && layer.image).length
     try {
-      for (const [index, layer] of imageLayers.entries()) {
+      for (const [index, layer] of placedLayers.entries()) {
         statusText.value =
-          imageLayers.length === 1
+          placedLayers.length === 1
             ? 'Otimizando imagem para edição…'
-            : `Otimizando imagem ${index + 1} de ${imageLayers.length}…`
+            : `Otimizando imagem ${index + 1} de ${placedLayers.length}…`
         await refreshLayerPreview(layer, true, true, index === 0)
       }
 
-      layers.value = [...imageLayers, ...layers.value]
+      layers.value = [...placedLayers, ...layers.value]
       inserted = true
       previewLayerCountHint = 0
-      activeLayerId.value = imageLayers[0]!.id
+      activeLayerId.value = placedLayers[0]!.id
       activeTool.value = 'move'
       selection.value = null
       selectionGeneration++
       statusText.value = images.length === 1 ? 'Sincronizando preview…' : 'Sincronizando previews…'
       await nextTick()
-      await canvasViewport.value?.waitForLayerImages(imageLayers.map((layer) => ({
+      await canvasViewport.value?.waitForLayerImages(placedLayers.map((layer) => ({
         layerId: layer.id,
         source: layer.image?.previewUrl ?? layer.image!.sourceUrl
       })))
       recordHistory(images.length === 1 ? 'Importar imagem' : 'Importar imagens', {
         type: 'layers:add',
-        items: imageLayers.map((layer, index) => ({ index, layer: cloneLayerHistoryState(layer) })),
+        items: placedLayers.map((layer, index) => ({ index, layer: cloneLayerHistoryState(layer) })),
         activeBefore,
         activeAfter: activeLayerId.value
       })
       statusText.value = images.length === 1 ? 'Imagem importada' : `${images.length} imagens importadas`
     } catch (error) {
       previewLayerCountHint = 0
-      for (const layer of imageLayers) previewControllers.get(layer.id)?.abort()
+      for (const layer of placedLayers) previewControllers.get(layer.id)?.abort()
       if (inserted) {
         layers.value = layers.value.filter((layer) => !importedIds.has(layer.id))
         activeLayerId.value = activeBefore
@@ -2638,12 +2624,12 @@ async function addImportedImages(images: ImportedImage[], errors: string[] = [])
         selectionGeneration++
         await nextTick()
       }
-      for (const layer of imageLayers) {
+      for (const layer of placedLayers) {
         for (const source of [layer.image?.previewUrl, layer.image?.sourceUrl]) {
           if (source) releasePreparedImage(source)
         }
       }
-      const failedNativeImageIDs = imageLayers.flatMap(layerNativeImageIDs)
+      const failedNativeImageIDs = placedLayers.flatMap(layerNativeImageIDs)
       for (const id of failedNativeImageIDs) trackedNativeImageIDs.delete(id)
       void releaseDesktopImageImports(failedNativeImageIDs)
       collectUnusedObjectUrls()
@@ -2676,7 +2662,7 @@ async function selectWithMagicWand(point: SelectionPoint, combineMode: Selection
     showError(new Error('Torne a camada ativa visível antes de usar a Varinha Mágica.'), 'Seleção indisponível.')
     return
   }
-  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
+  if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
     showError(new Error('A varinha mágica precisa de uma camada de imagem ativa.'), 'Seleção indisponível.')
     return
   }
@@ -2747,7 +2733,7 @@ async function deleteSelectedPixels() {
   const currentSelection = selection.value
   const layer = activeLayer.value
   if (!currentSelection || selectionIsEmpty(currentSelection)) return
-  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
+  if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
     showError(new Error('Selecione uma camada de imagem para apagar pixels.'), 'Não foi possível apagar a seleção.')
     return
   }
@@ -2856,7 +2842,7 @@ async function commitSelectionMove(
 ) {
   if (isBusy.value || (!deltaX && !deltaY)) return
   const layer = activeLayer.value
-  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
+  if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
     showError(new Error('Selecione uma camada de imagem para mover pixels.'), 'Não foi possível mover a seleção.')
     return
   }
@@ -3034,7 +3020,7 @@ async function performBrushStroke(
   if (isBusy.value) return false
   clearFloatingSelectionSession()
   const layer = activeLayer.value
-  if ((layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform || points.length === 0) return false
+  if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform || points.length === 0) return false
 
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
@@ -3184,7 +3170,7 @@ async function performGradient(
   clearFloatingSelectionSession()
   const layer = activeLayer.value
   if (
-    (layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') ||
+    (layer.kind !== 'background' && layer.kind !== 'pixel') ||
     !layer.image ||
     !layer.transform
   ) return false
@@ -3339,7 +3325,7 @@ async function performPaintBucket(point: SelectionPoint | null, color: string, b
   if (isBusy.value) return false
   clearFloatingSelectionSession()
   const layer = activeLayer.value
-  if (!layer.visible || (layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) return false
+  if (!layer.visible || (layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) return false
   const documentId = activeDocument.value.id
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
@@ -3481,8 +3467,7 @@ async function stageNextImagePlacement() {
   statusText.value = 'Preparando próxima imagem…'
   let layer: LayerItem | undefined
   try {
-    layer = createNativeImageLayer(image)
-    layer.transform = imageTransform(image)
+    layer = createPlacedImageSmartLayer(image, activeDocument.value, imageTransform(image))
     await prepareImportedDocumentLayer(layer)
     if (imagePlacementSession.value !== stagingSession) {
       if (layer.image?.previewUrl?.startsWith('blob:')) {
@@ -4606,7 +4591,7 @@ onBeforeUnmount(() => {
       :can-clear-layer-styles="canClearActiveLayerStyles"
       :can-duplicate-layer="Boolean(activeLayer.image || activeLayer.text || activeLayer.shape)"
       :can-edit-smart-layer="activeLayer.kind === 'smart'"
-      :can-fill-layer="activeLayer.visible && ['image', 'background', 'pixel'].includes(activeLayer.kind) && Boolean(activeLayer.image && activeLayer.transform)"
+      :can-fill-layer="activeLayer.visible && ['background', 'pixel'].includes(activeLayer.kind) && Boolean(activeLayer.image && activeLayer.transform)"
       :can-flatten-image="canFlattenImage"
       :can-merge-layers="selectedLayerIds.length > 1"
       :can-paste-layer-styles="canPasteActiveLayerStyles"
@@ -4762,6 +4747,8 @@ onBeforeUnmount(() => {
         @gradient-gesture="commitGradient"
         @shape-gesture="commitShape"
         @paint-bucket="commitPaintBucket"
+        @request-rasterize-layer="rasterizeLayer"
+        @request-edit-smart-layer="editSmartLayerContent"
         @update:gradient-config="gradientConfig = $event"
         @update:shape-config="updateShapeConfig"
         @update:shape-editing="shapeDraftEditing = $event"

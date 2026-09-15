@@ -8,7 +8,7 @@ import {
 } from '../src/editor/layerStyleOperations.ts'
 import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
 
-function layer(kind = 'image') {
+function layer(kind = 'pixel') {
   return {
     id: kind,
     name: kind,
@@ -17,7 +17,7 @@ function layer(kind = 'image') {
     blendMode: 'normal',
     kind,
     styles: createLayerStyleConfig(),
-    image: kind === 'image'
+    image: kind === 'pixel'
       ? { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' }
       : undefined
   }
@@ -40,7 +40,7 @@ test('cópia de estilo é profunda e preserva padrões sem compartilhar estado',
 
 test('efeitos podem ser colados em raster, mas não ficam invisíveis em camada vetorial', () => {
   const styled = { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('color-overlay')] }
-  assert.equal(layerCanPasteStyle(layer('image'), styled), true)
+  assert.equal(layerCanPasteStyle(layer('pixel'), styled), true)
   assert.equal(layerCanPasteStyle(layer('shape'), styled), false)
   assert.equal(layerCanPasteStyle(layer('shape'), { ...createLayerStyleConfig(), fillOpacity: 45 }), true)
   assert.equal(layerCanPasteStyle(layer('image')), false)

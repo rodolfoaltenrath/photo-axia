@@ -143,7 +143,7 @@ onBeforeUnmount(() => {
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openImageDocument'))">Abrir imagem como documento…</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openPdfDocument'))">Abrir PDF como documento…</button>
           <div class="application-menu-separator" role="separator"></div>
-          <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importImages'))">Adicionar imagens como camadas…</button>
+          <button type="button" role="menuitem" :disabled="isBusy" title="Adiciona imagens preservando os arquivos originais" @click="runCommand(() => emit('importImages'))">Adicionar imagens…</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('importPdf'))">Adicionar PDF como camada…</button>
           <div class="application-menu-separator" role="separator"></div>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('saveProject'))">Salvar</button>
@@ -172,13 +172,13 @@ onBeforeUnmount(() => {
           <button type="button" role="menuitem" :disabled="isBusy || !canDeleteLayer" @click="runCommand(() => emit('deleteLayer'))">Excluir camada</button>
           <button type="button" role="menuitem" :disabled="isBusy || !canMergeLayers" @click="runCommand(() => emit('mergeLayers'))">Mesclar selecionadas</button>
           <div class="application-menu-separator" role="separator"></div>
-          <button v-if="canConvertToSmartLayer" type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('convertToSmartLayer'))">Converter em Objeto Inteligente</button>
-          <button v-if="canEditSmartLayer" type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('editSmartLayer'))">Editar conteúdo…</button>
+          <button v-if="canConvertToSmartLayer" type="button" role="menuitem" :disabled="isBusy" title="Agrupa as camadas e preserva o conteúdo original" @click="runCommand(() => emit('convertToSmartLayer'))">Converter em Objeto Inteligente</button>
+          <button v-if="canEditSmartLayer" type="button" role="menuitem" :disabled="isBusy" title="Abre o conteúdo do Objeto Inteligente" @click="runCommand(() => emit('editSmartLayer'))">Editar conteúdo…</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('openLayerStyles'))">Opções de mesclagem…</button>
           <button type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('copyLayerStyles'))">Copiar estilo da camada</button>
           <button type="button" role="menuitem" :disabled="isBusy || !canPasteLayerStyles" @click="runCommand(() => emit('pasteLayerStyles'))">Colar estilo da camada</button>
           <button type="button" role="menuitem" :disabled="isBusy || !canClearLayerStyles" @click="runCommand(() => emit('clearLayerStyles'))">Limpar estilo da camada</button>
-          <button v-if="canRasterizeLayer" type="button" role="menuitem" :disabled="isBusy" @click="runCommand(() => emit('rasterizeLayer'))">Rasterizar camada</button>
+          <button v-if="canRasterizeLayer" type="button" role="menuitem" :disabled="isBusy" title="Transforma o conteúdo em uma camada rasterizada" @click="runCommand(() => emit('rasterizeLayer'))">Rasterizar camada</button>
           <div class="application-menu-separator" role="separator"></div>
           <button type="button" role="menuitem" :disabled="isBusy || !canFlattenImage" @click="runCommand(() => emit('flattenImage'))">Achatar imagem</button>
         </div>

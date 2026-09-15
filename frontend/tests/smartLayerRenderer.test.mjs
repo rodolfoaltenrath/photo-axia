@@ -19,7 +19,7 @@ function content(patch = {}) {
     background: 'transparent',
     layerStyleGlobalLight: { angle: 120, altitude: 30 },
     layers: [{
-      id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+      id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
       styles: { enabled: true, fillOpacity: 100, effects: [] },
       image: {
         width: 64, height: 32, mimeType: 'image/png', sourceUrl: 'blob:source',

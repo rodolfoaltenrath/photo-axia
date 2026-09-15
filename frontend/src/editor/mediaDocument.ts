@@ -1,6 +1,13 @@
 import { MAX_DOCUMENT_DIMENSION, MAX_DOCUMENT_PIXELS } from './document.ts'
 import { createLayerStyleConfig } from './layerStyles.ts'
-import type { DocumentBackground, ImportedImage, LayerItem, NewDocumentSettings } from '../types/editor.ts'
+import type {
+  DocumentBackground,
+  DocumentSpec,
+  ImportedImage,
+  LayerItem,
+  LayerTransform,
+  NewDocumentSettings
+} from '../types/editor.ts'
 
 export const MEDIA_DOCUMENT_FALLBACK_DPI = 72
 
@@ -42,14 +49,14 @@ export function importedImageDocumentSettings(
   }
 }
 
-export function createNativeImageLayer(image: ImportedImage): LayerItem {
+export function createNativePixelLayer(image: ImportedImage): LayerItem {
   return {
     id: image.id || crypto.randomUUID(),
     name: image.name.trim() || 'Imagem',
     visible: true,
     opacity: 100,
     blendMode: 'normal',
-    kind: 'image',
+    kind: 'pixel',
     styles: createLayerStyleConfig(),
     image: {
       width: image.width,
@@ -68,5 +75,39 @@ export function createNativeImageLayer(image: ImportedImage): LayerItem {
       height: image.height,
       rotation: 0
     }
+  }
+}
+
+export function createPlacedImageSmartLayer(
+  image: ImportedImage,
+  document: Pick<DocumentSpec, 'colorSpace' | 'layerStyleGlobalLight'>,
+  transform: LayerTransform
+): LayerItem {
+  const id = image.id || crypto.randomUUID()
+  const source = createNativePixelLayer({ ...image, id: crypto.randomUUID() })
+  const asset = { ...source.image! }
+  const name = image.name.trim() || 'Imagem'
+
+  return {
+    id,
+    name,
+    visible: true,
+    opacity: 100,
+    blendMode: 'normal',
+    kind: 'smart',
+    styles: createLayerStyleConfig(),
+    image: { ...asset },
+    smart: {
+      id,
+      width: image.width,
+      height: image.height,
+      resolutionDpi: importedImageDocumentDpi(image),
+      colorSpace: document.colorSpace,
+      background: 'transparent',
+      layerStyleGlobalLight: { ...document.layerStyleGlobalLight },
+      layers: [source],
+      revision: 1
+    },
+    transform: { ...transform }
   }
 }

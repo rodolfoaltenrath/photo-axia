@@ -75,7 +75,7 @@ test('aparência local força visibilidade e isola opacidade e mesclagem externa
     visible: false,
     opacity: 37,
     blendMode: 'multiply',
-    kind: 'image',
+    kind: 'pixel',
     styles: createLayerStyleConfig(),
     image: { width: 20, height: 10, mimeType: 'image/png', sourceUrl: 'blob:source' },
     transform: { x: -3.4, y: 7.2, width: 20, height: 10, rotation: 0 }

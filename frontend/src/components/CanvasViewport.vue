@@ -44,6 +44,7 @@ import {
 } from '../editor/selection'
 import { resolveSelectionCombineMode } from '../editor/selectionCombine'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
+import { layerCanRasterize } from '../editor/layerRasterization'
 import {
   colorSampleButtonIsPressed,
   colorSampleTarget,
@@ -246,7 +247,7 @@ const paintableLayer = computed(() => {
   const layer = activeLayer.value
   if (
     !layer?.visible ||
-    (layer.kind !== 'image' && layer.kind !== 'background' && layer.kind !== 'pixel') ||
+    (layer.kind !== 'background' && layer.kind !== 'pixel') ||
     !layer.image ||
     !layer.transform
   ) return undefined
@@ -902,7 +903,7 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
     const point = pointerToDocument(event)
     if (
       point &&
-      (activeLayer.value?.kind === 'image' || activeLayer.value?.kind === 'background' || activeLayer.value?.kind === 'pixel')
+      (activeLayer.value?.kind === 'background' || activeLayer.value?.kind === 'pixel')
     ) {
       startSelectionMove(event, point, props.selection)
     }
@@ -1028,10 +1029,13 @@ defineExpose({
   >
     <CanvasContextBar
       :active-tool="activeTool"
+      :active-layer-kind="activeLayer?.kind"
+      :active-layer-name="activeLayer?.name ?? 'Camada selecionada'"
       :auto-select-layer="autoSelectLayer"
       :brush-color="brushColor"
       :brush-size="brushSize"
       :capture-rotation-output="captureTransformRotationOutput"
+      :can-rasterize-layer="layerCanRasterize(activeLayer)"
       :document="document"
       :guide-count="guides.length"
       :gradient-config="gradientConfig"
@@ -1062,6 +1066,8 @@ defineExpose({
       @commit-shape="commitShapeDraft"
       @delete-selection="emit('deleteSelection')"
       @fit-document="fitDocument"
+      @request-rasterize-layer="activeLayer && emit('requestRasterizeLayer', activeLayer.id)"
+      @request-edit-smart-layer="activeLayer && emit('requestEditSmartLayer', activeLayer.id)"
       @update-auto-select-layer="emit('update:autoSelectLayer', $event)"
       @update-brush-color="emit('update:brushColor', $event)"
       @update-brush-size="emit('update:brushSize', $event)"

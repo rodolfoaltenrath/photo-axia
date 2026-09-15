@@ -1,5 +1,5 @@
 import type { EditorGuide, RulerOrigin, RulerUnit } from '../editor/guides'
-import type { DocumentSpec, ImageAsset, LayerItem, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, ShapeLayerContent, SmartLayerContent, TextLayerContent } from '../types/editor'
+import type { DocumentSpec, ImageAsset, LayerItem, LayerKind, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, ShapeLayerContent, SmartLayerContent, TextLayerContent } from '../types/editor'
 import { normalizeLayerBlendMode } from '../editor/blendModes.ts'
 import {
   cloneLayerStyleConfig,
@@ -49,7 +49,10 @@ interface AxiaStoredSmartContent extends Omit<SmartLayerContent, 'layers'> {
   layers: AxiaStoredLayer[]
 }
 
-interface AxiaStoredLayer extends Omit<LayerItem, 'image' | 'smart' | 'styles'> {
+type AxiaStoredLayerKind = LayerKind | 'image'
+
+interface AxiaStoredLayer extends Omit<LayerItem, 'kind' | 'image' | 'smart' | 'styles'> {
+  kind: AxiaStoredLayerKind
   image?: AxiaStoredImage
   smart?: AxiaStoredSmartContent
   styles?: unknown
@@ -394,7 +397,9 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
     const text = restoreText(stored.text)
     const shape = restoreShape(stored.shape)
     const styles = restoreLayerStyles(stored.styles, assets, assetUrls)
-    if (stored.kind === 'image' && (!image || !transform)) throw new Error('Camada de imagem incompleta.')
+    if ((stored.kind === 'image' || stored.kind === 'pixel') && (!image || !transform)) {
+      throw new Error('Camada de pixels incompleta.')
+    }
     if (stored.kind === 'text' && (!text || !transform)) throw new Error('Camada de texto incompleta.')
     if (stored.kind === 'shape' && (!shape || !transform)) throw new Error('Camada de forma incompleta.')
     let smart: SmartLayerContent | undefined
@@ -434,7 +439,7 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
       visible: Boolean(stored.visible),
       opacity: Math.max(0, Math.min(100, stored.opacity)),
       blendMode: normalizeLayerBlendMode(stored.blendMode),
-      kind: stored.kind,
+      kind: stored.kind === 'image' ? 'pixel' : stored.kind,
       styles,
       image,
       smart,

@@ -40,7 +40,7 @@ watch(
         <strong class="property-summary-tool">{{ activeTool === 'brush' ? 'Pincel' : activeTool === 'eraser' ? 'Borracha' : activeTool === 'shape' ? 'Forma' : activeTool }}</strong>
         <span>Camada</span>
         <strong :title="activeLayer.name">{{ activeLayer.name }}</strong>
-        <span>Tipo</span>
+        <span>Conteúdo</span>
         <strong :title="layerKindHelp(activeLayer)">{{ layerKindLabel(activeLayer) }}</strong>
       </div>
 

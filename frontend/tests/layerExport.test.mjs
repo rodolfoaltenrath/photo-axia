@@ -10,7 +10,7 @@ const base = {
 
 test('exporta conteúdo visual editável, raster e inteligente mesmo oculto', () => {
   assert.equal(layerCanExportPNG({
-    ...base, kind: 'image',
+    ...base, kind: 'pixel',
     image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
     transform: { x: 0, y: 0, width: 10, height: 10, rotation: 0 }
   }, 'transparent'), true)

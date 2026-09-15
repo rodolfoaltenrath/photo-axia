@@ -24,7 +24,7 @@ function projectState() {
     },
     layers: [
       {
-        id: 'image-a', name: 'Imagem A', visible: true, opacity: 80, blendMode: 'multiply', kind: 'image',
+        id: 'image-a', name: 'Imagem A', visible: true, opacity: 80, blendMode: 'multiply', kind: 'pixel',
         image: {
           width: 800, height: 600, mimeType: 'image/png', sourceUrl,
           byteSize: 90_000, resolutionDpiX: 150.01, resolutionDpiY: 150.01,
@@ -35,7 +35,7 @@ function projectState() {
         transform: { x: 10, y: 20, width: 800, height: 600, rotation: 15 }
       },
       {
-        id: 'image-b', name: 'Imagem B', visible: false, opacity: 100, kind: 'image',
+        id: 'image-b', name: 'Imagem B', visible: false, opacity: 100, kind: 'pixel',
         image: { width: 800, height: 600, mimeType: 'image/png', sourceUrl },
         transform: { x: 100, y: 200, width: 400, height: 300, rotation: 0 }
       },
@@ -94,6 +94,48 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
   assert.equal(restored.view.activeLayerId, 'image-a')
   assert.equal(restored.view.smartGuidesEnabled, true)
   assert.equal(restored.view.zoom, 68.89)
+})
+
+test('migra image legado para pixel inclusive dentro de Objeto Inteligente', () => {
+  const { manifest } = createAxiaProjectManifest(projectState())
+  manifest.layers[0].kind = 'image'
+  const nestedLegacy = structuredClone(manifest.layers[1])
+  nestedLegacy.id = 'nested-legacy'
+  nestedLegacy.kind = 'image'
+  manifest.layers.splice(1, 1, {
+    id: 'smart-legacy',
+    name: 'Objeto antigo',
+    visible: true,
+    opacity: 100,
+    blendMode: 'normal',
+    kind: 'smart',
+    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    transform: { x: 0, y: 0, width: 800, height: 600, rotation: 0 },
+    smart: {
+      id: 'smart-legacy',
+      width: 800,
+      height: 600,
+      resolutionDpi: 72,
+      colorSpace: 'sRGB',
+      background: 'transparent',
+      layerStyleGlobalLight: { angle: 120, altitude: 30 },
+      layers: [nestedLegacy],
+      revision: 1
+    }
+  })
+  const assetUrls = Object.fromEntries(
+    manifest.assets.map((asset) => [asset.id, `/__axia_asset/${asset.id}`])
+  )
+
+  const restored = restoreAxiaProject(JSON.stringify(manifest), assetUrls)
+  assert.equal(restored.layers[0].kind, 'pixel')
+  assert.equal(restored.layers[1].kind, 'smart')
+  assert.equal(restored.layers[1].smart.layers[0].kind, 'pixel')
+
+  const savedAgain = createAxiaProjectManifest(restored).manifest
+  assert.equal(savedAgain.layers[0].kind, 'pixel')
+  assert.equal(savedAgain.layers[1].smart.layers[0].kind, 'pixel')
+  assert.equal(JSON.stringify(savedAgain).includes('"kind":"image"'), false)
 })
 
 test('persiste uma camada de forma vetorial sem criar asset raster', () => {
@@ -269,7 +311,7 @@ test('rejeita conteúdo inteligente incompleto e aninhamento acima do limite', (
     layerStyleGlobalLight: { angle: 120, altitude: 30 }, revision: 1
   }
   let layer = {
-    id: 'leaf', name: 'Folha', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+    id: 'leaf', name: 'Folha', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
     styles: { enabled: true, fillOpacity: 100, effects: [] }, image: manifest.layers[0].image,
     transform: { x: 0, y: 0, width: 10, height: 10, rotation: 0 }
   }

@@ -199,7 +199,7 @@ test('aplica inserção, patch, reordenação e remoção de forma reversível',
     name: 'Imagem',
     visible: true,
     opacity: 100,
-    kind: 'image',
+    kind: 'pixel',
     image: {
       width: 3840,
       height: 2160,
@@ -249,7 +249,7 @@ test('desfazer uma transformação preserva o asset visual da camada', () => {
     name: 'Imagem 4K',
     visible: true,
     opacity: 100,
-    kind: 'image',
+    kind: 'pixel',
     image: {
       width: 3840,
       height: 2160,
@@ -280,7 +280,7 @@ test('desfaz e refaz a movimentação de várias camadas como uma ação atômic
   const first = { x: 10, y: 20, width: 100, height: 80, rotation: 0 }
   const second = { x: 220, y: 40, width: 60, height: 90, rotation: 15 }
   const layers = [
-    { id: 'first', name: 'Primeira', visible: true, opacity: 100, kind: 'image', transform: { ...first } },
+    { id: 'first', name: 'Primeira', visible: true, opacity: 100, kind: 'pixel', transform: { ...first } },
     { id: 'second', name: 'Segunda', visible: true, opacity: 100, kind: 'text', transform: { ...second } }
   ]
   const delta = {
@@ -311,7 +311,7 @@ test('desfaz e refaz a movimentação de várias camadas como uma ação atômic
 test('desfaz e refaz o modo de mesclagem sem tocar no raster', () => {
   const image = { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:blend' }
   const layers = [{
-    id: 'blend', name: 'Mesclagem', visible: true, opacity: 100, blendMode: 'multiply', kind: 'image', image
+    id: 'blend', name: 'Mesclagem', visible: true, opacity: 100, blendMode: 'multiply', kind: 'pixel', image
   }]
   const delta = {
     type: 'layer:patch',
@@ -382,7 +382,7 @@ test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização v
     }]
   }
   const layers = [{
-    id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+    id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
     image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
     transform: { x: 0, y: 0, width: 10, height: 10 },
     styles: initialStyles
@@ -416,7 +416,7 @@ test('estilos e luz global formam uma única alteração reversível', () => {
     }]
   }
   const layers = [{
-    id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+    id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
     image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
     transform: { x: 0, y: 0, width: 10, height: 10 }, styles: before
   }]
@@ -486,9 +486,9 @@ test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada'
 
 test('desfaz e refaz a substituição de várias camadas por uma mesclagem', () => {
   const base = { id: 'base', name: 'Base', visible: true, opacity: 100, blendMode: 'normal', kind: 'background' }
-  const first = { id: 'first', name: 'Primeira', visible: true, opacity: 100, blendMode: 'normal', kind: 'image' }
-  const second = { id: 'second', name: 'Segunda', visible: true, opacity: 100, blendMode: 'normal', kind: 'image' }
-  const merged = { id: 'merged', name: 'Mesclagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'image' }
+  const first = { id: 'first', name: 'Primeira', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel' }
+  const second = { id: 'second', name: 'Segunda', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel' }
+  const merged = { id: 'merged', name: 'Mesclagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel' }
   const layers = [first, second, base]
   const delta = {
     type: 'layers:replace',
@@ -513,7 +513,7 @@ test('desfaz e refaz a substituição de várias camadas por uma mesclagem', () 
 
 test('histórico de camada inteligente clona e retém assets internos recursivamente', () => {
   const inner = {
-    id: 'inner', name: 'Interna', visible: true, opacity: 100, blendMode: 'normal', kind: 'image',
+    id: 'inner', name: 'Interna', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
     styles: { enabled: true, fillOpacity: 100, effects: [] },
     image: { width: 20, height: 20, mimeType: 'image/png', sourceUrl: 'blob:inner', byteSize: 256 },
     transform: { x: 0, y: 0, width: 20, height: 20, rotation: 0 }

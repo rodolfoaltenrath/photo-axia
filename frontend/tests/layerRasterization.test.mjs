@@ -10,7 +10,7 @@ function baseLayer(patch = {}) {
     visible: true,
     opacity: 45,
     blendMode: 'multiply',
-    kind: 'image',
+    kind: 'pixel',
     styles: createLayerStyleConfig(),
     ...patch
   }

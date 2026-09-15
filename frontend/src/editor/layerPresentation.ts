@@ -1,13 +1,12 @@
 import type { LayerItem, LayerKind } from '../types/editor.ts'
 
 const LAYER_KIND_LABELS: Record<LayerKind, string> = {
-  pixel: 'Camada de pixels',
-  image: 'Camada de pixels',
+  pixel: 'Camada rasterizada',
   text: 'Texto',
-  shape: 'Forma vetorial',
+  shape: 'Forma',
   smart: 'Objeto inteligente',
   adjustment: 'Ajuste',
-  background: 'Plano de fundo'
+  background: 'Fundo'
 }
 
 export function layerKindLabel(layer: Pick<LayerItem, 'kind'>) {
@@ -17,20 +16,20 @@ export function layerKindLabel(layer: Pick<LayerItem, 'kind'>) {
 export function layerKindHelp(layer: Pick<LayerItem, 'kind'>) {
   switch (layer.kind) {
     case 'smart':
-      return 'Objeto inteligente — dê dois cliques na miniatura para editar o conteúdo'
+      return 'Objeto Inteligente: preserva o original ao redimensionar. Dê dois cliques na miniatura para editar o conteúdo.'
     case 'shape':
-      return 'Forma vetorial — mantém contornos editáveis ao redimensionar'
+      return 'Forma vetorial: cor, contorno e arredondamento continuam editáveis.'
     case 'text':
-      return 'Camada de texto editável'
+      return 'Texto: conteúdo, fonte, tamanho e cor continuam editáveis.'
     case 'background':
-      return 'Plano de fundo do documento'
+      return 'Plano de fundo do documento.'
     case 'adjustment':
-      return 'Ajuste não destrutivo aplicado às camadas abaixo'
+      return 'Ajuste não destrutivo aplicado às camadas abaixo.'
     default:
-      return 'Camada de pixels — permite pintura e edição direta'
+      return 'Camada de pixels: permite pintar, apagar e preencher diretamente.'
   }
 }
 
 export function layerIsPixelBased(layer: Pick<LayerItem, 'kind'>) {
-  return layer.kind === 'pixel' || layer.kind === 'image' || layer.kind === 'background'
+  return layer.kind === 'pixel' || layer.kind === 'background'
 }

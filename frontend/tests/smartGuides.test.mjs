@@ -11,7 +11,7 @@ const layer = (id, transform, visible = true) => ({
   name: id,
   visible,
   opacity: 100,
-  kind: 'image',
+  kind: 'pixel',
   transform
 })
 

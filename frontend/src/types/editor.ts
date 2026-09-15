@@ -16,7 +16,7 @@ export type EditorTool =
 
 import type { ShapeToolConfig } from '../editor/shape'
 
-export type LayerKind = 'pixel' | 'image' | 'text' | 'shape' | 'smart' | 'adjustment' | 'background'
+export type LayerKind = 'pixel' | 'text' | 'shape' | 'smart' | 'adjustment' | 'background'
 export type LayerBlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
 export type DocumentUnit = 'px' | 'cm' | 'mm' | 'in'
 export type DocumentBackground = 'transparent' | 'white' | 'black'
