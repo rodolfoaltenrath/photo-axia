@@ -438,6 +438,38 @@ test('estilos e luz global formam uma única alteração reversível', () => {
   assert.equal(isEditorHistoryDeltaNoop(delta), false)
 })
 
+test('desfaz e refaz estilos de várias camadas como uma ação atômica e leve', () => {
+  const empty = { enabled: true, fillOpacity: 100, effects: [] }
+  const firstStyle = { enabled: true, fillOpacity: 60, effects: [] }
+  const secondStyle = { enabled: true, fillOpacity: 35, effects: [] }
+  const layers = [
+    { id: 'first', name: 'Primeira', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel', image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:first', byteSize: 1_000_000 }, styles: empty },
+    { id: 'second', name: 'Segunda', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel', image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:second', byteSize: 1_000_000 }, styles: empty }
+  ]
+  const delta = {
+    type: 'layers:styles',
+    items: [
+      { layerId: 'first', before: empty, after: firstStyle },
+      { layerId: 'second', before: empty, after: secondStyle }
+    ]
+  }
+
+  let result = applyEditorHistoryDelta(layers, 'first', delta, 'redo', ['first', 'second'])
+  assert.equal(layers[0].styles.fillOpacity, 60)
+  assert.equal(layers[1].styles.fillOpacity, 35)
+  assert.deepEqual(result.refreshLayerIds, ['first', 'second'])
+  assert.deepEqual(result.selectedLayerIds, ['first', 'second'])
+  layers[0].styles.fillOpacity = 5
+  assert.equal(delta.items[0].after.fillOpacity, 60)
+
+  result = applyEditorHistoryDelta(layers, 'first', delta, 'undo', ['first', 'second'])
+  assert.equal(layers[0].styles.fillOpacity, 100)
+  assert.equal(layers[1].styles.fillOpacity, 100)
+  assert.deepEqual(result.refreshLayerIds, ['first', 'second'])
+  assert.equal(isEditorHistoryDeltaNoop(delta), false)
+  assert.ok(estimateEditorHistoryBytes(delta) < 10_000)
+})
+
 test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada', () => {
   const text = { content: 'Axia', fontFamily: 'Inter', fontSize: 48, color: '#ffffff' }
   const styles = {

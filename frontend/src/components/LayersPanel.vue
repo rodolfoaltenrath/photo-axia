@@ -2,18 +2,18 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import LayerCompositionControls from './LayerCompositionControls.vue'
 import LayerRow from './LayerRow.vue'
-import type { DocumentBackground, LayerBlendMode, LayerItem, LayerStyleGlobalLight } from '../types/editor'
+import type { DocumentBackground, LayerBlendMode, LayerEffectType, LayerItem, LayerStyleConfig, LayerStyleGlobalLight } from '../types/editor'
 import addLayerIcon from '../assets/icons/add-layer.svg'
 import { layerCanRasterize } from '../editor/layerRasterization'
 import { layerCanExportPNG } from '../editor/layerExport'
 import { layersCanConvertToSmart } from '../editor/smartLayers'
-import { layerStyleNeedsCompositing } from '../editor/layerStyleCompositor'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
+import { layerCanPasteStyle, layerStyleCanClear, layerStylesCanScale } from '../editor/layerStyleOperations'
 import type { LayerSelectionMode } from '../editor/layerSelection'
 
 const props = defineProps<{
   activeLayerId: string
-  canPasteLayerStyles: boolean
+  copiedLayerStyles?: LayerStyleConfig
   documentBackground: DocumentBackground
   selectedLayerIds: string[]
   layers: LayerItem[]
@@ -34,10 +34,15 @@ const emit = defineEmits<{
   (event: 'reorderLayer', layerId: string, targetId: string, position: 'before' | 'after'): void
   (event: 'mergeLayers'): void
   (event: 'openLayerStyles', layerId: string): void
+  (event: 'openLayerStyleEffect', layerId: string, effectType: LayerEffectType): void
+  (event: 'openStylePresets', layerId: string): void
   (event: 'pasteLayerStyles', layerId: string): void
   (event: 'rasterizeLayer', layerId: string): void
+  (event: 'scaleLayerEffects', layerId: string): void
   (event: 'selectLayer', layerId: string, mode: LayerSelectionMode): void
   (event: 'toggleLayer', layerId: string): void
+  (event: 'toggleLayerEffect', layerId: string, effectId: string): void
+  (event: 'toggleLayerStyle', layerId: string): void
   (event: 'update:layerBlendMode', value: LayerBlendMode): void
   (event: 'update:layerOpacity', value: number): void
 }>()
@@ -73,8 +78,13 @@ const contextCanConvertToSmart = computed(() => layersCanConvertToSmart(contextS
 const contextCanEditSmart = computed(() => contextLayer.value?.kind === 'smart' && Boolean(contextLayer.value.smart))
 const contextCanExport = computed(() => layerCanExportPNG(contextLayer.value, props.documentBackground))
 const contextCanRasterize = computed(() => layerCanRasterize(contextLayer.value))
-const contextHasLayerStyle = computed(() => Boolean(
-  contextLayer.value && layerStyleNeedsCompositing(contextLayer.value.styles)
+const contextHasLayerStyle = computed(() => contextSelectedItems.value.some(({ layer }) => layerStyleCanClear(layer.styles)))
+const contextCanScaleLayerEffects = computed(() => contextSelectedItems.value.some(
+  ({ layer }) => layerStylesCanScale(layer.styles)
+))
+const contextCanPasteLayerStyles = computed(() => Boolean(
+  props.copiedLayerStyles && contextSelectedItems.value.length &&
+  contextSelectedItems.value.every(({ layer }) => layerCanPasteStyle(layer, props.copiedLayerStyles))
 ))
 const draggedLayer = computed(() => props.layers.find((layer) => layer.id === draggedLayerId.value))
 const draggedLayerFillStyle = computed(() => ({
@@ -160,6 +170,13 @@ function openStylesFromContextMenu() {
   emit('openLayerStyles', layerId)
 }
 
+function openStylePresetsFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId) return
+  closeContextMenu()
+  emit('openStylePresets', layerId)
+}
+
 function copyStylesFromContextMenu() {
   const layerId = contextMenu.value?.layerId
   if (!layerId) return
@@ -169,7 +186,7 @@ function copyStylesFromContextMenu() {
 
 function pasteStylesFromContextMenu() {
   const layerId = contextMenu.value?.layerId
-  if (!layerId || !props.canPasteLayerStyles) return
+  if (!layerId || !contextCanPasteLayerStyles.value) return
   closeContextMenu()
   emit('pasteLayerStyles', layerId)
 }
@@ -179,6 +196,13 @@ function clearStylesFromContextMenu() {
   if (!layerId || !contextHasLayerStyle.value) return
   closeContextMenu()
   emit('clearLayerStyles', layerId)
+}
+
+function scaleEffectsFromContextMenu() {
+  const layerId = contextMenu.value?.layerId
+  if (!layerId || !contextCanScaleLayerEffects.value) return
+  closeContextMenu()
+  emit('scaleLayerEffects', layerId)
 }
 
 function rasterizeFromContextMenu() {
@@ -341,9 +365,12 @@ onBeforeUnmount(() => {
         @rename="renameLayer"
         @open-context-menu="openContextMenu"
         @open-layer-styles="emit('openLayerStyles', $event)"
+        @open-layer-style-effect="(layerId, effectType) => emit('openLayerStyleEffect', layerId, effectType)"
         @request-rename="requestRename"
         @select="(layerId, mode) => emit('selectLayer', layerId, mode)"
         @toggle="emit('toggleLayer', $event)"
+        @toggle-layer-effect="(layerId, effectId) => emit('toggleLayerEffect', layerId, effectId)"
+        @toggle-layer-style="emit('toggleLayerStyle', $event)"
       />
     </ol>
 
@@ -401,10 +428,15 @@ onBeforeUnmount(() => {
         <button
           type="button"
           role="menuitem"
-          :disabled="!canPasteLayerStyles"
+          @click="openStylePresetsFromContextMenu"
+        ><span>Estilos…</span></button>
+        <button
+          type="button"
+          role="menuitem"
+          :disabled="!contextCanPasteLayerStyles"
           @click="pasteStylesFromContextMenu"
         >
-          <span>Colar estilo da camada</span>
+          <span>{{ contextSelectedItems.length > 1 ? 'Colar estilo nas camadas' : 'Colar estilo da camada' }}</span>
         </button>
         <button
           type="button"
@@ -412,7 +444,15 @@ onBeforeUnmount(() => {
           :disabled="!contextHasLayerStyle"
           @click="clearStylesFromContextMenu"
         >
-          <span>Limpar estilo da camada</span>
+          <span>{{ contextSelectedItems.length > 1 ? 'Limpar estilos das camadas' : 'Limpar estilo da camada' }}</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          :disabled="!contextCanScaleLayerEffects"
+          @click="scaleEffectsFromContextMenu"
+        >
+          <span>{{ contextSelectedItems.length > 1 ? 'Escalar efeitos das camadas…' : 'Escalar efeitos…' }}</span>
         </button>
         <button
           type="button"

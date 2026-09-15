@@ -5,7 +5,7 @@ import type { LayerItem, LayerStyleGlobalLight } from '../types/editor'
 import visibleIcon from '../assets/icons/visible.svg'
 import { blendModeLabel } from '../editor/blendModes'
 import { layerStyleNeedsCompositing } from '../editor/layerStyleCompositor'
-import { layerStyleFillOpacity } from '../editor/layerStyles'
+import { layerEffectLabel, layerStyleFillOpacity } from '../editor/layerStyles'
 import { layerKindHelp, layerKindLabel } from '../editor/layerPresentation'
 import type { LayerSelectionMode } from '../editor/layerSelection'
 import { useLayerStyleRaster } from './canvas/composables/useLayerStyleRaster'
@@ -29,14 +29,18 @@ const emit = defineEmits<{
   (event: 'editSmartLayer', layerId: string): void
   (event: 'openContextMenu', layerId: string, clientX: number, clientY: number): void
   (event: 'openLayerStyles', layerId: string): void
+  (event: 'openLayerStyleEffect', layerId: string, effectType: LayerItem['styles']['effects'][number]['type']): void
   (event: 'rename', layerId: string, name: string): void
   (event: 'requestRename', layerId: string): void
   (event: 'select', layerId: string, mode: LayerSelectionMode): void
   (event: 'toggle', layerId: string): void
+  (event: 'toggleLayerEffect', layerId: string, effectId: string): void
+  (event: 'toggleLayerStyle', layerId: string): void
 }>()
 
 const nameInput = ref<HTMLInputElement | null>(null)
 const draftName = ref(props.layer.name)
+const effectsExpanded = ref(false)
 const {
   desiredImageSource,
   geometryForSource,
@@ -53,6 +57,7 @@ const thumbnailReady = ref<[boolean, boolean]>([false, false])
 const activeThumbnailSlot = ref<0 | 1>(0)
 const thumbnailStyle = computed(() => ({ '--layer-fill-opacity': String(layerStyleFillOpacity(props.layer.styles)) }))
 const hasLayerStyle = computed(() => layerStyleNeedsCompositing(props.layer.styles))
+const hasLayerEffects = computed(() => props.layer.styles.effects.length > 0)
 let releaseThumbnailFrame = 0
 let dragPointerId = -1
 let dragStartX = 0
@@ -119,6 +124,11 @@ watch(
     nameInput.value?.select()
   }
 )
+
+watch(() => props.layer.styles.effects.length, (count, previousCount) => {
+  if (!count) effectsExpanded.value = false
+  else if (!previousCount) effectsExpanded.value = true
+})
 
 onBeforeUnmount(() => cancelAnimationFrame(releaseThumbnailFrame))
 
@@ -301,12 +311,60 @@ function openThumbnailAction() {
         <span v-else class="layer-name-line">
           <strong>{{ layer.name }}</strong>
           <span v-if="hasLayerStyle" class="layer-style-indicator" title="Estilo de camada ativo">fx</span>
+          <button
+            v-if="hasLayerEffects"
+            class="layer-effects-expand"
+            type="button"
+            :aria-expanded="effectsExpanded"
+            :aria-label="effectsExpanded ? 'Recolher efeitos' : 'Expandir efeitos'"
+            :title="effectsExpanded ? 'Recolher efeitos' : 'Mostrar efeitos'"
+            @click.stop="effectsExpanded = !effectsExpanded"
+            @dblclick.stop
+            @pointerdown.stop
+          >{{ effectsExpanded ? '▾' : '▸' }}</button>
         </span>
         <small>
           <span :title="layerKindHelp(layer)">{{ layerKindLabel(layer) }}</span> · {{ layer.opacity }}%
           <template v-if="layer.blendMode !== 'normal'"> · {{ blendModeLabel(layer.blendMode) }}</template>
         </small>
       </span>
+    </div>
+
+    <div
+      v-if="hasLayerEffects && effectsExpanded"
+      class="layer-effects-list"
+      :class="{ 'layer-effects-list--disabled': !layer.styles.enabled }"
+      role="group"
+      :aria-label="`Efeitos de ${layer.name}`"
+    >
+      <div class="layer-effect-row layer-effect-row--master">
+        <button
+          class="layer-effect-visibility"
+          type="button"
+          :aria-label="layer.styles.enabled ? 'Ocultar todos os efeitos' : 'Mostrar todos os efeitos'"
+          :title="layer.styles.enabled ? 'Ocultar todos os efeitos' : 'Mostrar todos os efeitos'"
+          @click.stop="emit('toggleLayerStyle', layer.id)"
+        ><img alt="" :class="{ 'visibility-icon--hidden': !layer.styles.enabled }" :src="visibleIcon" /></button>
+        <button class="layer-effect-name" type="button" title="Dê dois cliques para editar os efeitos" @click.stop="emit('select', layer.id, 'replace')" @dblclick.stop="emit('openLayerStyles', layer.id)">
+          <span aria-hidden="true">fx</span> Efeitos
+        </button>
+      </div>
+      <div v-for="effect in layer.styles.effects" :key="effect.id" class="layer-effect-row">
+        <button
+          class="layer-effect-visibility"
+          type="button"
+          :aria-label="effect.enabled ? `Ocultar ${layerEffectLabel(effect.type)}` : `Mostrar ${layerEffectLabel(effect.type)}`"
+          :title="effect.enabled ? 'Ocultar efeito' : 'Mostrar efeito'"
+          @click.stop="emit('toggleLayerEffect', layer.id, effect.id)"
+        ><img alt="" :class="{ 'visibility-icon--hidden': !effect.enabled }" :src="visibleIcon" /></button>
+        <button
+          class="layer-effect-name"
+          type="button"
+          title="Dê dois cliques para editar este efeito"
+          @click.stop="emit('select', layer.id, 'replace')"
+          @dblclick.stop="emit('openLayerStyleEffect', layer.id, effect.type)"
+        >{{ layerEffectLabel(effect.type) }}</button>
+      </div>
     </div>
   </li>
 </template>

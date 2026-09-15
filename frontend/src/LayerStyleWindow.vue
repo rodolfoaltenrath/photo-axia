@@ -72,6 +72,7 @@ onBeforeUnmount(() => {
   <LayerStyleDialog
     v-if="session"
     :global-light="session.globalLight"
+    :initial-category="session.initialEffectType"
     :layer-name="session.layerName"
     native-window
     open

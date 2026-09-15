@@ -9,6 +9,8 @@ import NewDocumentDialog from './components/NewDocumentDialog.vue'
 import ExportImageDialog from './components/ExportImageDialog.vue'
 import ProjectHome from './components/ProjectHome.vue'
 import PropertiesPanel from './components/PropertiesPanel.vue'
+import LayerStylePresetsDialog from './components/LayerStylePresetsDialog.vue'
+import ScaleLayerEffectsDialog from './components/ScaleLayerEffectsDialog.vue'
 import ToolBar from './components/ToolBar.vue'
 import TopMenu from './components/TopMenu.vue'
 import UnsavedChangesDialog from './components/UnsavedChangesDialog.vue'
@@ -104,6 +106,7 @@ import {
   cloneLayerStyleConfig,
   createLayerStyleConfig,
   DEFAULT_LAYER_STYLE_GLOBAL_LIGHT,
+  layerEffectLabel,
   layerStylePatternAssets,
   normalizeLayerStyleGlobalLight
 } from './editor/layerStyles'
@@ -148,13 +151,27 @@ import {
   type LayerStyleWindowChange,
   type LayerStyleWindowSession
 } from './services/layerStyleWindow'
-import { layerStyleNeedsCompositing } from './editor/layerStyleCompositor'
 import {
-  clearedLayerStyleChange,
+  clearedLayerStyleChanges,
   copyLayerStyleConfig,
   layerCanPasteStyle,
-  pastedLayerStyleChange
+  layerStyleCanClear,
+  layerStylesCanScale,
+  pastedLayerStyleChanges,
+  scaledLayerStyleChange,
+  scaledLayerStyleChanges,
+  toggledLayerEffectVisibilityChange,
+  toggledLayerStyleVisibilityChange,
+  type LayerStyleTargetChange
 } from './editor/layerStyleOperations'
+import {
+  deleteLayerStylePreset,
+  listLayerStylePresets,
+  presetStyles,
+  renameLayerStylePreset,
+  saveLayerStylePreset,
+  type LayerStylePreset
+} from './editor/layerStylePresets'
 import {
   clearSmartLayerRenderCache,
   invalidateSmartLayerContent,
@@ -178,6 +195,7 @@ import type {
   ImageAsset,
   ImportedImage,
   LayerBlendMode,
+  LayerEffectType,
   LayerItem,
   LayerStyleConfig,
   LayerStyleGlobalLight,
@@ -262,11 +280,17 @@ const recentProjects = ref<RecentProject[]>([])
 const recentProjectsLoading = ref(true)
 const showUnsavedChangesDialog = ref(false)
 const showFlattenImageDialog = ref(false)
+const layerStylePresetsLayerId = ref<string>()
+const layerStylePresets = shallowRef<LayerStylePreset[]>([])
+const scaleLayerEffectsSession = shallowRef<{
+  items: Array<{ layerId: string; before: LayerStyleConfig }>
+}>()
 const layerStyleDialog = shallowRef<{
   sessionId: string
   layerId: string
   before: LayerStyleConfig
   beforeGlobalLight: LayerStyleGlobalLight
+  initialEffectType?: LayerEffectType
 }>()
 const nativeLayerStyleWindowEnabled = hasDesktopBackend()
 const nativeLayerStyleDialogFallback = ref(false)
@@ -390,7 +414,7 @@ const documentDirty = computed(() => {
 const modalOpen = computed(() => editorIsBlockedByModal(
   showNewDocumentDialog.value || showExportImageDialog.value || showImportPdfDialog.value,
   showUnsavedChangesDialog.value,
-  Boolean(layerStyleDialog.value) || showFlattenImageDialog.value
+  Boolean(layerStyleDialog.value) || showFlattenImageDialog.value || Boolean(scaleLayerEffectsSession.value) || Boolean(layerStylePresetsLayerId.value)
 ))
 const layerStyleDialogLayer = computed(() => {
   const session = layerStyleDialog.value
@@ -404,16 +428,37 @@ watch(documentDirty, (dirty) => {
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
 })
+const layerStylePresetsLayer = computed(() => layers.value.find((layer) => layer.id === layerStylePresetsLayerId.value))
 const selectedLayerItems = computed(() => {
   const selected = new Set(selectedLayerIds.value)
   return layers.value
     .map((layer, index) => ({ index, layer }))
     .filter((item) => selected.has(item.layer.id))
 })
+function styleTargetLayers(anchorId = activeLayerId.value) {
+  const anchor = layers.value.find((layer) => layer.id === anchorId)
+  if (!anchor) return []
+  if (!selectedLayerIds.value.includes(anchorId)) return [anchor]
+  return selectedLayerItems.value.map((item) => item.layer)
+}
+
+const activeStyleTargetLayers = computed(() => styleTargetLayers())
+const scaleLayerEffectsLayers = computed(() => {
+  const ids = new Set(scaleLayerEffectsSession.value?.items.map((item) => item.layerId) ?? [])
+  return layers.value.filter((layer) => ids.has(layer.id))
+})
+const scaleLayerEffectsLabel = computed(() => scaleLayerEffectsLayers.value.length === 1
+  ? scaleLayerEffectsLayers.value[0]?.name
+  : `${scaleLayerEffectsLayers.value.length} camadas`)
+const layerStylePresetsTargetCount = computed(() => styleTargetLayers(layerStylePresetsLayerId.value).length)
 const canConvertSelectedLayersToSmart = computed(() => layersCanConvertToSmart(selectedLayerItems.value))
 const canFlattenImage = computed(() => documentCanFlatten(activeDocument.value, layers.value))
-const canClearActiveLayerStyles = computed(() => layerStyleNeedsCompositing(activeLayer.value.styles))
-const canPasteActiveLayerStyles = computed(() => layerCanPasteStyle(activeLayer.value, copiedLayerStyles.value))
+const canClearActiveLayerStyles = computed(() => activeStyleTargetLayers.value.some((layer) => layerStyleCanClear(layer.styles)))
+const canScaleActiveLayerEffects = computed(() => activeStyleTargetLayers.value.some((layer) => layerStylesCanScale(layer.styles)))
+const canPasteActiveLayerStyles = computed(() => Boolean(
+  copiedLayerStyles.value && activeStyleTargetLayers.value.length &&
+  activeStyleTargetLayers.value.every((layer) => layerCanPasteStyle(layer, copiedLayerStyles.value))
+))
 const hiddenLayerCount = computed(() => layers.value.reduce((count, layer) => count + Number(!layer.visible), 0))
 
 function selectSingleLayer(layerId: string) {
@@ -1701,6 +1746,7 @@ function currentLayerStyleWindowSession(): LayerStyleWindowSession | null {
   if (!session || !layer) return null
   return {
     globalLight: { ...session.beforeGlobalLight },
+    initialEffectType: session.initialEffectType,
     layerName: layer.name,
     rasterEffectsAvailable: Boolean(layer.image),
     sessionId: session.sessionId,
@@ -1708,7 +1754,7 @@ function currentLayerStyleWindowSession(): LayerStyleWindowSession | null {
   }
 }
 
-function openLayerStyles(layerId: string) {
+function openLayerStyles(layerId: string, initialEffectType?: LayerEffectType) {
   if (isBusy.value || layerStyleDialog.value) return
   const layer = layers.value.find((item) => item.id === layerId)
   if (!layer) return
@@ -1717,7 +1763,8 @@ function openLayerStyles(layerId: string) {
     sessionId: crypto.randomUUID(),
     layerId,
     before: cloneLayerStyleConfig(layer.styles),
-    beforeGlobalLight: { ...activeDocument.value.layerStyleGlobalLight }
+    beforeGlobalLight: { ...activeDocument.value.layerStyleGlobalLight },
+    initialEffectType
   }
   nativeLayerStyleRevision = 0
   nativeLayerStyleDialogFallback.value = false
@@ -1817,47 +1864,195 @@ function copyLayerStyles(layerId = activeLayerId.value) {
   statusText.value = `Estilo de “${layer.name}” copiado`
 }
 
+function commitLayerStyleChanges(label: string, changes: LayerStyleTargetChange[]) {
+  if (!changes.length) return false
+  const changedLayers: LayerItem[] = []
+  for (const change of changes) {
+    const layer = layers.value.find((item) => item.id === change.layerId)
+    if (!layer) continue
+    layer.styles = cloneLayerStyleConfig(change.after)
+    changedLayers.push(layer)
+  }
+  if (!changedLayers.length) return false
+  const changedIds = new Set(changedLayers.map((layer) => layer.id))
+  trackLayerAssets(changedLayers)
+  recordHistory(label, {
+    type: 'layers:styles',
+    items: changes
+      .filter((change) => changedIds.has(change.layerId))
+      .map((change) => ({
+        layerId: change.layerId,
+        before: cloneLayerStyleConfig(change.before),
+        after: cloneLayerStyleConfig(change.after)
+      }))
+  })
+  return true
+}
+
 function pasteLayerStyles(layerId = activeLayerId.value) {
-  const layer = layers.value.find((item) => item.id === layerId)
   const clipboard = copiedLayerStyles.value
-  if (!layer || !clipboard) return
-  if (!layerCanPasteStyle(layer, clipboard)) {
+  const targets = styleTargetLayers(layerId)
+  if (!targets.length || !clipboard) return
+  if (targets.some((layer) => !layerCanPasteStyle(layer, clipboard))) {
     showError(
-      new Error('Rasterize a camada antes de colar efeitos de camada.'),
-      'Esta camada aceita somente a opacidade de preenchimento.'
+      new Error('Rasterize as camadas incompatíveis antes de colar efeitos de camada.'),
+      'Uma ou mais camadas selecionadas aceitam somente a opacidade de preenchimento.'
     )
     return
   }
-  const change = pastedLayerStyleChange(layer, clipboard)
-  if (!change) {
-    statusText.value = 'A camada já possui esse estilo'
+  const changes = pastedLayerStyleChanges(targets, clipboard)
+  if (!commitLayerStyleChanges(targets.length === 1 ? 'Colar estilo de camada' : 'Colar estilo em camadas', changes)) {
+    statusText.value = targets.length === 1 ? 'A camada já possui esse estilo' : 'As camadas já possuem esse estilo'
     return
   }
-  layer.styles = change.after
-  trackLayerAssets([layer])
-  recordHistory('Colar estilo de camada', {
-    type: 'layer:patch',
-    layerId: layer.id,
-    before: { styles: change.before },
-    after: { styles: change.after }
-  })
-  statusText.value = `Estilo colado em “${layer.name}”`
+  statusText.value = changes.length === 1
+    ? `Estilo colado em “${targets.find((layer) => layer.id === changes[0]!.layerId)?.name}”`
+    : `Estilo colado em ${changes.length} camadas`
 }
 
 function clearLayerStyles(layerId = activeLayerId.value) {
+  const targets = styleTargetLayers(layerId)
+  const changes = clearedLayerStyleChanges(targets)
+  if (!commitLayerStyleChanges(targets.length === 1 ? 'Limpar estilo de camada' : 'Limpar estilos de camadas', changes)) return
+  collectUnusedObjectUrls()
+  statusText.value = changes.length === 1
+    ? `Estilo removido de “${targets.find((layer) => layer.id === changes[0]!.layerId)?.name}”`
+    : `Estilos removidos de ${changes.length} camadas`
+}
+
+function toggleLayerStyleVisibility(layerId: string) {
   const layer = layers.value.find((item) => item.id === layerId)
   if (!layer) return
-  const change = clearedLayerStyleChange(layer)
-  if (!change) return
-  layer.styles = change.after
-  recordHistory('Limpar estilo de camada', {
-    type: 'layer:patch',
-    layerId: layer.id,
-    before: { styles: change.before },
-    after: { styles: change.after }
+  const change = toggledLayerStyleVisibilityChange(layer)
+  if (!change || !commitLayerStyleChanges('Alternar visibilidade dos efeitos', [{ layerId, ...change }])) return
+  statusText.value = change.after.enabled ? 'Efeitos da camada ativados' : 'Efeitos da camada ocultos'
+}
+
+function toggleLayerEffectVisibility(layerId: string, effectId: string) {
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (!layer) return
+  const change = toggledLayerEffectVisibilityChange(layer, effectId)
+  if (!change || !commitLayerStyleChanges('Alternar visibilidade do efeito', [{ layerId, ...change }])) return
+  const effect = change.after.effects.find((item) => item.id === effectId)
+  statusText.value = effect
+    ? `${layerEffectLabel(effect.type)} ${effect.enabled ? 'ativado' : 'oculto'}`
+    : 'Visibilidade do efeito atualizada'
+}
+
+function openScaleLayerEffects(layerId = activeLayerId.value) {
+  if (isBusy.value || modalOpen.value) return
+  const targets = styleTargetLayers(layerId).filter((layer) => layerStylesCanScale(layer.styles))
+  if (!targets.length) {
+    statusText.value = 'As camadas selecionadas não possuem efeitos dimensionáveis'
+    return
+  }
+  scaleLayerEffectsSession.value = {
+    items: targets.map((layer) => ({ layerId: layer.id, before: cloneLayerStyleConfig(layer.styles) }))
+  }
+}
+
+function cancelScaleLayerEffects() {
+  if (isBusy.value) return
+  const session = scaleLayerEffectsSession.value
+  for (const item of session?.items ?? []) {
+    const layer = layers.value.find((candidate) => candidate.id === item.layerId)
+    if (layer) layer.styles = cloneLayerStyleConfig(item.before)
+  }
+  scaleLayerEffectsSession.value = undefined
+}
+
+function previewScaleLayerEffects(percentage: number) {
+  const session = scaleLayerEffectsSession.value
+  if (!session || isBusy.value) return
+  for (const item of session.items) {
+    const layer = layers.value.find((candidate) => candidate.id === item.layerId)
+    if (!layer) continue
+    const change = scaledLayerStyleChange({ ...layer, styles: item.before }, percentage)
+    layer.styles = change?.after ?? cloneLayerStyleConfig(item.before)
+  }
+}
+
+function applyScaleLayerEffects(percentage: number) {
+  const session = scaleLayerEffectsSession.value
+  scaleLayerEffectsSession.value = undefined
+  if (!session || isBusy.value) return
+  const targets = session.items.flatMap((item) => {
+    const layer = layers.value.find((candidate) => candidate.id === item.layerId)
+    return layer ? [{ ...layer, styles: item.before }] : []
   })
-  collectUnusedObjectUrls()
-  statusText.value = `Estilo removido de “${layer.name}”`
+  const changes = scaledLayerStyleChanges(targets, percentage)
+  if (!commitLayerStyleChanges(targets.length === 1 ? 'Escalar efeitos da camada' : 'Escalar efeitos das camadas', changes)) {
+    for (const item of session.items) {
+      const layer = layers.value.find((candidate) => candidate.id === item.layerId)
+      if (layer) layer.styles = cloneLayerStyleConfig(item.before)
+    }
+    statusText.value = percentage === 100 ? 'A escala dos efeitos não foi alterada' : 'Os efeitos já estão no limite dessa escala'
+    return
+  }
+  statusText.value = changes.length === 1
+    ? `Efeitos de “${targets.find((layer) => layer.id === changes[0]!.layerId)?.name}” escalados para ${percentage}%`
+    : `Efeitos de ${changes.length} camadas escalados para ${percentage}%`
+}
+
+async function refreshLayerStylePresets() {
+  layerStylePresets.value = await listLayerStylePresets()
+}
+
+function openLayerStylePresets(layerId = activeLayerId.value) {
+  if (isBusy.value || modalOpen.value || !layers.value.some((layer) => layer.id === layerId)) return
+  layerStylePresetsLayerId.value = layerId
+}
+
+function closeLayerStylePresets() {
+  if (!isBusy.value) layerStylePresetsLayerId.value = undefined
+}
+
+async function saveCurrentLayerStylePreset(name: string) {
+  const layer = layerStylePresetsLayer.value
+  if (!layer || isBusy.value) return
+  isBusy.value = true
+  try {
+    await saveLayerStylePreset(name, layer.styles)
+    await refreshLayerStylePresets()
+    statusText.value = `Estilo “${name.trim()}” salvo`
+  } catch (error) {
+    showError(error, 'Não foi possível salvar o estilo.')
+  } finally { isBusy.value = false }
+}
+
+async function applySavedLayerStylePreset(id: string) {
+  const targets = styleTargetLayers(layerStylePresetsLayerId.value)
+  const preset = layerStylePresets.value.find((item) => item.id === id)
+  if (!targets.length || !preset || isBusy.value) return
+  const styles = presetStyles(preset)
+  if (targets.some((layer) => !layerCanPasteStyle(layer, styles))) {
+    showError(new Error('Rasterize as camadas incompatíveis antes de aplicar este estilo.'), 'Uma ou mais camadas selecionadas não aceitam este estilo.')
+    return
+  }
+  const changes = pastedLayerStyleChanges(targets, styles)
+  if (!commitLayerStyleChanges(targets.length === 1 ? 'Aplicar estilo salvo' : 'Aplicar estilo nas camadas', changes)) {
+    statusText.value = targets.length === 1 ? 'A camada já possui esse estilo' : 'As camadas já possuem esse estilo'
+    return
+  }
+  statusText.value = changes.length === 1
+    ? `Estilo “${preset.name}” aplicado`
+    : `Estilo “${preset.name}” aplicado em ${changes.length} camadas`
+}
+
+async function renameSavedLayerStylePreset(id: string, name: string) {
+  if (isBusy.value) return
+  isBusy.value = true
+  try { await renameLayerStylePreset(id, name); await refreshLayerStylePresets() }
+  catch (error) { showError(error, 'Não foi possível renomear o estilo.') }
+  finally { isBusy.value = false }
+}
+
+async function deleteSavedLayerStylePreset(id: string) {
+  if (isBusy.value) return
+  isBusy.value = true
+  try { await deleteLayerStylePreset(id); await refreshLayerStylePresets(); statusText.value = 'Estilo excluído' }
+  catch (error) { showError(error, 'Não foi possível excluir o estilo.') }
+  finally { isBusy.value = false }
 }
 
 function updateLayerBlendMode(blendMode: LayerBlendMode) {
@@ -4526,6 +4721,9 @@ onMounted(async () => {
     })
   }
 
+  void refreshLayerStylePresets().catch(() => {
+    layerStylePresets.value = []
+  })
   try {
     const [status] = await Promise.all([getEditorStatus(), refreshRecentProjects()])
     statusText.value = `${status.appName} — ${status.engine}`
@@ -4596,6 +4794,7 @@ onBeforeUnmount(() => {
       :can-merge-layers="selectedLayerIds.length > 1"
       :can-paste-layer-styles="canPasteActiveLayerStyles"
       :can-rasterize-layer="layerCanRasterize(activeLayer)"
+      :can-scale-layer-effects="canScaleActiveLayerEffects"
       :can-redo="canRedo"
       :can-undo="canUndo"
       :document-dirty="documentDirty"
@@ -4607,6 +4806,7 @@ onBeforeUnmount(() => {
       :is-busy="isBusy || imagePlacementActive"
       :redo-label="redoLabel"
       :status-text="statusText"
+      :style-target-count="activeStyleTargetLayers.length"
       :undo-label="undoLabel"
       @add-layer="addLayer"
       @clear-selection="updateSelection(null)"
@@ -4628,11 +4828,13 @@ onBeforeUnmount(() => {
       @merge-layers="mergeSelectedLayers"
       @new-document="requestNewDocument"
       @open-layer-styles="openLayerStyles(activeLayerId)"
+      @open-style-presets="openLayerStylePresets()"
       @open-image-document="openImageAsDocument"
       @open-pdf-document="openPDFAsDocument"
       @open-project="openProject"
       @paste-layer-styles="pasteLayerStyles()"
       @rasterize-layer="rasterizeLayer()"
+      @scale-layer-effects="openScaleLayerEffects()"
       @redo="redoHistory"
       @save-project="saveProject()"
       @undo="undoHistory"
@@ -4792,7 +4994,7 @@ onBeforeUnmount(() => {
 
         <LayersPanel
           :active-layer-id="activeLayerId"
-          :can-paste-layer-styles="canPasteActiveLayerStyles"
+          :copied-layer-styles="copiedLayerStyles"
           :document-background="activeDocument.background"
           :layers="layers"
           :layer-style-global-light="activeDocument.layerStyleGlobalLight"
@@ -4808,12 +5010,17 @@ onBeforeUnmount(() => {
           @move-layer="moveLayer"
           @merge-layers="mergeSelectedLayers"
           @open-layer-styles="openLayerStyles"
+          @open-layer-style-effect="openLayerStyles"
+          @open-style-presets="openLayerStylePresets"
           @paste-layer-styles="pasteLayerStyles"
           @rasterize-layer="rasterizeLayer"
+          @scale-layer-effects="openScaleLayerEffects"
           @rename-layer="renameLayer"
           @reorder-layer="reorderLayer"
           @select-layer="selectLayerFromPanel"
           @toggle-layer="toggleLayer"
+          @toggle-layer-effect="toggleLayerEffectVisibility"
+          @toggle-layer-style="toggleLayerStyleVisibility"
           @update:layer-blend-mode="updateLayerBlendMode"
           @update:layer-opacity="updateLayerOpacity"
         />
@@ -4852,6 +5059,7 @@ onBeforeUnmount(() => {
     <LayerStyleDialog
       v-if="!nativeLayerStyleWindowEnabled || nativeLayerStyleDialogFallback"
       :global-light="layerStyleDialog?.beforeGlobalLight ?? activeDocument.layerStyleGlobalLight"
+      :initial-category="layerStyleDialog?.initialEffectType"
       :layer-name="layerStyleDialogLayer?.name ?? ''"
       :open="Boolean(layerStyleDialog)"
       :raster-effects-available="Boolean(layerStyleDialogLayer?.image)"
@@ -4866,6 +5074,26 @@ onBeforeUnmount(() => {
       :open="showFlattenImageDialog"
       @cancel="cancelFlattenImage"
       @confirm="confirmFlattenImage"
+    />
+    <ScaleLayerEffectsDialog
+      :busy="isBusy"
+      :layer-name="scaleLayerEffectsLabel"
+      :open="Boolean(scaleLayerEffectsSession)"
+      @cancel="cancelScaleLayerEffects"
+      @confirm="applyScaleLayerEffects"
+      @preview="previewScaleLayerEffects"
+    />
+    <LayerStylePresetsDialog
+      :busy="isBusy"
+      :layer-name="layerStylePresetsLayer?.name"
+      :open="Boolean(layerStylePresetsLayer)"
+      :presets="layerStylePresets"
+      :target-count="layerStylePresetsTargetCount"
+      @apply="applySavedLayerStylePreset"
+      @cancel="closeLayerStylePresets"
+      @delete="deleteSavedLayerStylePreset"
+      @rename="renameSavedLayerStylePreset"
+      @save="saveCurrentLayerStylePreset"
     />
     <UnsavedChangesDialog
       :busy="isBusy"

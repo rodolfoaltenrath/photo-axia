@@ -51,6 +51,15 @@ export interface TransformLayersDelta extends SelectionDelta {
   }>
 }
 
+export interface ChangeLayersStylesDelta extends SelectionDelta {
+  type: 'layers:styles'
+  items: Array<{
+    layerId: string
+    before: LayerStyleConfig
+    after: LayerStyleConfig
+  }>
+}
+
 export interface ReorderLayerDelta extends SelectionDelta {
   type: 'layer:reorder'
   layerId: string
@@ -85,6 +94,7 @@ export type EditorHistoryDelta =
   | ReplaceLayersDelta
   | PatchLayerDelta
   | TransformLayersDelta
+  | ChangeLayersStylesDelta
   | ReorderLayerDelta
   | ChangeGuidesDelta
   | ChangeLayerStyleGlobalLightDelta
@@ -148,7 +158,9 @@ function historyLayerTree(layer: Partial<LayerItem>): Partial<LayerItem>[] {
 }
 
 export function estimateEditorHistoryBytes(delta: EditorHistoryDelta) {
-  const referencedLayers = delta.type === 'layer-styles:change'
+  const referencedLayers: Partial<LayerItem>[] = delta.type === 'layers:styles'
+    ? delta.items.flatMap((item) => [{ styles: item.before }, { styles: item.after }])
+    : delta.type === 'layer-styles:change'
     ? [{ styles: delta.before }, { styles: delta.after }]
     : delta.type === 'layer:patch'
       ? [delta.before, delta.after].flatMap(historyLayerTree)
@@ -167,6 +179,9 @@ export function isEditorHistoryDeltaNoop(delta: EditorHistoryDelta) {
   if (delta.type === 'layer-styles:change') {
     return JSON.stringify(delta.before) === JSON.stringify(delta.after) &&
       JSON.stringify(delta.globalLightBefore) === JSON.stringify(delta.globalLightAfter)
+  }
+  if (delta.type === 'layers:styles') {
+    return delta.items.length === 0 || delta.items.every((item) => JSON.stringify(item.before) === JSON.stringify(item.after))
   }
   if (delta.type === 'layer:patch') {
     return JSON.stringify(delta.before) === JSON.stringify(delta.after) &&
@@ -208,6 +223,11 @@ export function historyDeltaObjectUrls(delta: EditorHistoryDelta) {
   } else if (delta.type === 'layer-styles:change') {
     collect({ styles: delta.before })
     collect({ styles: delta.after })
+  } else if (delta.type === 'layers:styles') {
+    for (const item of delta.items) {
+      collect({ styles: item.before })
+      collect({ styles: item.after })
+    }
   }
   return [...urls]
 }
@@ -266,6 +286,13 @@ export function applyEditorHistoryDelta(
     const layer = layers.find((item) => item.id === delta.layerId)
     if (layer) {
       layer.styles = cloneLayerStyleConfig(redo ? delta.after : delta.before)
+      if (layer.image) refreshLayerIds.push(layer.id)
+    }
+  } else if (delta.type === 'layers:styles') {
+    for (const item of delta.items) {
+      const layer = layers.find((candidate) => candidate.id === item.layerId)
+      if (!layer) continue
+      layer.styles = cloneLayerStyleConfig(redo ? item.after : item.before)
       if (layer.image) refreshLayerIds.push(layer.id)
     }
   } else if (delta.type === 'layers:transform') {

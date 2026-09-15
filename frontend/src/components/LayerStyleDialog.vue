@@ -29,6 +29,7 @@ import type {
   GradientOverlayEffect,
   InnerGlowEffect,
   InnerShadowEffect,
+  LayerEffectType,
   LayerStyleConfig,
   LayerStyleGlobalLight,
   LayerStyleGradient,
@@ -41,6 +42,7 @@ import type {
 
 const props = defineProps<{
   globalLight: LayerStyleGlobalLight
+  initialCategory?: LayerEffectType
   layerName: string
   nativeWindow?: boolean
   open: boolean
@@ -860,7 +862,7 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
-watch(() => props.open, async (open) => {
+watch(() => [props.open, props.styles, props.initialCategory] as const, async ([open]) => {
   if (!open) {
     finishPointerInteraction()
     return
@@ -926,7 +928,9 @@ watch(() => props.open, async (open) => {
     : createDefaultLayerEffect('bevel-emboss') as BevelEmbossEffect
   selectedCategory.value = 'blending'
   if (props.rasterEffectsAvailable) {
-    if (existingShadow?.enabled) selectedCategory.value = 'drop-shadow'
+    if (props.initialCategory && draft.value.effects.some((effect) => effect.type === props.initialCategory)) {
+      selectedCategory.value = props.initialCategory
+    } else if (existingShadow?.enabled) selectedCategory.value = 'drop-shadow'
     else if (existingInnerShadow?.enabled) selectedCategory.value = 'inner-shadow'
     else if (existing?.enabled) selectedCategory.value = 'outer-glow'
     else if (existingInner?.enabled) selectedCategory.value = 'inner-glow'
@@ -939,8 +943,10 @@ watch(() => props.open, async (open) => {
   }
   previewEnabled.value = true
   await nextTick()
-  initialFocus.value?.focus()
-})
+  const selectedNavigation = dialog.value?.querySelector<HTMLElement>('.layer-style-navigation--active')
+  const focusTarget = selectedNavigation ?? initialFocus.value
+  focusTarget?.focus()
+}, { immediate: true })
 
 onMounted(() => window.addEventListener('resize', fitDialogToViewport))
 

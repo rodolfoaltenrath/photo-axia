@@ -26,6 +26,23 @@ export const LAYER_STYLE_LIMITS = Object.freeze({
   scale: 1_000
 })
 
+const LAYER_EFFECT_LABELS: Record<LayerEffectType, string> = {
+  'drop-shadow': 'Sombra projetada',
+  'inner-shadow': 'Sombra interna',
+  'outer-glow': 'Brilho externo',
+  'inner-glow': 'Brilho interno',
+  stroke: 'Traçado',
+  'color-overlay': 'Sobreposição de cor',
+  'gradient-overlay': 'Sobreposição de gradiente',
+  'pattern-overlay': 'Sobreposição de padrão',
+  satin: 'Acetinado',
+  'bevel-emboss': 'Bisel e entalhe'
+}
+
+export function layerEffectLabel(type: LayerEffectType) {
+  return LAYER_EFFECT_LABELS[type]
+}
+
 const LINEAR_CONTOUR: LayerStyleContour = {
   preset: 'linear',
   points: [{ x: 0, y: 0 }, { x: 1, y: 1 }]
@@ -114,7 +131,7 @@ function normalizePattern(value: unknown): LayerStylePatternAsset | undefined {
   const height = Math.round(clamp(source.height, 1, LAYER_STYLE_LIMITS.patternDimension, 0))
   if (!width || !height || width * height > LAYER_STYLE_LIMITS.patternPixels) return undefined
   if (typeof source.id !== 'string' || !source.id || source.id.length > 128) return undefined
-  if (typeof source.sourceUrl !== 'string' || !source.sourceUrl || source.sourceUrl.length > 16_384) return undefined
+  if (typeof source.sourceUrl !== 'string' || !source.sourceUrl || source.sourceUrl.length > 12 * 1024 * 1024) return undefined
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(String(source.mimeType))) return undefined
   const mimeType = source.mimeType as 'image/png' | 'image/jpeg' | 'image/webp'
   return {

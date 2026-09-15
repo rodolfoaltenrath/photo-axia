@@ -1,6 +1,6 @@
 import { Events, Window } from '@wailsio/runtime'
 import { OpenLayerStyleWindow } from '../../bindings/axia/app'
-import type { LayerStyleConfig, LayerStyleGlobalLight } from '../types/editor.ts'
+import type { LayerEffectType, LayerStyleConfig, LayerStyleGlobalLight } from '../types/editor.ts'
 
 export const LAYER_STYLE_WINDOW_NAME = 'layer-styles'
 
@@ -13,6 +13,7 @@ const WINDOW_CLOSED_EVENT = 'axia:layer-styles:window-closed'
 
 export interface LayerStyleWindowSession {
   globalLight: LayerStyleGlobalLight
+  initialEffectType?: LayerEffectType
   layerName: string
   rasterEffectsAvailable: boolean
   sessionId: string
