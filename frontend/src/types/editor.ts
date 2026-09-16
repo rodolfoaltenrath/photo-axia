@@ -27,6 +27,17 @@ export interface LayerStyleGlobalLight {
   altitude: number
 }
 
+/** Intervalos de luminosidade usados pelo recurso "Mesclar se". */
+export interface LayerBlendIfRange {
+  shadows: [number, number]
+  highlights: [number, number]
+}
+
+export interface LayerStyleBlendIf {
+  channel: 'gray'
+  thisLayer: LayerBlendIfRange
+}
+
 export interface LayerStyleContourPoint {
   x: number
   y: number
@@ -210,6 +221,7 @@ export type LayerEffectType = LayerEffect['type']
 
 export interface LayerStyleConfig {
   enabled: boolean
+  blendIf: LayerStyleBlendIf
   fillOpacity: number
   effects: LayerEffect[]
 }

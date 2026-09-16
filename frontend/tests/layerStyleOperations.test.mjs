@@ -49,9 +49,15 @@ test('cópia de estilo é profunda e preserva padrões sem compartilhar estado',
 
 test('efeitos podem ser colados em raster, mas não ficam invisíveis em camada vetorial', () => {
   const styled = { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('color-overlay')] }
+  const blendIf = {
+    ...createLayerStyleConfig(),
+    blendIf: { channel: 'gray', thisLayer: { shadows: [18, 64], highlights: [255, 255] } }
+  }
   assert.equal(layerCanPasteStyle(layer('pixel'), styled), true)
   assert.equal(layerCanPasteStyle(layer('shape'), styled), false)
   assert.equal(layerCanPasteStyle(layer('shape'), { ...createLayerStyleConfig(), fillOpacity: 45 }), true)
+  assert.equal(layerCanPasteStyle(layer('pixel'), blendIf), true)
+  assert.equal(layerCanPasteStyle(layer('shape'), blendIf), false)
   assert.equal(layerCanPasteStyle(layer('image')), false)
 })
 
@@ -156,6 +162,10 @@ test('detecta estilos removíveis sem depender de efeitos ativos', () => {
   assert.equal(layerStyleCanClear(createLayerStyleConfig()), false)
   assert.equal(layerStyleCanClear({ ...createLayerStyleConfig(), enabled: false }), true)
   assert.equal(layerStyleCanClear({ ...createLayerStyleConfig(), fillOpacity: 99 }), true)
+  assert.equal(layerStyleCanClear({
+    ...createLayerStyleConfig(),
+    blendIf: { channel: 'gray', thisLayer: { shadows: [0, 32], highlights: [255, 255] } }
+  }), true)
   assert.equal(layerStyleCanClear({ ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('color-overlay')] }), true)
 })
 

@@ -3,7 +3,10 @@ import test from 'node:test'
 import {
   cloneLayerStyleConfig,
   createDefaultLayerEffect,
+  createLayerStyleBlendIf,
   createLayerStyleConfig,
+  layerStyleBlendIfIsDefault,
+  layerStyleBlendIfOpacity,
   layerStyleFillOpacity,
   layerStylePatternAssets,
   normalizeLayerStyleFillOpacity,
@@ -26,7 +29,25 @@ test('fornece defaults completos e IDs independentes para todos os efeitos', () 
     assert.match(first.id, new RegExp(`^${type}-`))
     assert.notEqual(first.id, second.id)
   }
-  assert.deepEqual(createLayerStyleConfig(), { enabled: true, fillOpacity: 100, effects: [] })
+  assert.deepEqual(createLayerStyleConfig(), {
+    enabled: true,
+    blendIf: { channel: 'gray', thisLayer: { shadows: [0, 0], highlights: [255, 255] } },
+    fillOpacity: 100,
+    effects: []
+  })
+})
+
+test('normaliza Mesclar se, preserva os pares divididos e calcula a transição suave', () => {
+  const blendIf = createLayerStyleBlendIf()
+  blendIf.thisLayer = { shadows: [60, 20], highlights: [240, 200] }
+  const styles = normalizeLayerStyleConfig({ blendIf })
+  assert.deepEqual(styles.blendIf.thisLayer, { shadows: [20, 60], highlights: [200, 240] })
+  assert.equal(layerStyleBlendIfIsDefault(styles.blendIf), false)
+  assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 20), 0)
+  assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 40), 0.5)
+  assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 100), 1)
+  assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 220), 0.5)
+  assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 240), 0)
 })
 
 test('expõe a opacidade de preenchimento normalizada como fator de alfa', () => {

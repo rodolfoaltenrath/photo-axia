@@ -1,4 +1,9 @@
-import { normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from './layerStyles.ts'
+import {
+  layerStyleBlendIfOpacity,
+  layerStyleBlendIfIsDefault,
+  normalizeLayerStyleConfig,
+  normalizeLayerStyleGlobalLight
+} from './layerStyles.ts'
 import type {
   LayerEffect,
   LayerEffectType,
@@ -150,7 +155,7 @@ export function layerStyleInsets(
 
 export function layerStyleNeedsCompositing(stylesValue: LayerStyleConfig) {
   const styles = normalizeLayerStyleConfig(stylesValue)
-  return styles.fillOpacity !== 100 || activeLayerStyleEffects(styles).length > 0
+  return styles.fillOpacity !== 100 || !layerStyleBlendIfIsDefault(styles.blendIf) || activeLayerStyleEffects(styles).length > 0
 }
 
 export function applyLayerFillOpacity(source: LayerStyleRaster, fillOpacity: number): LayerStyleRaster {
@@ -174,7 +179,15 @@ export function composeLayerStyleBase(source: LayerStyleRaster, stylesValue: Lay
   if (effects.length) {
     throw new Error(`Efeitos ainda não suportados pelo compositor: ${effects.map((effect) => effect.type).join(', ')}.`)
   }
-  return applyLayerFillOpacity(source, styles.fillOpacity)
+  const result = applyLayerFillOpacity(source, styles.fillOpacity)
+  if (layerStyleBlendIfIsDefault(styles.blendIf)) return result
+  for (let offset = 0; offset < result.data.length; offset += 4) {
+    const alpha = result.data[offset + 3]!
+    if (!alpha) continue
+    const luminance = result.data[offset]! * 0.2126 + result.data[offset + 1]! * 0.7152 + result.data[offset + 2]! * 0.0722
+    result.data[offset + 3] = Math.round(alpha * layerStyleBlendIfOpacity(styles.blendIf, luminance))
+  }
+  return result
 }
 
 function stableValue(value: unknown): unknown {
@@ -194,6 +207,7 @@ export function layerStyleHash(stylesValue: LayerStyleConfig, globalLightValue: 
     effect.useGlobalLight
   )
   const payload = JSON.stringify(stableValue({
+    blendIf: styles.blendIf,
     fillOpacity: styles.fillOpacity,
     effects,
     globalLight: usesGlobalLight ? normalizeLayerStyleGlobalLight(globalLightValue) : undefined

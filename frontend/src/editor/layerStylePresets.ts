@@ -2,6 +2,7 @@ import type { LayerEffect, LayerStyleConfig } from '../types/editor.ts'
 import {
   cloneLayerStyleConfig,
   createDefaultLayerEffect,
+  createLayerStyleConfig,
   layerStylePatternAssets,
   normalizeLayerStyleConfig,
   replaceLayerStylePatternAssets
@@ -40,9 +41,9 @@ export function defaultLayerStylePresets(): LayerStylePreset[] {
   glow.paint = { type: 'color', color: '#ffffff' }
 
   return [
-    { id: 'builtin-soft-shadow', name: 'Sombra suave', styles: { enabled: true, fillOpacity: 100, effects: [shadow] }, createdAt: 0, updatedAt: 0, builtin: true },
-    { id: 'builtin-dark-stroke', name: 'Contorno escuro', styles: { enabled: true, fillOpacity: 100, effects: [stroke] }, createdAt: 0, updatedAt: 0, builtin: true },
-    { id: 'builtin-soft-glow', name: 'Brilho suave', styles: { enabled: true, fillOpacity: 100, effects: [glow] }, createdAt: 0, updatedAt: 0, builtin: true }
+    { id: 'builtin-soft-shadow', name: 'Sombra suave', styles: { ...createLayerStyleConfig(), effects: [shadow] }, createdAt: 0, updatedAt: 0, builtin: true },
+    { id: 'builtin-dark-stroke', name: 'Contorno escuro', styles: { ...createLayerStyleConfig(), effects: [stroke] }, createdAt: 0, updatedAt: 0, builtin: true },
+    { id: 'builtin-soft-glow', name: 'Brilho suave', styles: { ...createLayerStyleConfig(), effects: [glow] }, createdAt: 0, updatedAt: 0, builtin: true }
   ]
 }
 

@@ -110,6 +110,25 @@ test('compositor base aplica fill e recusa efeitos ainda não implementados em v
   assert.equal(layerStyleNeedsCompositing(styles([], 99)), true)
 })
 
+test('Mesclar se usa a luminosidade da própria camada e mantém a transição suave no raster', () => {
+  const config = styles()
+  config.blendIf.thisLayer = { shadows: [20, 60], highlights: [200, 240] }
+  assert.equal(layerStyleNeedsCompositing(config), true)
+  const source = {
+    width: 5,
+    height: 1,
+    data: new Uint8ClampedArray([
+      20, 20, 20, 255,
+      40, 40, 40, 255,
+      100, 100, 100, 255,
+      220, 220, 220, 255,
+      240, 240, 240, 255
+    ])
+  }
+  const result = composeLayerStyleRaster(source, config, globalLight)
+  assert.deepEqual([result.data[3], result.data[7], result.data[11], result.data[15], result.data[19]], [0, 127, 255, 128, 0])
+})
+
 test('hash é determinístico para objetos equivalentes e muda com configuração ou luz global', () => {
   const first = styles([{ type: 'drop-shadow', id: 'shadow', size: 12, distance: 4 }], 80)
   const reordered = normalizeLayerStyleConfig({

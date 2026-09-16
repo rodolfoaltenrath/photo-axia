@@ -2,7 +2,8 @@ import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
 import {
   activeLayerStyleEffects,
   layerStyleEffectIsRasterSupported,
-  layerStyleHash
+  layerStyleHash,
+  layerStyleNeedsCompositing
 } from '../../../editor/layerStyleCompositor'
 import { sourceScaleFactor } from '../../../editor/selection'
 import {
@@ -66,7 +67,7 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
     const source = originalSource.value
     const transform = options.transform()
     const effects = activeLayerStyleEffects(layer.styles)
-    if (!image || !source || !effects.length || effects.some((effect) => !layerStyleEffectIsRasterSupported(effect))) {
+    if (!image || !source || !layerStyleNeedsCompositing(layer.styles) || effects.some((effect) => !layerStyleEffectIsRasterSupported(effect))) {
       if (generation === localGeneration) styledSource.value = undefined
       return
     }

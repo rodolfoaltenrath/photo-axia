@@ -12,7 +12,7 @@ import {
   layerStyleNeedsCompositing,
   type LayerStyleRenderQuality
 } from '../editor/layerStyleCompositor.ts'
-import { layerStyleFillOpacity } from '../editor/layerStyles.ts'
+import { layerStyleBlendIfIsDefault, layerStyleFillOpacity } from '../editor/layerStyles.ts'
 import { textFont, textLines } from '../editor/text.ts'
 import { traceShapePath } from '../editor/shape.ts'
 import { sourceScaleFactor } from '../editor/selection.ts'
@@ -100,9 +100,12 @@ export function layerAppearanceRenderPlan(
 }
 
 function assertSupportedLayerStyles(layers: LayerItem[]) {
-  const unsupported = layers.flatMap((layer) => activeLayerStyleEffects(layer.styles)
+  const unsupported: string[] = layers.flatMap((layer) => activeLayerStyleEffects(layer.styles)
     .filter((effect) => !layer.image || !layerStyleEffectIsRasterSupported(effect))
     .map((effect) => effect.type))
+  for (const layer of layers) {
+    if (!layer.image && !layerStyleBlendIfIsDefault(layer.styles.blendIf)) unsupported.push('blend-if')
+  }
   if (unsupported.length) {
     throw new Error(`Efeitos ainda nao suportados pelo compositor: ${[...new Set(unsupported)].join(', ')}.`)
   }

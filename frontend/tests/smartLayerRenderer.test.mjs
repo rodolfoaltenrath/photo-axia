@@ -8,6 +8,7 @@ import {
   seedSmartLayerRender,
   smartLayerRenderCacheStats
 } from '../src/services/smartLayerRenderer.ts'
+import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
 
 function content(patch = {}) {
   return {
@@ -20,7 +21,7 @@ function content(patch = {}) {
     layerStyleGlobalLight: { angle: 120, altitude: 30 },
     layers: [{
       id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
-      styles: { enabled: true, fillOpacity: 100, effects: [] },
+      styles: createLayerStyleConfig(),
       image: {
         width: 64, height: 32, mimeType: 'image/png', sourceUrl: 'blob:source',
         previewUrl: 'blob:preview-a', previewWidth: 32, previewHeight: 16
@@ -115,7 +116,7 @@ test('falha aninhada libera fontes temporárias criadas pelo mesmo lote', async 
   seedSmartLayerRender(validNested, new Blob(['nested'], { type: 'image/png' }), 8, 8)
   const smartLayer = (id, smart) => ({
     id, name: id, visible: true, opacity: 100, blendMode: 'normal', kind: 'smart', smart,
-    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    styles: createLayerStyleConfig(),
     transform: { x: 0, y: 0, width: smart.width, height: smart.height, rotation: 0 }
   })
   const source = content({

@@ -1,8 +1,10 @@
 import { normalizeLayerBlendMode } from './blendModes.ts'
 import type {
   BevelEmbossEffect,
+  LayerBlendIfRange,
   LayerEffect,
   LayerEffectType,
+  LayerStyleBlendIf,
   LayerStyleConfig,
   LayerStyleContour,
   LayerStyleGlobalLight,
@@ -55,6 +57,14 @@ const DEFAULT_GRADIENT: LayerStyleGradient = {
   interpolation: 'srgb'
 }
 
+const DEFAULT_BLEND_IF: LayerStyleBlendIf = {
+  channel: 'gray',
+  thisLayer: {
+    shadows: [0, 0],
+    highlights: [255, 255]
+  }
+}
+
 let fallbackEffectSequence = 0
 
 function record(value: unknown): Record<string, unknown> {
@@ -84,6 +94,67 @@ function angle(value: unknown, fallback: number) {
 
 function color(value: unknown, fallback: string) {
   return typeof value === 'string' && /^#[\da-f]{6}([\da-f]{2})?$/i.test(value) ? value.toLowerCase() : fallback
+}
+
+function normalizeBlendIfPair(value: unknown, fallback: readonly [number, number]) {
+  const source = Array.isArray(value) ? value : []
+  const first = Math.round(clamp(source[0], 0, 255, fallback[0]))
+  const second = Math.round(clamp(source[1], 0, 255, fallback[1]))
+  return first <= second ? [first, second] as [number, number] : [second, first] as [number, number]
+}
+
+function normalizeBlendIfRange(value: unknown): LayerBlendIfRange {
+  const source = record(value)
+  const shadows = normalizeBlendIfPair(source.shadows, DEFAULT_BLEND_IF.thisLayer.shadows)
+  const highlights = normalizeBlendIfPair(source.highlights, DEFAULT_BLEND_IF.thisLayer.highlights)
+  if (shadows[1] <= highlights[0]) return { shadows, highlights }
+  // Valores que se cruzam não possuem interpretação visual estável. Ordenar
+  // os quatro marcadores conserva os limites e devolve duas faixas válidas.
+  const markers = [shadows[0], shadows[1], highlights[0], highlights[1]].sort((first, second) => first - second)
+  return {
+    shadows: [markers[0]!, markers[1]!],
+    highlights: [markers[2]!, markers[3]!]
+  }
+}
+
+export function createLayerStyleBlendIf(): LayerStyleBlendIf {
+  return {
+    channel: 'gray',
+    thisLayer: {
+      shadows: [...DEFAULT_BLEND_IF.thisLayer.shadows],
+      highlights: [...DEFAULT_BLEND_IF.thisLayer.highlights]
+    }
+  }
+}
+
+export function normalizeLayerStyleBlendIf(value: unknown): LayerStyleBlendIf {
+  const source = record(value)
+  return {
+    channel: 'gray',
+    thisLayer: normalizeBlendIfRange(source.thisLayer)
+  }
+}
+
+export function layerStyleBlendIfIsDefault(value: unknown) {
+  const blendIf = normalizeLayerStyleBlendIf(value)
+  return blendIf.thisLayer.shadows[0] === 0 && blendIf.thisLayer.shadows[1] === 0 &&
+    blendIf.thisLayer.highlights[0] === 255 && blendIf.thisLayer.highlights[1] === 255
+}
+
+/** Retorna a opacidade de Mesclar se para uma luminosidade sRGB de 0 a 255. */
+export function layerStyleBlendIfOpacity(value: unknown, luminance: number) {
+  const range = normalizeLayerStyleBlendIf(value).thisLayer
+  const luma = Math.min(255, Math.max(0, Number.isFinite(luminance) ? luminance : 0))
+  let opacity = 1
+  if (range.shadows[1] > 0) {
+    const [start, end] = range.shadows
+    opacity = Math.min(opacity, start === end ? Number(luma > end) : (luma - start) / (end - start))
+  }
+  if (range.highlights[0] < 255) {
+    const [start, end] = range.highlights
+    opacity = Math.min(opacity, start === end ? Number(luma < start) : (end - luma) / (end - start))
+  }
+  return Math.min(1, Math.max(0, opacity))
 }
 
 function effectId(value: unknown, type: LayerEffectType) {
@@ -260,7 +331,7 @@ export function normalizeLayerEffect(value: unknown): LayerEffect | undefined {
 }
 
 export function createLayerStyleConfig(): LayerStyleConfig {
-  return { enabled: true, fillOpacity: 100, effects: [] }
+  return { enabled: true, blendIf: createLayerStyleBlendIf(), fillOpacity: 100, effects: [] }
 }
 
 export function normalizeLayerStyleConfig(value: unknown): LayerStyleConfig {
@@ -277,6 +348,7 @@ export function normalizeLayerStyleConfig(value: unknown): LayerStyleConfig {
   }
   return {
     enabled: bool(source.enabled, true),
+    blendIf: normalizeLayerStyleBlendIf(source.blendIf),
     fillOpacity: clamp(source.fillOpacity, 0, 100, 100),
     effects
   }

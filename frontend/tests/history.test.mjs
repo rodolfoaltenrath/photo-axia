@@ -9,6 +9,7 @@ import {
   isEditorHistoryDeltaNoop,
   mergeEditorHistoryDelta
 } from '../src/editor/editorHistory.ts'
+import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
 import { useHistory } from '../src/editor/history.ts'
 
 const deltaOptions = {
@@ -372,9 +373,9 @@ test('clona estilos no histórico e retém URLs de padrões sem compartilhar est
 })
 
 test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização visual', () => {
-  const initialStyles = { enabled: true, fillOpacity: 100, effects: [] }
+  const initialStyles = createLayerStyleConfig()
   const styled = {
-    enabled: true,
+    ...createLayerStyleConfig(),
     fillOpacity: 45,
     effects: [{
       type: 'color-overlay', id: 'color-1', enabled: true, opacity: 80,
@@ -404,9 +405,9 @@ test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização v
 })
 
 test('estilos e luz global formam uma única alteração reversível', () => {
-  const before = { enabled: true, fillOpacity: 100, effects: [] }
+  const before = createLayerStyleConfig()
   const after = {
-    enabled: true,
+    ...createLayerStyleConfig(),
     fillOpacity: 100,
     effects: [{
       type: 'drop-shadow', id: 'shadow', enabled: true, opacity: 75, blendMode: 'multiply',
@@ -473,7 +474,7 @@ test('desfaz e refaz estilos de várias camadas como uma ação atômica e leve'
 test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada', () => {
   const text = { content: 'Axia', fontFamily: 'Inter', fontSize: 48, color: '#ffffff' }
   const styles = {
-    enabled: true,
+    ...createLayerStyleConfig(),
     fillOpacity: 80,
     effects: [{
       type: 'color-overlay', id: 'color-1', enabled: true, opacity: 75,
@@ -495,7 +496,7 @@ test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada'
     before: { kind: 'text', image: undefined, text, transform: originalTransform, styles },
     after: {
       kind: 'pixel', image: rasterImage, text: undefined, transform: rasterTransform,
-      styles: { enabled: true, fillOpacity: 100, effects: [] }
+      styles: createLayerStyleConfig()
     }
   }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import LayerStyleColorOverlayControls from './layerStyles/LayerStyleColorOverlayControls.vue'
+import LayerStyleBlendIfControls from './layerStyles/LayerStyleBlendIfControls.vue'
 import LayerStyleBevelEmbossControls from './layerStyles/LayerStyleBevelEmbossControls.vue'
 import LayerStyleGradientOverlayControls from './layerStyles/LayerStyleGradientOverlayControls.vue'
 import LayerStylePatternOverlayControls from './layerStyles/LayerStylePatternOverlayControls.vue'
@@ -20,6 +21,7 @@ import {
   layerStylePatternAssets,
   normalizeLayerEffect,
   normalizeLayerStyleFillOpacity,
+  normalizeLayerStyleBlendIf,
   normalizeLayerStyleGlobalLight
 } from '../editor/layerStyles'
 import type {
@@ -30,6 +32,7 @@ import type {
   InnerGlowEffect,
   InnerShadowEffect,
   LayerEffectType,
+  LayerStyleBlendIf,
   LayerStyleConfig,
   LayerStyleGlobalLight,
   LayerStyleGradient,
@@ -190,6 +193,14 @@ function updateFillOpacity(value: number) {
   draft.value = {
     ...draft.value,
     fillOpacity: normalizeLayerStyleFillOpacity(value)
+  }
+  publishPreview()
+}
+
+function updateBlendIf(value: LayerStyleBlendIf) {
+  draft.value = {
+    ...draft.value,
+    blendIf: normalizeLayerStyleBlendIf(value)
   }
   publishPreview()
 }
@@ -1209,6 +1220,14 @@ onBeforeUnmount(() => {
               </span>
             </span>
           </label>
+          <LayerStyleBlendIfControls
+            :disabled="!rasterEffectsAvailable"
+            :value="draft.blendIf"
+            @update:value="updateBlendIf"
+          />
+          <p v-if="!rasterEffectsAvailable" class="layer-style-help">
+            Mesclar se está disponível para camadas rasterizadas e objetos inteligentes rasterizados.
+          </p>
         </div>
 
         <div v-else-if="selectedCategory === 'drop-shadow'" class="layer-style-controls layer-style-controls--scrollable">

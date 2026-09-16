@@ -4,7 +4,12 @@ import {
   layerStyleInsets,
   type LayerStyleRaster
 } from './layerStyleCompositor.ts'
-import { normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from './layerStyles.ts'
+import {
+  layerStyleBlendIfIsDefault,
+  layerStyleBlendIfOpacity,
+  normalizeLayerStyleConfig,
+  normalizeLayerStyleGlobalLight
+} from './layerStyles.ts'
 import type {
   BevelEmbossEffect,
   ColorOverlayEffect,
@@ -799,6 +804,19 @@ function compositeContent(
   }
 }
 
+function applyBlendIfToRaster(
+  data: Uint8ClampedArray,
+  styles: LayerStyleConfig
+) {
+  if (layerStyleBlendIfIsDefault(styles.blendIf)) return
+  for (let offset = 0; offset < data.length; offset += 4) {
+    const alpha = data[offset + 3]!
+    if (!alpha) continue
+    const luminance = data[offset]! * 0.2126 + data[offset + 1]! * 0.7152 + data[offset + 2]! * 0.0722
+    data[offset + 3] = Math.round(alpha * layerStyleBlendIfOpacity(styles.blendIf, luminance))
+  }
+}
+
 export function composeLayerStyleRaster(
   source: LayerStyleRaster,
   stylesValue: LayerStyleConfig,
@@ -859,6 +877,7 @@ export function composeLayerStyleRaster(
       renderStroke(data, sourceAlpha, width, height, effect, scale, patternId ? patterns?.get(patternId) : undefined)
     }
   }
+  applyBlendIfToRaster(data, styles)
   return {
     width,
     height,

@@ -1,6 +1,11 @@
 import type { LayerItem, LayerStyleConfig } from '../types/editor.ts'
 import { activeLayerStyleEffects } from './layerStyleCompositor.ts'
-import { cloneLayerStyleConfig, createLayerStyleConfig, normalizeLayerStyleConfig } from './layerStyles.ts'
+import {
+  cloneLayerStyleConfig,
+  createLayerStyleConfig,
+  layerStyleBlendIfIsDefault,
+  normalizeLayerStyleConfig
+} from './layerStyles.ts'
 
 export const MIN_LAYER_EFFECT_SCALE = 1
 export const MAX_LAYER_EFFECT_SCALE = 1_000
@@ -26,7 +31,7 @@ export function copyLayerStyleConfig(styles: LayerStyleConfig) {
 
 export function layerCanPasteStyle(layer: LayerItem, styles?: LayerStyleConfig) {
   if (!styles) return false
-  return Boolean(layer.image) || activeLayerStyleEffects(styles).length === 0
+  return Boolean(layer.image) || (activeLayerStyleEffects(styles).length === 0 && layerStyleBlendIfIsDefault(styles.blendIf))
 }
 
 export function pastedLayerStyleChange(layer: LayerItem, styles: LayerStyleConfig) {
@@ -45,7 +50,9 @@ export function clearedLayerStyleChange(layer: LayerItem) {
 }
 
 export function layerStyleCanClear(styles?: LayerStyleConfig) {
-  return Boolean(styles && (!styles.enabled || styles.fillOpacity !== 100 || styles.effects.length > 0))
+  return Boolean(styles && (
+    !styles.enabled || styles.fillOpacity !== 100 || !layerStyleBlendIfIsDefault(styles.blendIf) || styles.effects.length > 0
+  ))
 }
 
 export function toggledLayerStyleVisibilityChange(layer: LayerItem) {
