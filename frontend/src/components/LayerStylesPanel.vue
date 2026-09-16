@@ -182,7 +182,6 @@ const targetLabel = computed(() => props.targetCount > 1
         <button :disabled="busy" type="button" role="menuitem" @click="beginCreate">Novo estilo…</button>
         <button
           v-if="contextMenu.presetId"
-          class="layer-action--danger"
           :disabled="busy"
           type="button"
           role="menuitem"

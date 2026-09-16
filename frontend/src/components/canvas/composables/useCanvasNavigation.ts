@@ -24,13 +24,11 @@ interface CanvasNavigationOptions {
 
 export function useCanvasNavigation(options: CanvasNavigationOptions) {
   const viewportScroll = ref({ left: 0, top: 0 })
-  const isNativeScrolling = ref(false)
   const visualZoom = ref(options.zoom())
   const zoomTarget = ref(options.zoom())
   const viewportSize = ref({ width: 1, height: 1 })
   const isViewportReady = ref(false)
 
-  let nativeScrollTimeout: ReturnType<typeof setTimeout> | undefined
   let resizeObserver: ResizeObserver | undefined
   let wheelZoomFrame = 0
   let wheelZoomFrameTime = 0
@@ -79,11 +77,6 @@ export function useCanvasNavigation(options: CanvasNavigationOptions) {
 
   function handleNativeScroll() {
     syncViewportScroll()
-    isNativeScrolling.value = true
-    if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
-    nativeScrollTimeout = setTimeout(() => {
-      isNativeScrolling.value = false
-    }, 120)
   }
 
   function defaultZoomAnchor() {
@@ -323,7 +316,6 @@ export function useCanvasNavigation(options: CanvasNavigationOptions) {
   onBeforeUnmount(() => {
     stopWheelZoomAnimation()
     resizeObserver?.disconnect()
-    if (nativeScrollTimeout) clearTimeout(nativeScrollTimeout)
   })
 
   return {
@@ -332,7 +324,6 @@ export function useCanvasNavigation(options: CanvasNavigationOptions) {
     frameStyle,
     handleNativeScroll,
     handleWheel,
-    isNativeScrolling,
     isViewportReady,
     pasteboardStyle,
     requestZoom,

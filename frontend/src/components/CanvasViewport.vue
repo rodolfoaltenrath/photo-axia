@@ -78,7 +78,6 @@ const {
   frameStyle,
   handleNativeScroll,
   handleWheel,
-  isNativeScrolling,
   isViewportReady,
   pasteboardStyle,
   requestZoom,
@@ -436,7 +435,6 @@ const {
 const viewportCursorClass = computed(() => ({
   'canvas-scroll--ready': isViewportReady.value,
   'canvas-scroll--panning': isPanning.value,
-  'canvas-scroll--scrolling': isNativeScrolling.value,
   'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--selection':
     props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser' ||
@@ -803,11 +801,7 @@ function startViewportPointer(event: PointerEvent) {
 
   if (props.activeTool === 'shape' && !isSpacePressed.value) {
     const point = pointerToDocument(event)
-    if (
-      point && point.x >= 0 && point.y >= 0 &&
-      point.x <= props.document.width && point.y <= props.document.height &&
-      startShapePointer(event, point)
-    ) return
+    if (point && startShapePointer(event, point)) return
   }
 
   if (props.activeTool === 'paint-bucket' && !isSpacePressed.value && (event.button === 0 || event.button === 2)) {

@@ -25,6 +25,15 @@ test('normaliza a caixa nos quatro sentidos e combina Shift com Alt', () => {
   })
 })
 
+test('preserva geometria fora do documento para recortar apenas na renderização', () => {
+  assert.deepEqual(shapeGeometryFromDrag({ x: -40, y: -20 }, { x: 120, y: 80 }), {
+    x: -40, y: -20, width: 160, height: 100
+  })
+  assert.deepEqual(shapeGeometryFromDrag({ x: 80, y: 60 }, { x: -30, y: -10 }), {
+    x: -30, y: -10, width: 110, height: 70
+  })
+})
+
 test('gera um caminho SVG vetorial reutilizável sem rasterizar a forma', () => {
   const path = shapePathData({ x: 0, y: 0, width: 120, height: 80 }, {
     ...DEFAULT_SHAPE_CONFIG,

@@ -854,8 +854,6 @@ textarea:focus-visible,
 
 .canvas-frame {
   position: absolute;
-  outline: 1px solid #343d48;
-  box-shadow: 0 16px 36px rgb(0 0 0 / 42%);
 }
 
 .canvas-surface {
@@ -864,15 +862,8 @@ textarea:focus-visible,
   overflow: visible;
   border: 0;
   contain: layout style;
-  backface-visibility: hidden;
   transform-origin: top left;
-  will-change: transform;
   user-select: none;
-}
-
-.canvas-scroll--panning .canvas-frame,
-.canvas-scroll--scrolling .canvas-frame {
-  box-shadow: none;
 }
 
 .transparent-grid {
@@ -4649,10 +4640,6 @@ input[type='checkbox'] {
 .properties-scroll::-webkit-scrollbar-thumb,
 .layer-list::-webkit-scrollbar-thumb {
   background-color: #5a5a63;
-}
-
-.canvas-frame {
-  outline-color: var(--ui-border-strong);
 }
 
 .layer-count {
