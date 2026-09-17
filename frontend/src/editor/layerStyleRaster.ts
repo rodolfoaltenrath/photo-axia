@@ -7,6 +7,7 @@ import {
 import {
   layerStyleBlendIfIsDefault,
   layerStyleBlendIfOpacity,
+  layerStyleBlendIfUsesUnderlying,
   normalizeLayerStyleConfig,
   normalizeLayerStyleGlobalLight
 } from './layerStyles.ts'
@@ -812,8 +813,29 @@ function applyBlendIfToRaster(
   for (let offset = 0; offset < data.length; offset += 4) {
     const alpha = data[offset + 3]!
     if (!alpha) continue
-    const luminance = data[offset]! * 0.2126 + data[offset + 1]! * 0.7152 + data[offset + 2]! * 0.0722
-    data[offset + 3] = Math.round(alpha * layerStyleBlendIfOpacity(styles.blendIf, luminance))
+    data[offset + 3] = Math.round(alpha * layerStyleBlendIfOpacity(styles.blendIf, {
+      red: data[offset]!, green: data[offset + 1]!, blue: data[offset + 2]!
+    }))
+  }
+}
+
+/** Aplica Camada abaixo ao alfa de um raster já desenhado no espaço do documento. */
+export function applyLayerStyleBlendIfUnderlying(
+  data: Uint8ClampedArray,
+  backdrop: Uint8ClampedArray,
+  stylesValue: LayerStyleConfig
+) {
+  const styles = normalizeLayerStyleConfig(stylesValue)
+  if (!layerStyleBlendIfUsesUnderlying(styles.blendIf)) return
+  if (data.length !== backdrop.length || data.length % 4 !== 0) {
+    throw new Error('Buffers incompatíveis para Mesclar se da camada abaixo.')
+  }
+  for (let offset = 0; offset < data.length; offset += 4) {
+    const alpha = data[offset + 3]!
+    if (!alpha) continue
+    data[offset + 3] = Math.round(alpha * layerStyleBlendIfOpacity(styles.blendIf, {
+      red: backdrop[offset]!, green: backdrop[offset + 1]!, blue: backdrop[offset + 2]!
+    }, 'underlyingLayer'))
   }
 }
 

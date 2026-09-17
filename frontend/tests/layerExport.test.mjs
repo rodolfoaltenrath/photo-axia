@@ -35,6 +35,16 @@ test('recusa ajuste, camada vazia e fundo transparente sem pixels', () => {
   assert.equal(layerCanExportPNG({ ...base, kind: 'pixel' }, 'transparent'), false)
   assert.equal(layerCanExportPNG({ ...base, kind: 'background' }, 'transparent'), false)
   assert.equal(layerCanExportPNG({ ...base, kind: 'background' }, 'white'), true)
+  assert.equal(layerCanExportPNG({
+    ...base,
+    kind: 'pixel',
+    styles: {
+      ...createLayerStyleConfig(),
+      blendIf: { channel: 'gray', thisLayer: { shadows: [0, 0], highlights: [255, 255] }, underlyingLayer: { shadows: [0, 24], highlights: [255, 255] } }
+    },
+    image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
+    transform: { x: 0, y: 0, width: 10, height: 10, rotation: 0 }
+  }, 'transparent'), false)
 })
 
 test('gera nome curto e válido a partir do documento e da camada', () => {

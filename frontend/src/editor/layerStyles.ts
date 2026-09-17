@@ -5,6 +5,7 @@ import type {
   LayerEffect,
   LayerEffectType,
   LayerStyleBlendIf,
+  LayerStyleBlendIfChannel,
   LayerStyleConfig,
   LayerStyleContour,
   LayerStyleGlobalLight,
@@ -60,6 +61,10 @@ const DEFAULT_GRADIENT: LayerStyleGradient = {
 const DEFAULT_BLEND_IF: LayerStyleBlendIf = {
   channel: 'gray',
   thisLayer: {
+    shadows: [0, 0],
+    highlights: [255, 255]
+  },
+  underlyingLayer: {
     shadows: [0, 0],
     highlights: [255, 255]
   }
@@ -123,6 +128,10 @@ export function createLayerStyleBlendIf(): LayerStyleBlendIf {
     thisLayer: {
       shadows: [...DEFAULT_BLEND_IF.thisLayer.shadows],
       highlights: [...DEFAULT_BLEND_IF.thisLayer.highlights]
+    },
+    underlyingLayer: {
+      shadows: [...DEFAULT_BLEND_IF.underlyingLayer.shadows],
+      highlights: [...DEFAULT_BLEND_IF.underlyingLayer.highlights]
     }
   }
 }
@@ -130,21 +139,48 @@ export function createLayerStyleBlendIf(): LayerStyleBlendIf {
 export function normalizeLayerStyleBlendIf(value: unknown): LayerStyleBlendIf {
   const source = record(value)
   return {
-    channel: 'gray',
-    thisLayer: normalizeBlendIfRange(source.thisLayer)
+    channel: choice<LayerStyleBlendIfChannel>(source.channel, ['gray', 'red', 'green', 'blue'], 'gray'),
+    thisLayer: normalizeBlendIfRange(source.thisLayer),
+    underlyingLayer: normalizeBlendIfRange(source.underlyingLayer)
   }
+}
+
+function blendIfRangeIsDefault(range: LayerBlendIfRange) {
+  return range.shadows[0] === 0 && range.shadows[1] === 0 &&
+    range.highlights[0] === 255 && range.highlights[1] === 255
 }
 
 export function layerStyleBlendIfIsDefault(value: unknown) {
   const blendIf = normalizeLayerStyleBlendIf(value)
-  return blendIf.thisLayer.shadows[0] === 0 && blendIf.thisLayer.shadows[1] === 0 &&
-    blendIf.thisLayer.highlights[0] === 255 && blendIf.thisLayer.highlights[1] === 255
+  return blendIfRangeIsDefault(blendIf.thisLayer) && blendIfRangeIsDefault(blendIf.underlyingLayer)
 }
 
-/** Retorna a opacidade de Mesclar se para uma luminosidade sRGB de 0 a 255. */
-export function layerStyleBlendIfOpacity(value: unknown, luminance: number) {
-  const range = normalizeLayerStyleBlendIf(value).thisLayer
-  const luma = Math.min(255, Math.max(0, Number.isFinite(luminance) ? luminance : 0))
+export function layerStyleBlendIfUsesUnderlying(value: unknown) {
+  return !blendIfRangeIsDefault(normalizeLayerStyleBlendIf(value).underlyingLayer)
+}
+
+export type LayerStyleBlendIfSample = number | { red: number; green: number; blue: number }
+
+function blendIfChannelValue(channel: LayerStyleBlendIfChannel, sample: LayerStyleBlendIfSample) {
+  if (typeof sample === 'number') return sample
+  switch (channel) {
+    case 'red': return sample.red
+    case 'green': return sample.green
+    case 'blue': return sample.blue
+    default: return sample.red * 0.2126 + sample.green * 0.7152 + sample.blue * 0.0722
+  }
+}
+
+/** Retorna a opacidade de Mesclar se para uma amostra sRGB de 0 a 255. */
+export function layerStyleBlendIfOpacity(
+  value: unknown,
+  sample: LayerStyleBlendIfSample,
+  target: 'thisLayer' | 'underlyingLayer' = 'thisLayer'
+) {
+  const blendIf = normalizeLayerStyleBlendIf(value)
+  const range = blendIf[target]
+  const channelValue = blendIfChannelValue(blendIf.channel, sample)
+  const luma = Math.min(255, Math.max(0, Number.isFinite(channelValue) ? channelValue : 0))
   let opacity = 1
   if (range.shadows[1] > 0) {
     const [start, end] = range.shadows

@@ -31,7 +31,11 @@ test('fornece defaults completos e IDs independentes para todos os efeitos', () 
   }
   assert.deepEqual(createLayerStyleConfig(), {
     enabled: true,
-    blendIf: { channel: 'gray', thisLayer: { shadows: [0, 0], highlights: [255, 255] } },
+    blendIf: {
+      channel: 'gray',
+      thisLayer: { shadows: [0, 0], highlights: [255, 255] },
+      underlyingLayer: { shadows: [0, 0], highlights: [255, 255] }
+    },
     fillOpacity: 100,
     effects: []
   })
@@ -40,14 +44,26 @@ test('fornece defaults completos e IDs independentes para todos os efeitos', () 
 test('normaliza Mesclar se, preserva os pares divididos e calcula a transição suave', () => {
   const blendIf = createLayerStyleBlendIf()
   blendIf.thisLayer = { shadows: [60, 20], highlights: [240, 200] }
+  blendIf.underlyingLayer = { shadows: [80, 24], highlights: [245, 210] }
   const styles = normalizeLayerStyleConfig({ blendIf })
   assert.deepEqual(styles.blendIf.thisLayer, { shadows: [20, 60], highlights: [200, 240] })
+  assert.deepEqual(styles.blendIf.underlyingLayer, { shadows: [24, 80], highlights: [210, 245] })
   assert.equal(layerStyleBlendIfIsDefault(styles.blendIf), false)
   assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 20), 0)
   assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 40), 0.5)
   assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 100), 1)
   assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 220), 0.5)
   assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 240), 0)
+  assert.equal(layerStyleBlendIfOpacity(styles.blendIf, 52, 'underlyingLayer'), 0.5)
+})
+
+test('Mesclar se seleciona um canal RGB e projetos antigos recebem Camada abaixo padrão', () => {
+  const legacy = normalizeLayerStyleConfig({
+    blendIf: { channel: 'red', thisLayer: { shadows: [20, 20], highlights: [255, 255] } }
+  })
+  assert.deepEqual(legacy.blendIf.underlyingLayer, { shadows: [0, 0], highlights: [255, 255] })
+  assert.equal(layerStyleBlendIfOpacity(legacy.blendIf, { red: 10, green: 255, blue: 255 }), 0)
+  assert.equal(layerStyleBlendIfOpacity(legacy.blendIf, { red: 24, green: 0, blue: 0 }), 1)
 })
 
 test('expõe a opacidade de preenchimento normalizada como fator de alfa', () => {

@@ -12,10 +12,15 @@ import {
   layerStyleNeedsCompositing,
   type LayerStyleRenderQuality
 } from '../editor/layerStyleCompositor.ts'
-import { layerStyleBlendIfIsDefault, layerStyleFillOpacity } from '../editor/layerStyles.ts'
+import {
+  layerStyleBlendIfIsDefault,
+  layerStyleBlendIfUsesUnderlying,
+  layerStyleFillOpacity
+} from '../editor/layerStyles.ts'
 import { textFont, textLines } from '../editor/text.ts'
 import { traceShapePath } from '../editor/shape.ts'
 import { sourceScaleFactor } from '../editor/selection.ts'
+import { applyLayerStyleBlendIfUnderlying } from '../editor/layerStyleRaster.ts'
 import { prepareImageSource, releasePreparedImage } from './imageImport.ts'
 import {
   acquireDecodedLayerStyle,
@@ -74,6 +79,9 @@ export function layerAppearanceRenderPlan(
   layer: LayerItem,
   mode: LayerAppearanceMode
 ): LayerAppearanceRenderPlan | null {
+  if (layerStyleBlendIfUsesUnderlying(layer.styles.blendIf)) {
+    throw new Error('Mesclar se da camada abaixo depende do documento e não pode ser isolado.')
+  }
   const syntheticBackground = layer.kind === 'background' && !layer.image && document.background !== 'transparent'
   if (!syntheticBackground && (!layer.transform || (!layer.image && !layer.text && !layer.shape))) return null
 
@@ -109,6 +117,46 @@ function assertSupportedLayerStyles(layers: LayerItem[]) {
   if (unsupported.length) {
     throw new Error(`Efeitos ainda nao suportados pelo compositor: ${[...new Set(unsupported)].join(', ')}.`)
   }
+}
+
+function createCanvas(width: number, height: number) {
+  const canvas = window.document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  return canvas
+}
+
+function intersection(first: DocumentBounds, second: DocumentBounds): DocumentBounds | null {
+  const x = Math.max(first.x, second.x)
+  const y = Math.max(first.y, second.y)
+  const right = Math.min(first.x + first.width, second.x + second.width)
+  const bottom = Math.min(first.y + first.height, second.y + second.height)
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
+}
+
+interface PixelBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function documentBoundsToPixels(bounds: DocumentBounds, viewport: DocumentBounds, width: number, height: number): PixelBounds | null {
+  const scaleX = width / viewport.width
+  const scaleY = height / viewport.height
+  const left = Math.max(0, Math.floor((bounds.x - viewport.x) * scaleX))
+  const top = Math.max(0, Math.floor((bounds.y - viewport.y) * scaleY))
+  const right = Math.min(width, Math.ceil((bounds.x + bounds.width - viewport.x) * scaleX))
+  const bottom = Math.min(height, Math.ceil((bounds.y + bounds.height - viewport.y) * scaleY))
+  return right > left && bottom > top ? { x: left, y: top, width: right - left, height: bottom - top } : null
+}
+
+function applyUnderlyingBlendIf(
+  source: ImageData,
+  backdrop: ImageData,
+  styles: LayerItem['styles']
+) {
+  applyLayerStyleBlendIfUnderlying(source.data, backdrop.data, styles)
 }
 
 async function fetchImageBlob(source: string) {
@@ -171,6 +219,110 @@ async function prepareLayerRaster(
   }
 }
 
+function drawPreparedLayer(
+  context: CanvasRenderingContext2D,
+  layer: LayerItem,
+  raster: PreparedLayerRaster | undefined,
+  blendMode = layer.blendMode
+) {
+  if (!layer.transform || (!raster && !layer.text && !layer.shape)) return
+  const centerX = layer.transform.x + layer.transform.width / 2
+  const centerY = layer.transform.y + layer.transform.height / 2
+  context.save()
+  try {
+    context.globalAlpha = layer.opacity / 100
+    context.globalCompositeOperation = canvasBlendOperation(blendMode)
+    context.translate(centerX, centerY)
+    context.rotate(((layer.transform.rotation ?? 0) * Math.PI) / 180)
+
+    if (raster) {
+      const rect = layerRasterDrawRect(layer.transform, raster)
+      context.drawImage(raster.image, rect.x, rect.y, rect.width, rect.height)
+    } else if (layer.text) {
+      const text = layer.text
+      const scaleX = layer.transform.width / text.baseWidth
+      const scaleY = layer.transform.height / text.baseHeight
+      const lineHeight = text.fontSize * text.lineHeight
+      const textX = text.alignment === 'center' ? text.baseWidth / 2 : text.alignment === 'right' ? text.baseWidth : 0
+
+      context.globalAlpha *= layerStyleFillOpacity(layer.styles)
+      context.scale(scaleX, scaleY)
+      context.translate(-text.baseWidth / 2, -text.baseHeight / 2)
+      context.beginPath()
+      context.rect(0, 0, text.baseWidth, text.baseHeight)
+      context.clip()
+      context.fillStyle = text.color
+      context.font = textFont(text)
+      context.textAlign = text.alignment
+      context.textBaseline = 'top'
+      for (const [index, line] of textLines(text.content).entries()) {
+        context.fillText(line, textX, index * lineHeight + (lineHeight - text.fontSize) / 2)
+      }
+    } else if (layer.shape) {
+      const shape = layer.shape
+      context.globalAlpha *= layerStyleFillOpacity(layer.styles)
+      context.scale(layer.transform.width / shape.baseWidth, layer.transform.height / shape.baseHeight)
+      traceShapePath(context, {
+        x: -shape.baseWidth / 2,
+        y: -shape.baseHeight / 2,
+        width: shape.baseWidth,
+        height: shape.baseHeight
+      }, shape)
+      context.fillStyle = shape.color
+      context.fill()
+    }
+  } finally {
+    context.restore()
+  }
+}
+
+function drawLayerWithUnderlyingBlendIf(
+  context: CanvasRenderingContext2D,
+  document: DocumentSpec,
+  layer: LayerItem,
+  raster: PreparedLayerRaster | undefined,
+  viewport: DocumentBounds,
+  width: number,
+  height: number
+) {
+  const styledBounds = layerStyledDocumentBounds(layer, document.layerStyleGlobalLight)
+  const visibleBounds = styledBounds && intersection(styledBounds, viewport)
+  const pixels = visibleBounds && documentBoundsToPixels(visibleBounds, viewport, width, height)
+  if (!pixels) return
+
+  const sourceCanvas = createCanvas(pixels.width, pixels.height)
+  const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true })
+  if (!sourceContext) {
+    sourceCanvas.width = 1
+    sourceCanvas.height = 1
+    throw new Error('O sistema não disponibilizou o compositor de Mesclar se.')
+  }
+  try {
+    const scaleX = width / viewport.width
+    const scaleY = height / viewport.height
+    sourceContext.scale(scaleX, scaleY)
+    sourceContext.translate(-viewport.x - pixels.x / scaleX, -viewport.y - pixels.y / scaleY)
+    drawPreparedLayer(sourceContext, layer, raster, 'normal')
+
+    const source = sourceContext.getImageData(0, 0, pixels.width, pixels.height)
+    const backdrop = context.getImageData(pixels.x, pixels.y, pixels.width, pixels.height)
+    applyUnderlyingBlendIf(source, backdrop, layer.styles)
+    sourceContext.putImageData(source, 0, 0)
+
+    context.save()
+    try {
+      context.setTransform(1, 0, 0, 1, 0, 0)
+      context.globalCompositeOperation = canvasBlendOperation(layer.blendMode)
+      context.drawImage(sourceCanvas, pixels.x, pixels.y)
+    } finally {
+      context.restore()
+    }
+  } finally {
+    sourceCanvas.width = 1
+    sourceCanvas.height = 1
+  }
+}
+
 async function renderDocumentCanvas(
   document: DocumentSpec,
   layers: LayerItem[],
@@ -226,53 +378,10 @@ async function renderDocumentCanvas(
         }
         if (!raster && !layer.text && !layer.shape) continue
 
-        const centerX = layer.transform.x + layer.transform.width / 2
-        const centerY = layer.transform.y + layer.transform.height / 2
-        context.save()
-        try {
-          context.globalAlpha = layer.opacity / 100
-          context.globalCompositeOperation = canvasBlendOperation(layer.blendMode)
-          context.translate(centerX, centerY)
-          context.rotate(((layer.transform.rotation ?? 0) * Math.PI) / 180)
-
-          if (raster) {
-            const rect = layerRasterDrawRect(layer.transform, raster)
-            context.drawImage(raster.image, rect.x, rect.y, rect.width, rect.height)
-          } else if (layer.text) {
-            const text = layer.text
-            const scaleX = layer.transform.width / text.baseWidth
-            const scaleY = layer.transform.height / text.baseHeight
-            const lineHeight = text.fontSize * text.lineHeight
-            const textX = text.alignment === 'center' ? text.baseWidth / 2 : text.alignment === 'right' ? text.baseWidth : 0
-
-            context.globalAlpha *= layerStyleFillOpacity(layer.styles)
-            context.scale(scaleX, scaleY)
-            context.translate(-text.baseWidth / 2, -text.baseHeight / 2)
-            context.beginPath()
-            context.rect(0, 0, text.baseWidth, text.baseHeight)
-            context.clip()
-            context.fillStyle = text.color
-            context.font = textFont(text)
-            context.textAlign = text.alignment
-            context.textBaseline = 'top'
-            for (const [index, line] of textLines(text.content).entries()) {
-              context.fillText(line, textX, index * lineHeight + (lineHeight - text.fontSize) / 2)
-            }
-          } else if (layer.shape) {
-            const shape = layer.shape
-            context.globalAlpha *= layerStyleFillOpacity(layer.styles)
-            context.scale(layer.transform.width / shape.baseWidth, layer.transform.height / shape.baseHeight)
-            traceShapePath(context, {
-              x: -shape.baseWidth / 2,
-              y: -shape.baseHeight / 2,
-              width: shape.baseWidth,
-              height: shape.baseHeight
-            }, shape)
-            context.fillStyle = shape.color
-            context.fill()
-          }
-        } finally {
-          context.restore()
+        if (layerStyleBlendIfUsesUnderlying(layer.styles.blendIf)) {
+          drawLayerWithUnderlyingBlendIf(context, document, layer, raster, viewport, width, height)
+        } else {
+          drawPreparedLayer(context, layer, raster)
         }
       } catch (error) {
         const detail = error instanceof Error && error.message ? ` ${error.message}` : ''
@@ -427,6 +536,32 @@ export async function renderDocumentThumbnail(
   const height = Math.max(1, Math.round(document.height * scale))
   const canvas = await renderDocumentCanvas(document, layers, width, height, true, 'thumbnail')
   return (await canvasBlob(canvas, 'image/webp', 0.82)) ?? (await canvasBlob(canvas, 'image/png'))
+}
+
+/**
+ * Composição limitada para o canvas interativo quando `Camada abaixo` está ativa.
+ * O tamanho é limitado ao que cabe na tela para não manter um raster do documento
+ * inteiro durante a edição.
+ */
+export async function renderDocumentInteractiveBlendIfPreview(
+  document: DocumentSpec,
+  layers: LayerItem[],
+  maximumWidth: number,
+  maximumHeight: number
+) {
+  const safeWidth = Math.max(1, Math.floor(maximumWidth))
+  const safeHeight = Math.max(1, Math.floor(maximumHeight))
+  const pixelBudgetScale = Math.sqrt(3_000_000 / (document.width * document.height))
+  const scale = Math.min(safeWidth / document.width, safeHeight / document.height, pixelBudgetScale, 1)
+  const width = Math.max(1, Math.round(document.width * scale))
+  const height = Math.max(1, Math.round(document.height * scale))
+  const canvas = await renderDocumentCanvas(document, layers, width, height, true, 'thumbnail')
+  try {
+    return (await canvasBlob(canvas, 'image/webp', 0.9)) ?? (await canvasBlob(canvas, 'image/png'))
+  } finally {
+    canvas.width = 1
+    canvas.height = 1
+  }
 }
 
 export async function renderMergedLayers(document: DocumentSpec, layers: LayerItem[]) {

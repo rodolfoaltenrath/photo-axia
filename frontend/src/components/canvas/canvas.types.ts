@@ -145,6 +145,7 @@ export interface CanvasSurfaceView {
   shapePreviewStyle?: CSSProperties
   shapeTransformStyle?: CSSProperties
   defaultLayerTransform: LayerTransform
+  document: DocumentSpec
   documentHeight: number
   documentOffsetX: number
   documentOffsetY: number

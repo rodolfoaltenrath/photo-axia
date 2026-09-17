@@ -183,7 +183,11 @@ test('persiste estilos, luz global e padrões sem gravar URLs transitórias no m
   state.document.layerStyleGlobalLight = { angle: -45, altitude: 55 }
   state.layers[0].styles = {
     enabled: true,
-    blendIf: { channel: 'gray', thisLayer: { shadows: [12, 48], highlights: [208, 242] } },
+    blendIf: {
+      channel: 'blue',
+      thisLayer: { shadows: [12, 48], highlights: [208, 242] },
+      underlyingLayer: { shadows: [22, 56], highlights: [198, 234] }
+    },
     fillOpacity: 72,
     effects: [{
       type: 'pattern-overlay', id: 'pattern-effect', enabled: true, opacity: 65, blendMode: 'overlay',
@@ -209,7 +213,9 @@ test('persiste estilos, luz global e padrões sem gravar URLs transitórias no m
   assert.deepEqual(restored.document.layerStyleGlobalLight, { angle: -45, altitude: 55 })
   assert.equal(restored.layers[0].styles.fillOpacity, 72)
   assert.deepEqual(restored.layers[0].styles.blendIf, {
-    channel: 'gray', thisLayer: { shadows: [12, 48], highlights: [208, 242] }
+    channel: 'blue',
+    thisLayer: { shadows: [12, 48], highlights: [208, 242] },
+    underlyingLayer: { shadows: [22, 56], highlights: [198, 234] }
   })
   assert.equal(restored.layers[0].styles.effects[0].pattern.sourceUrl, `/__axia_asset/${patternAsset.id}`)
 })

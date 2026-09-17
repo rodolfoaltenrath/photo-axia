@@ -47,6 +47,15 @@ test('somente conteúdo visual suportado pode ser rasterizado', () => {
   assert.equal(layerCanRasterize(baseLayer({ kind: 'pixel' })), false)
   assert.equal(layerCanRasterize(baseLayer({ kind: 'adjustment' })), false)
   assert.equal(layerCanRasterize(baseLayer({ kind: 'background' })), true)
+  assert.equal(layerCanRasterize(baseLayer({
+    kind: 'shape',
+    styles: {
+      ...createLayerStyleConfig(),
+      blendIf: { channel: 'gray', thisLayer: { shadows: [0, 0], highlights: [255, 255] }, underlyingLayer: { shadows: [0, 32], highlights: [255, 255] } }
+    },
+    shape: { kind: 'rectangle', color: '#000000', cornerRadius: 0, squareness: 0, starPoints: 5, starInnerRatio: 50, baseWidth: 10, baseHeight: 10 },
+    transform: { x: 0, y: 0, width: 10, height: 10 }
+  })), false)
 })
 
 test('patch rasterizado incorpora aparência local e não toca na composição externa', () => {

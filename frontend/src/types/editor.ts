@@ -33,9 +33,12 @@ export interface LayerBlendIfRange {
   highlights: [number, number]
 }
 
+export type LayerStyleBlendIfChannel = 'gray' | 'red' | 'green' | 'blue'
+
 export interface LayerStyleBlendIf {
-  channel: 'gray'
+  channel: LayerStyleBlendIfChannel
   thisLayer: LayerBlendIfRange
+  underlyingLayer: LayerBlendIfRange
 }
 
 export interface LayerStyleContourPoint {

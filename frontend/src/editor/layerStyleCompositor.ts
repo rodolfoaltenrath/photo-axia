@@ -184,8 +184,9 @@ export function composeLayerStyleBase(source: LayerStyleRaster, stylesValue: Lay
   for (let offset = 0; offset < result.data.length; offset += 4) {
     const alpha = result.data[offset + 3]!
     if (!alpha) continue
-    const luminance = result.data[offset]! * 0.2126 + result.data[offset + 1]! * 0.7152 + result.data[offset + 2]! * 0.0722
-    result.data[offset + 3] = Math.round(alpha * layerStyleBlendIfOpacity(styles.blendIf, luminance))
+    result.data[offset + 3] = Math.round(alpha * layerStyleBlendIfOpacity(styles.blendIf, {
+      red: result.data[offset]!, green: result.data[offset + 1]!, blue: result.data[offset + 2]!
+    }))
   }
   return result
 }

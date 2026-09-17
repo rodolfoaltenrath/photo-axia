@@ -465,6 +465,7 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
   shapePreviewStyle: shapePreviewStyle.value,
   shapeTransformStyle: shapeTransformStyle.value,
   defaultLayerTransform: defaultLayerTransform.value,
+  document: props.document,
   documentHeight: props.document.height,
   documentOffsetX: documentViewportOffset.value.x,
   documentOffsetY: documentViewportOffset.value.y,

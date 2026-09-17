@@ -1,7 +1,9 @@
 import type { DocumentBackground, LayerItem } from '../types/editor.ts'
+import { layerStyleBlendIfUsesUnderlying } from './layerStyles.ts'
 
 export function layerCanExportPNG(layer: LayerItem | undefined, background: DocumentBackground) {
   if (!layer || layer.kind === 'adjustment') return false
+  if (layerStyleBlendIfUsesUnderlying(layer.styles.blendIf)) return false
   if (layer.kind === 'background' && !layer.image) return background !== 'transparent'
   if (!layer.transform) return false
   return Boolean(layer.image || layer.text || layer.shape || (layer.kind === 'smart' && layer.smart))

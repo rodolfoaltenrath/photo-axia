@@ -8,8 +8,19 @@ import { RULER_SIZE } from '../../editor/guides'
 import { TRANSFORM_HANDLES } from '../../editor/freeTransform'
 import { interpolateGradientStops, type GradientStopsConfig } from '../../editor/gradient'
 import type { CanvasSurfaceActions, CanvasSurfaceView } from './canvas.types'
+import { useDocumentBlendIfPreview } from './composables/useDocumentBlendIfPreview'
 
-defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
+const props = defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
+const { source: blendIfPreviewSource } = useDocumentBlendIfPreview({
+  document: () => props.view.document,
+  layers: () => props.view.layers,
+  maximumWidth: () => Math.min(4_096, Math.max(768, Math.ceil(
+    props.view.viewportWidth / Math.max(0.1, props.view.scale) * (window.devicePixelRatio || 1)
+  ))),
+  maximumHeight: () => Math.min(4_096, Math.max(768, Math.ceil(
+    props.view.viewportHeight / Math.max(0.1, props.view.scale) * (window.devicePixelRatio || 1)
+  )))
+})
 
 function gradientControlColor(config: GradientStopsConfig, progress: number) {
   const [red, green, blue, alpha] = interpolateGradientStops(config, progress)
@@ -111,6 +122,14 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
         </div>
       </div>
     </div>
+    <img
+      v-if="blendIfPreviewSource"
+      class="blend-if-document-preview"
+      alt=""
+      aria-hidden="true"
+      draggable="false"
+      :src="blendIfPreviewSource"
+    />
     <canvas
       v-if="view.shapePreviewStyle"
       :ref="actions.captureShapePreviewCanvas"

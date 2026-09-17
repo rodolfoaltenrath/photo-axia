@@ -13,7 +13,7 @@ import {
   LAYER_STYLE_COMPOSITION_ORDER
 } from '../src/editor/layerStyleCompositor.ts'
 import { createDefaultLayerEffect, normalizeLayerStyleConfig } from '../src/editor/layerStyles.ts'
-import { composeLayerStyleRaster } from '../src/editor/layerStyleRaster.ts'
+import { applyLayerStyleBlendIfUnderlying, composeLayerStyleRaster } from '../src/editor/layerStyleRaster.ts'
 import { ByteBudgetLruCache, LatestGenerationByKey } from '../src/editor/renderCache.ts'
 
 const globalLight = { angle: 0, altitude: 30 }
@@ -127,6 +127,35 @@ test('Mesclar se usa a luminosidade da própria camada e mantém a transição s
   }
   const result = composeLayerStyleRaster(source, config, globalLight)
   assert.deepEqual([result.data[3], result.data[7], result.data[11], result.data[15], result.data[19]], [0, 127, 255, 128, 0])
+})
+
+test('Camada abaixo usa o canal escolhido e não altera RGB', () => {
+  const config = styles()
+  config.blendIf = {
+    channel: 'red',
+    thisLayer: { shadows: [0, 0], highlights: [255, 255] },
+    underlyingLayer: { shadows: [50, 100], highlights: [255, 255] }
+  }
+  const source = new Uint8ClampedArray([
+    10, 20, 30, 255,
+    40, 50, 60, 255,
+    70, 80, 90, 255
+  ])
+  const backdrop = new Uint8ClampedArray([
+    50, 255, 255, 255,
+    75, 0, 0, 255,
+    100, 0, 0, 255
+  ])
+  applyLayerStyleBlendIfUnderlying(source, backdrop, config)
+  assert.deepEqual([...source], [
+    10, 20, 30, 0,
+    40, 50, 60, 128,
+    70, 80, 90, 255
+  ])
+  assert.throws(
+    () => applyLayerStyleBlendIfUnderlying(source, new Uint8ClampedArray(4), config),
+    /Buffers incompatíveis/
+  )
 })
 
 test('hash é determinístico para objetos equivalentes e muda com configuração ou luz global', () => {

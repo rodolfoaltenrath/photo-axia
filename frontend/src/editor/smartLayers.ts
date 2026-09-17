@@ -4,7 +4,11 @@ import type {
   LayerItem,
   SmartLayerContent
 } from '../types/editor.ts'
-import { cloneLayerStyleConfig, createLayerStyleConfig } from './layerStyles.ts'
+import {
+  cloneLayerStyleConfig,
+  createLayerStyleConfig,
+  layerStyleBlendIfUsesUnderlying
+} from './layerStyles.ts'
 
 export const SMART_LAYER_MAX_DEPTH = 8
 export type SmartLayerRenderQuality = 'interactive' | 'final'
@@ -124,7 +128,10 @@ export function layersCanConvertToSmart(items: readonly IndexedLayerItem[]) {
   const hasVisualContent = items.some(({ layer }) => Boolean(layer.image || layer.text || layer.shape || layer.kind === 'background'))
   const hasVisibleContent = items.some(({ layer }) => layer.visible && Boolean(layer.image || layer.text || layer.shape || layer.kind === 'background'))
   return items.length > 0 && hasVisualContent && (items.length === 1 || hasVisibleContent) &&
-    items.every(({ layer }) => layer.kind !== 'adjustment' && smartLayerDepth(layer) < SMART_LAYER_MAX_DEPTH)
+    items.every(({ layer }) =>
+      layer.kind !== 'adjustment' && smartLayerDepth(layer) < SMART_LAYER_MAX_DEPTH &&
+      !layerStyleBlendIfUsesUnderlying(layer.styles.blendIf)
+    )
 }
 
 function translateLayerToContent(layer: LayerItem, offsetX: number, offsetY: number) {

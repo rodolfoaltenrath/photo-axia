@@ -1,9 +1,10 @@
 import type { ImageAsset, LayerItem, LayerStyleConfig, LayerTransform } from '../types/editor.ts'
-import { createLayerStyleConfig } from './layerStyles.ts'
+import { createLayerStyleConfig, layerStyleBlendIfUsesUnderlying } from './layerStyles.ts'
 import type { RenderedLayerAppearance } from '../services/renderDocument.ts'
 
 export function layerCanRasterize(layer?: LayerItem) {
   if (!layer || layer.kind === 'adjustment' || layer.kind === 'pixel') return false
+  if (layerStyleBlendIfUsesUnderlying(layer.styles.blendIf)) return false
   return Boolean((layer.transform && (layer.image || layer.text || layer.shape)) || (layer.kind === 'background' && !layer.image))
 }
 
@@ -14,7 +15,8 @@ export function layerCanRasterize(layer?: LayerItem) {
 export function layerSupportsRotationBaking(layer?: LayerItem) {
   return Boolean(
     layer?.image &&
-    (layer.kind === 'background' || layer.kind === 'pixel')
+    (layer.kind === 'background' || layer.kind === 'pixel') &&
+    !layerStyleBlendIfUsesUnderlying(layer.styles.blendIf)
   )
 }
 

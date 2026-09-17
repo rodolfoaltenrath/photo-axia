@@ -874,13 +874,23 @@ textarea:focus-visible,
 }
 
 .document-composite,
-.document-background {
+.document-background,
+.blend-if-document-preview {
   position: absolute;
   inset: 0;
 }
 
 .document-composite {
   isolation: isolate;
+}
+
+.blend-if-document-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  user-select: none;
+  z-index: 2;
 }
 
 .document-layers,

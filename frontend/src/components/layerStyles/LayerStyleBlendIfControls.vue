@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { normalizeLayerStyleBlendIf } from '../../editor/layerStyles.ts'
-import type { LayerBlendIfRange, LayerStyleBlendIf } from '../../types/editor.ts'
+import type { LayerBlendIfRange, LayerStyleBlendIf, LayerStyleBlendIfChannel } from '../../types/editor.ts'
 
 const props = defineProps<{
   disabled?: boolean
@@ -14,13 +14,19 @@ const emit = defineEmits<{
 
 type RangeName = keyof LayerBlendIfRange
 type HandleIndex = 0 | 1
+type BlendIfTarget = 'thisLayer' | 'underlyingLayer'
 const HANDLES: HandleIndex[] = [0, 1]
+const TARGETS: Array<{ id: BlendIfTarget; label: string }> = [
+  { id: 'thisLayer', label: 'Esta camada' },
+  { id: 'underlyingLayer', label: 'Camada abaixo' }
+]
 
 const value = computed(() => normalizeLayerStyleBlendIf(props.value))
 const dragging = ref<{
   initial: LayerStyleBlendIf
   index: HandleIndex
   name: RangeName
+  targetName: BlendIfTarget
   pointerId: number
   target: HTMLElement
 } | null>(null)
@@ -29,19 +35,25 @@ function percentage(number: number) {
   return `${number / 2.55}%`
 }
 
-function updateRange(name: RangeName, next: [number, number]) {
+function updateChannel(raw: unknown) {
+  const channel = raw as LayerStyleBlendIfChannel
+  if (!['gray', 'red', 'green', 'blue'].includes(channel)) return
+  emit('update:value', normalizeLayerStyleBlendIf({ ...value.value, channel }))
+}
+
+function updateRange(targetName: BlendIfTarget, name: RangeName, next: [number, number]) {
   emit('update:value', normalizeLayerStyleBlendIf({
     ...value.value,
-    thisLayer: { ...value.value.thisLayer, [name]: next }
+    [targetName]: { ...value.value[targetName], [name]: next }
   }))
 }
 
-function updateNumber(name: RangeName, index: HandleIndex, raw: unknown) {
+function updateNumber(targetName: BlendIfTarget, name: RangeName, index: HandleIndex, raw: unknown) {
   const numeric = typeof raw === 'number' ? raw : Number(raw)
   if (!Number.isFinite(numeric)) return
-  const range = [...value.value.thisLayer[name]] as [number, number]
+  const range = [...value.value[targetName][name]] as [number, number]
   range[index] = Math.round(Math.min(255, Math.max(0, numeric)))
-  updateRange(name, range)
+  updateRange(targetName, name, range)
 }
 
 function valueFromPointer(event: PointerEvent) {
@@ -57,8 +69,8 @@ function dragValue(event: PointerEvent) {
   const current = dragging.value
   if (!current || event.pointerId !== current.pointerId) return
   const nextValue = valueFromPointer(event)
-  const range = [...current.initial.thisLayer[current.name]] as [number, number]
-  const oppositeRange = current.initial.thisLayer[current.name === 'shadows' ? 'highlights' : 'shadows']
+  const range = [...current.initial[current.targetName][current.name]] as [number, number]
+  const oppositeRange = current.initial[current.targetName][current.name === 'shadows' ? 'highlights' : 'shadows']
   const maximum = current.name === 'shadows' ? oppositeRange[0] : 255
   const minimum = current.name === 'highlights' ? oppositeRange[1] : 0
   const bounded = Math.min(maximum, Math.max(minimum, nextValue))
@@ -73,10 +85,10 @@ function dragValue(event: PointerEvent) {
     range[current.index] = bounded
   }
   if (range[0] > range[1]) range.reverse()
-  updateRange(current.name, range)
+  updateRange(current.targetName, current.name, range)
 }
 
-function startDrag(event: PointerEvent, name: RangeName, index: HandleIndex) {
+function startDrag(event: PointerEvent, targetName: BlendIfTarget, name: RangeName, index: HandleIndex) {
   if (props.disabled || event.button !== 0) return
   event.preventDefault()
   event.stopPropagation()
@@ -86,6 +98,7 @@ function startDrag(event: PointerEvent, name: RangeName, index: HandleIndex) {
     initial: normalizeLayerStyleBlendIf(value.value),
     name,
     index,
+    targetName,
     pointerId: event.pointerId,
     target
   }
@@ -104,62 +117,70 @@ function stopDrag(event: PointerEvent) {
   <section class="blend-if-controls" :class="{ 'blend-if-controls--disabled': disabled }">
     <div class="blend-if-heading">
       <h4>Mesclar se</h4>
-      <span>Escala de cinza</span>
+      <label>
+        Canal
+        <select :disabled="disabled" :value="value.channel" @change="updateChannel(($event.target as HTMLSelectElement).value)">
+          <option value="gray">Escala de cinza</option>
+          <option value="red">Vermelho</option>
+          <option value="green">Verde</option>
+          <option value="blue">Azul</option>
+        </select>
+      </label>
     </div>
-    <p>Oculte luminosidades desta camada sem apagar seus pixels.</p>
+    <p>Oculte faixas de cor sem apagar pixels. A camada abaixo considera o resultado das camadas já compostas.</p>
 
-    <div class="blend-if-row">
-      <div class="blend-if-label">Esta camada</div>
-      <div class="blend-if-track" aria-label="Intervalo de luminosidade desta camada">
+    <div v-for="target in TARGETS" :key="target.id" class="blend-if-row">
+      <div class="blend-if-label">{{ target.label }}</div>
+      <div class="blend-if-track" :aria-label="`Intervalo de ${target.label.toLowerCase()}`">
         <span v-for="tick in 11" :key="tick" class="blend-if-tick" :style="{ left: `${(tick - 1) * 10}%` }"></span>
         <button
           v-for="index in HANDLES"
-          :key="`shadow-${index}`"
+          :key="`${target.id}-shadow-${index}`"
           class="blend-if-handle blend-if-handle--shadow"
-          :class="{ 'blend-if-handle--split': value.thisLayer.shadows[0] !== value.thisLayer.shadows[1] }"
+          :class="{ 'blend-if-handle--split': value[target.id].shadows[0] !== value[target.id].shadows[1] }"
           :disabled="disabled"
-          :style="{ left: percentage(value.thisLayer.shadows[index]), '--handle-offset': index === 0 ? '5px' : '-5px' }"
+          :style="{ left: percentage(value[target.id].shadows[index]), '--handle-offset': index === 0 ? '5px' : '-5px' }"
           type="button"
-          :aria-label="`Sombras, marcador ${index + 1}: ${value.thisLayer.shadows[index]}`"
+          :aria-label="`${target.label}, sombras, marcador ${index + 1}: ${value[target.id].shadows[index]}`"
           @pointercancel="stopDrag"
-          @pointerdown="startDrag($event, 'shadows', index)"
+          @pointerdown="startDrag($event, target.id, 'shadows', index)"
           @pointermove="dragValue"
           @pointerup="stopDrag"
         ></button>
         <button
           v-for="index in HANDLES"
-          :key="`highlight-${index}`"
+          :key="`${target.id}-highlight-${index}`"
           class="blend-if-handle blend-if-handle--highlight"
-          :class="{ 'blend-if-handle--split': value.thisLayer.highlights[0] !== value.thisLayer.highlights[1] }"
+          :class="{ 'blend-if-handle--split': value[target.id].highlights[0] !== value[target.id].highlights[1] }"
           :disabled="disabled"
-          :style="{ left: percentage(value.thisLayer.highlights[index]), '--handle-offset': index === 0 ? '-5px' : '5px' }"
+          :style="{ left: percentage(value[target.id].highlights[index]), '--handle-offset': index === 0 ? '-5px' : '5px' }"
           type="button"
-          :aria-label="`Realces, marcador ${index + 1}: ${value.thisLayer.highlights[index]}`"
+          :aria-label="`${target.label}, realces, marcador ${index + 1}: ${value[target.id].highlights[index]}`"
           @pointercancel="stopDrag"
-          @pointerdown="startDrag($event, 'highlights', index)"
+          @pointerdown="startDrag($event, target.id, 'highlights', index)"
           @pointermove="dragValue"
           @pointerup="stopDrag"
         ></button>
       </div>
-    </div>
 
-    <div class="blend-if-values">
+      <div class="blend-if-values">
       <label>
         Sombras
         <span>
-          <input :disabled="disabled" :value="value.thisLayer.shadows[0]" max="255" min="0" type="number" @input="updateNumber('shadows', 0, ($event.target as HTMLInputElement).value)" />
+          <input :disabled="disabled" :value="value[target.id].shadows[0]" max="255" min="0" type="number" @input="updateNumber(target.id, 'shadows', 0, ($event.target as HTMLInputElement).value)" />
           <b>–</b>
-          <input :disabled="disabled" :value="value.thisLayer.shadows[1]" max="255" min="0" type="number" @input="updateNumber('shadows', 1, ($event.target as HTMLInputElement).value)" />
+          <input :disabled="disabled" :value="value[target.id].shadows[1]" max="255" min="0" type="number" @input="updateNumber(target.id, 'shadows', 1, ($event.target as HTMLInputElement).value)" />
         </span>
       </label>
       <label>
         Realces
         <span>
-          <input :disabled="disabled" :value="value.thisLayer.highlights[0]" max="255" min="0" type="number" @input="updateNumber('highlights', 0, ($event.target as HTMLInputElement).value)" />
+          <input :disabled="disabled" :value="value[target.id].highlights[0]" max="255" min="0" type="number" @input="updateNumber(target.id, 'highlights', 0, ($event.target as HTMLInputElement).value)" />
           <b>–</b>
-          <input :disabled="disabled" :value="value.thisLayer.highlights[1]" max="255" min="0" type="number" @input="updateNumber('highlights', 1, ($event.target as HTMLInputElement).value)" />
+          <input :disabled="disabled" :value="value[target.id].highlights[1]" max="255" min="0" type="number" @input="updateNumber(target.id, 'highlights', 1, ($event.target as HTMLInputElement).value)" />
         </span>
       </label>
+    </div>
     </div>
     <small>Arraste um marcador. Use <kbd>Alt</kbd> para dividi-lo e suavizar a transição.</small>
   </section>
@@ -169,7 +190,9 @@ function stopDrag(event: PointerEvent) {
 .blend-if-controls { border-top: 1px solid var(--ui-border, #343840); margin-top: 18px; padding-top: 16px; }
 .blend-if-heading { align-items: baseline; display: flex; gap: 8px; justify-content: space-between; }
 .blend-if-heading h4 { font-size: 13px; margin: 0; }
-.blend-if-heading span, .blend-if-controls p, .blend-if-controls small { color: var(--ui-text-dim, #9ba4b2); font-size: 11px; }
+.blend-if-heading label, .blend-if-controls p, .blend-if-controls small { color: var(--ui-text-dim, #9ba4b2); font-size: 11px; }
+.blend-if-heading label { align-items: center; display: flex; gap: 6px; }
+.blend-if-heading select { font-size: 11px; max-width: 132px; }
 .blend-if-controls p { margin: 4px 0 12px; }
 .blend-if-row { display: grid; gap: 7px; }
 .blend-if-label { color: var(--ui-text, #f4f6f8); font-size: 12px; font-weight: 600; }
