@@ -15,7 +15,6 @@ var assets embed.FS
 
 const nativeFilesDroppedEvent = "axia:files-dropped"
 const layerStyleWindowClosedEvent = "axia:layer-styles:window-closed"
-const frontendReadyEvent = "axia:frontend-ready"
 
 func init() {
 	// Registering the payload type allows the Wails v3 binding generator and
@@ -71,16 +70,15 @@ func main() {
 		})
 	}
 
-	// The frontend sends this only after Vue has mounted ProjectHome. Keeping
-	// this listener in Go avoids exposing an old WebView frame during startup.
-	desktop.Event.On(frontendReadyEvent, func(event *application.CustomEvent) {
-		if event.Sender == "main" {
-			revealMainWindow()
-		}
+	// This is emitted by Wails after the WebView runtime has loaded. At that
+	// point index.html's static startup shell is already painted, so it is safe
+	// to reveal the window without exposing a stale WebView frame.
+	window.OnWindowEvent(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) {
+		revealMainWindow()
 	})
-	// A broken or unexpectedly slow frontend must never leave the application
-	// inaccessible. In that case the static HTML startup shell remains visible.
-	time.AfterFunc(8*time.Second, revealMainWindow)
+	// A broken runtime must never leave the application inaccessible. This only
+	// runs on failure; normal startup is released by WindowRuntimeReady first.
+	time.AfterFunc(2*time.Second, revealMainWindow)
 
 	window.RegisterHook(events.Common.WindowClosing, service.handleWindowClosing)
 	window.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {

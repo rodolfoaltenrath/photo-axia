@@ -279,7 +279,7 @@ const recentProjectsLoading = ref(true)
 const showUnsavedChangesDialog = ref(false)
 const showFlattenImageDialog = ref(false)
 const layerStylePresets = shallowRef<LayerStylePreset[]>([])
-const inspectorTab = ref<'properties' | 'styles'>('properties')
+const inspectorTab = ref<'properties' | 'styles'>('styles')
 const scaleLayerEffectsSession = shallowRef<{
   items: Array<{ layerId: string; before: LayerStyleConfig }>
 }>()
