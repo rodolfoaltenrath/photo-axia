@@ -4,9 +4,40 @@
     <meta charset="UTF-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>axia</title>
+    <style>
+        html, body, #app { width: 100%; height: 100%; }
+        html { background: #070708; color-scheme: dark; }
+        body { margin: 0; overflow: hidden; background: #070708; }
+        .startup-shell {
+            display: grid;
+            box-sizing: border-box;
+            width: 100%;
+            height: 100%;
+            place-items: center;
+            background: #15191f;
+            color: #e8edf5;
+            font: 600 15px/1.2 Inter, "Segoe UI", sans-serif;
+        }
+        .startup-shell__content { display: grid; justify-items: center; gap: 12px; }
+        .startup-shell__mark {
+            width: 28px;
+            height: 28px;
+            border: 2px solid #e5484d;
+            border-radius: 7px;
+            box-sizing: border-box;
+        }
+        .startup-shell__label { opacity: .82; }
+    </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app">
+    <div class="startup-shell" role="status" aria-label="Iniciando Axia">
+        <div class="startup-shell__content">
+            <div class="startup-shell__mark" aria-hidden="true"></div>
+            <div class="startup-shell__label">Iniciando Axia…</div>
+        </div>
+    </div>
+</div>
 <script src="./src/main.ts" type="module"></script>
 </body>
 </html>
