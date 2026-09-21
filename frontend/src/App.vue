@@ -64,12 +64,12 @@ import {
 import { useHistory, type HistoryRecordOptions, type HistorySnapshot, type HistoryStep } from './editor/history'
 import { MutationBarrier } from './editor/mutationBarrier'
 import { useDocumentExport } from './composables/useDocumentExport'
+import { useDocumentCreation } from './composables/useDocumentCreation'
 import { useLayerActions } from './composables/useLayerActions'
 import { useLayerStylePresets } from './composables/useLayerStylePresets'
 import { useProjectLifecycle } from './composables/useProjectLifecycle'
 import { useProjectPersistence } from './composables/useProjectPersistence'
 import { clampZoom } from './editor/viewport'
-import { documentPixelSize } from './editor/document'
 import {
   createNativePixelLayer,
   createPlacedImageSmartLayer,
@@ -77,7 +77,7 @@ import {
   validateImportedImageDocument
 } from './editor/mediaDocument'
 import { readAutoSelectLayerPreference, writeAutoSelectLayerPreference } from './editor/preferences'
-import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
+import { editorIsBlockedByModal } from './editor/interactionGuards'
 import { layerCanRasterize, layerSupportsRotationBaking, rasterizedLayerPatch } from './editor/layerRasterization'
 import { createFlattenedLayer, documentCanFlatten } from './editor/flattenImage'
 import { updateLayerSelection, type LayerSelectionMode } from './editor/layerSelection'
@@ -179,7 +179,6 @@ import type {
   LayerStyleConfig,
   LayerStyleGlobalLight,
   LayerTransform,
-  NewDocumentSettings,
   RecentProject,
 } from './types/editor'
 
@@ -448,6 +447,35 @@ const { saveProject } = useProjectPersistence({
   settleRasterMutation,
   showError,
   smartGuidesEnabled,
+  statusText,
+  zoom
+})
+const { createDocument } = useDocumentCreation({
+  activeDocument,
+  activeLayerId,
+  activeTool,
+  appScreen,
+  createBackgroundLayer,
+  ensureRasterLayerPaintable,
+  errorText,
+  guides,
+  hasOpenDocument,
+  historyClear: (label) => history.clear(label),
+  isBusy,
+  layerSelectionAnchorId,
+  layers,
+  materializeRasterLayer,
+  previewGenerations,
+  projectPath,
+  refreshLayerPreview,
+  releaseAllEditorAssets,
+  rulerOrigin,
+  savedHistoryRevision,
+  selectedLayerIds,
+  selection,
+  selectionGeneration: () => { selectionGeneration++ },
+  showNewDocumentDialog,
+  showError,
   statusText,
   zoom
 })
@@ -2032,50 +2060,6 @@ async function bakeLayerRotation(
     return false
   } finally {
     isBusy.value = wasBusy
-  }
-}
-
-function toPixelSize(settings: NewDocumentSettings) {
-  return documentPixelSize(settings)
-}
-
-async function createDocument(settings: NewDocumentSettings) {
-  if (!canCreateDocument(isBusy.value)) return
-  errorText.value = ''
-  isBusy.value = true
-  try {
-    const pixels = toPixelSize(settings)
-    const document = await createEditorDocument(settings, pixels.width, pixels.height)
-    releaseAllEditorAssets()
-    await releaseAxiaProjectAssets()
-    history.clear('Documento criado')
-    previewGenerations.clear()
-    selection.value = null
-    selectionGeneration++
-    activeDocument.value = document
-    guides.value = []
-    rulerOrigin.value = { x: 0, y: 0 }
-    const baseLayer = createBackgroundLayer()
-    layers.value = [baseLayer]
-    activeLayerId.value = 'layer-bg'
-    selectedLayerIds.value = ['layer-bg']
-    layerSelectionAnchorId.value = 'layer-bg'
-    zoom.value = 100
-    await materializeRasterLayer(baseLayer, document.width, document.height, document.background)
-    await refreshLayerPreview(baseLayer, true, false, true)
-    projectPath.value = ''
-    savedHistoryRevision.value = null
-    showNewDocumentDialog.value = false
-    hasOpenDocument.value = true
-    appScreen.value = 'editor'
-    statusText.value = `${document.name} — ${document.width} × ${document.height} px`
-  } catch (error) {
-    showError(error, 'Não foi possível criar o documento.')
-  } finally {
-    isBusy.value = false
-    if (activeTool.value === 'brush' || activeTool.value === 'eraser' || activeTool.value === 'gradient' || activeTool.value === 'paint-bucket') {
-      void ensureRasterLayerPaintable()
-    }
   }
 }
 

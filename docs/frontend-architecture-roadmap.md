@@ -35,6 +35,8 @@ interface explícita.
   tela inicial.
 - [x] Extrair `useProjectPersistence()` para o salvamento `.axia`, manifesto,
   assets e atualização de recentes.
+- [x] Extrair `useDocumentCreation()` para inicialização, raster-base e troca
+  atômica do estado de um novo documento.
 - [ ] Mover o coordenador de abertura depois que seus testes de fluxo cobrirem
   cancelamento, assets, previews e histórico.
 - [ ] Manter criação/restauração de manifestos em `services/project`.
