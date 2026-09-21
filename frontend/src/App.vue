@@ -66,6 +66,7 @@ import { MutationBarrier } from './editor/mutationBarrier'
 import { useDocumentExport } from './composables/useDocumentExport'
 import { useDocumentCreation } from './composables/useDocumentCreation'
 import { useMediaDocumentOpen } from './composables/useMediaDocumentOpen'
+import { useLayerImageImport } from './composables/useLayerImageImport'
 import { useLayerActions } from './composables/useLayerActions'
 import { useLayerStylePresets } from './composables/useLayerStylePresets'
 import { useProjectLifecycle } from './composables/useProjectLifecycle'
@@ -433,6 +434,14 @@ const { openImageAsDocument, readLocalImageDocument } = useMediaDocumentOpen({
   releaseUnadoptedImage: releaseUnadoptedImportedImage,
   replaceDocumentWithImportedImage,
   showError,
+  statusText
+})
+const { importImages, readLocalFiles } = useLayerImageImport({
+  errorText,
+  fileInput,
+  isBusy,
+  showError,
+  startImagePlacementQueue,
   statusText
 })
 const { saveProject } = useProjectPersistence({
@@ -3657,40 +3666,6 @@ async function canOpenMediaDocument(mediaLabel: string) {
     return false
   }
   return !isBusy.value && await confirmDiscardChanges()
-}
-
-async function importImages() {
-  errorText.value = ''
-  if (!hasDesktopBackend()) {
-    fileInput.value?.click()
-    return
-  }
-
-  isBusy.value = true
-  statusText.value = 'Selecionando imagens…'
-  try {
-    await startImagePlacementQueue(await selectDesktopImages())
-  } catch (error) {
-    showError(error, 'Não foi possível importar as imagens.')
-  } finally {
-    isBusy.value = false
-  }
-}
-
-async function readLocalFiles(input: HTMLInputElement) {
-  if (!input.files?.length) return
-
-  isBusy.value = true
-  statusText.value = 'Preparando imagens para posicionamento…'
-  try {
-    const result = await readBrowserImages(input.files)
-    await startImagePlacementQueue(result.images, result.errors)
-  } catch (error) {
-    showError(error, 'Não foi possível importar as imagens.')
-  } finally {
-    input.value = ''
-    isBusy.value = false
-  }
 }
 
 let pdfImportController: AbortController | undefined
