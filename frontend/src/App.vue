@@ -19,8 +19,6 @@ import {
   finalizeAxiaProjectOpen,
   getEditorStatus,
   hasDesktopBackend,
-  openAxiaProject,
-  openRecentProject,
   registerNativeFileDrop,
   releaseDesktopImageImports,
   releaseDesktopPDF,
@@ -47,7 +45,7 @@ import {
   sampleDocumentColor
 } from './services/renderDocument'
 import { closePDFImport, renderPDFPages, type PDFImportSource, type PDFRenderRequest } from './services/pdfImport'
-import { restoreAxiaProject } from './services/project'
+import { applyPreparedProject, prepareRestoredProject, selectAndRestoreAxiaProject } from './services/projectOpen'
 import {
   applyEditorHistoryDelta,
   cloneLayerHistoryState,
@@ -3583,72 +3581,65 @@ async function openProject(recentPath = '') {
   previewLayerCountHint = 0
   let openedSessionID = ''
   try {
-    const opened = recentPath ? await openRecentProject(recentPath) : await openAxiaProject()
-    if (!opened.path) {
+    const result = await selectAndRestoreAxiaProject(recentPath)
+    if (!result) {
       statusText.value = 'Abertura cancelada'
       return
     }
+    const { opened, restored } = result
     openedSessionID = opened.sessionId
-    const assetUrls = Object.fromEntries(
-      Object.entries(opened.assetUrls ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-    )
-    const restored = restoreAxiaProject(opened.manifest, assetUrls)
     clearSmartLayerRenderCache()
-    const smartLayers = restored.layers.filter((layer) => layer.kind === 'smart')
-    for (const [index, layer] of smartLayers.entries()) {
-      statusText.value = smartLayers.length === 1
-        ? 'Renderizando camada inteligente…'
-        : `Renderizando camada inteligente ${index + 1} de ${smartLayers.length}…`
-      await refreshSmartLayerSource(layer, true)
-    }
-    const imageLayers = restored.layers.filter((layer) => layer.visible && layer.image && layer.transform)
-    previewLayerCountHint = imageLayers.length
+    const restoredImageLayers = restored.layers.filter((layer) => layer.visible && layer.image && layer.transform)
+    previewLayerCountHint = restoredImageLayers.length
     zoom.value = restored.view.zoom
     await nextTick()
     if (previewRefreshTimer) {
       clearTimeout(previewRefreshTimer)
       previewRefreshTimer = undefined
     }
-    for (const [index, layer] of imageLayers.entries()) {
-      statusText.value = imageLayers.length === 1
-        ? 'Otimizando imagem do projeto…'
-        : `Otimizando imagem ${index + 1} de ${imageLayers.length}…`
-      await refreshLayerPreview(layer, true, true, layer.id === restored.view.activeLayerId)
-    }
-
+    const imageLayers = await prepareRestoredProject(
+      restored.layers,
+      restored.view.activeLayerId,
+      (layer) => refreshSmartLayerSource(layer, true),
+      (layer, prioritize) => refreshLayerPreview(layer, true, true, prioritize),
+      (status) => { statusText.value = status }
+    )
     canvasViewport.value?.commitPendingTransform()
     if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição atual…'
     await rasterMutationBarrier.wait()
-    const restoredObjectUrls = new Set(restored.layers.flatMap(layerObjectUrls))
-    for (const source of restoredObjectUrls) trackedObjectUrls.delete(source)
-    releaseAllEditorAssets(true)
-    history.clear('Projeto aberto')
-    previewGenerations.clear()
-    selection.value = null
-    selectionGeneration++
-    activeDocument.value = restored.document
-    guides.value = restored.guides
-    guidesVisible.value = restored.view.guidesVisible
-    guidesLocked.value = restored.view.guidesLocked
-    guideSnappingEnabled.value = restored.view.guideSnappingEnabled
-    smartGuidesEnabled.value = restored.view.smartGuidesEnabled
-    rulerOrigin.value = restored.view.rulerOrigin
-    rulerUnit.value = restored.view.rulerUnit
-    layers.value = restored.layers
-    trackLayerAssets(restored.layers)
-    activeLayerId.value = restored.view.activeLayerId
-    activeTool.value = 'move'
-    projectPath.value = opened.path
-    savedHistoryRevision.value = historyRevision.value
-    hasOpenDocument.value = true
-    appScreen.value = 'editor'
-    previewLayerCountHint = 0
-    statusText.value = 'Sincronizando projeto…'
-    await nextTick()
-    await canvasViewport.value?.waitForLayerImages(imageLayers.map((layer) => ({
-      layerId: layer.id,
-      source: layer.image?.previewUrl ?? layer.image!.sourceUrl
-    })))
+    await applyPreparedProject(() => {
+      const restoredObjectUrls = new Set(restored.layers.flatMap(layerObjectUrls))
+      for (const source of restoredObjectUrls) trackedObjectUrls.delete(source)
+      releaseAllEditorAssets(true)
+      history.clear('Projeto aberto')
+      previewGenerations.clear()
+      selection.value = null
+      selectionGeneration++
+      activeDocument.value = restored.document
+      guides.value = restored.guides
+      guidesVisible.value = restored.view.guidesVisible
+      guidesLocked.value = restored.view.guidesLocked
+      guideSnappingEnabled.value = restored.view.guideSnappingEnabled
+      smartGuidesEnabled.value = restored.view.smartGuidesEnabled
+      rulerOrigin.value = restored.view.rulerOrigin
+      rulerUnit.value = restored.view.rulerUnit
+      layers.value = restored.layers
+      trackLayerAssets(restored.layers)
+      activeLayerId.value = restored.view.activeLayerId
+      activeTool.value = 'move'
+      projectPath.value = opened.path
+      savedHistoryRevision.value = historyRevision.value
+      hasOpenDocument.value = true
+      appScreen.value = 'editor'
+      previewLayerCountHint = 0
+      statusText.value = 'Sincronizando projeto…'
+    }, async () => {
+      await nextTick()
+      await canvasViewport.value?.waitForLayerImages(imageLayers.map((layer) => ({
+        layerId: layer.id,
+        source: layer.image?.previewUrl ?? layer.image!.sourceUrl
+      })))
+    })
     await finalizeAxiaProjectOpen(openedSessionID, true)
     openedSessionID = ''
     statusText.value = `${activeDocument.value.name} — projeto aberto`
