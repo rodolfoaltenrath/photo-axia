@@ -27,7 +27,6 @@ import {
   releaseAxiaProjectAssets,
   setNativeDocumentDirty,
   selectDesktopImages,
-  selectDesktopPDF
 } from './services/backend'
 import {
   clearPreparedImageCache,
@@ -67,6 +66,7 @@ import { useDocumentExport } from './composables/useDocumentExport'
 import { useDocumentCreation } from './composables/useDocumentCreation'
 import { useMediaDocumentOpen } from './composables/useMediaDocumentOpen'
 import { useLayerImageImport } from './composables/useLayerImageImport'
+import { usePDFImportSelection } from './composables/usePDFImportSelection'
 import { useLayerActions } from './composables/useLayerActions'
 import { useLayerStylePresets } from './composables/useLayerStylePresets'
 import { useProjectLifecycle } from './composables/useProjectLifecycle'
@@ -442,6 +442,18 @@ const { importImages, readLocalFiles } = useLayerImageImport({
   isBusy,
   showError,
   startImagePlacementQueue,
+  statusText
+})
+const { importPDF, openPDFAsDocument } = usePDFImportSelection({
+  canOpenMediaDocument,
+  errorText,
+  isBusy,
+  pdfFileInput,
+  pdfImportDestination,
+  pdfImportSource,
+  releasePDFSource,
+  showError,
+  showImportPdfDialog,
   statusText
 })
 const { saveProject } = useProjectPersistence({
@@ -3676,42 +3688,6 @@ async function releasePDFSource() {
   if (!source) return
   if (source.id) await releaseDesktopPDF(source.id).catch(() => undefined)
   else if (source.sourceUrl.startsWith('blob:')) URL.revokeObjectURL(source.sourceUrl)
-}
-
-async function beginPDFImport(destination: 'document' | 'layer') {
-  if (isBusy.value || showImportPdfDialog.value) return
-  if (destination === 'document' && !await canOpenMediaDocument('outro PDF')) return
-  errorText.value = ''
-  pdfImportDestination.value = destination
-  if (!hasDesktopBackend()) {
-    pdfFileInput.value?.click()
-    return
-  }
-  isBusy.value = true
-  statusText.value = 'Selecionando PDF…'
-  try {
-    const source = await selectDesktopPDF()
-    if (!source) {
-      statusText.value = destination === 'document' ? 'Abertura de PDF cancelada' : 'Importação de PDF cancelada'
-      return
-    }
-    await releasePDFSource()
-    pdfImportSource.value = source
-    showImportPdfDialog.value = true
-    statusText.value = destination === 'document' ? 'PDF pronto para abrir' : 'PDF pronto para adicionar'
-  } catch (error) {
-    showError(error, 'Não foi possível abrir o PDF.')
-  } finally {
-    isBusy.value = false
-  }
-}
-
-function importPDF() {
-  return beginPDFImport('layer')
-}
-
-function openPDFAsDocument() {
-  return beginPDFImport('document')
 }
 
 async function handleNativeFileDrop(
