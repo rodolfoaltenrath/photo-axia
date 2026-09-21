@@ -50,7 +50,6 @@ interface ShapeInteractionOptions {
   scale: () => number
   scrollArea: Ref<HTMLDivElement | null>
   documentPointFromPointer: (event: PointerEvent) => SelectionPoint | undefined
-  scheduleInteractionFrame: (callback: () => void) => void
   discardInteractionFrame: () => void
   confirm: (
     insertionAnchorId: string | undefined,
@@ -66,6 +65,11 @@ function geometryFromTransform(transform: { x: number; y: number; width: number;
 export function useShapeInteraction(options: ShapeInteractionOptions) {
   const interaction = shallowRef<ShapeInteraction | null>(null)
   const previewCanvas = ref<HTMLCanvasElement | null>(null)
+  // A shape preview owns a bitmap canvas.  Keep its paint schedule independent
+  // from the shared interaction frame, which is intentionally discarded when
+  // navigation starts.  Otherwise a middle-button pan can cancel the paint
+  // that restores the bitmap while leaving the DOM transform box visible.
+  let previewFrame = 0
   const previewDimensions = computed(() => {
     const documentSpec = options.document()
     return brushPreviewSize(
@@ -94,6 +98,7 @@ export function useShapeInteraction(options: ShapeInteractionOptions) {
 
   function capturePreviewCanvas(element: unknown) {
     previewCanvas.value = element instanceof HTMLCanvasElement ? element : null
+    if (previewCanvas.value) schedulePreviewDraw()
   }
 
   function drawPreview() {
@@ -114,6 +119,18 @@ export function useShapeInteraction(options: ShapeInteractionOptions) {
     context.fillStyle = current.config.color
     context.fill()
     context.restore()
+  }
+
+  function schedulePreviewDraw() {
+    if (previewFrame) return
+    previewFrame = requestAnimationFrame(() => {
+      previewFrame = 0
+      drawPreview()
+    })
+  }
+
+  function refreshPreview() {
+    if (interaction.value) schedulePreviewDraw()
   }
 
   function start(event: PointerEvent, point: SelectionPoint) {
@@ -139,7 +156,7 @@ export function useShapeInteraction(options: ShapeInteractionOptions) {
       constrainProportions: event.shiftKey,
       fromCenter: event.altKey
     }
-    void nextTick(drawPreview)
+    void nextTick(schedulePreviewDraw)
     return true
   }
 
@@ -215,7 +232,7 @@ export function useShapeInteraction(options: ShapeInteractionOptions) {
       ))
     }
     triggerRef(interaction)
-    options.scheduleInteractionFrame(drawPreview)
+    schedulePreviewDraw()
     return true
   }
 
@@ -231,7 +248,7 @@ export function useShapeInteraction(options: ShapeInteractionOptions) {
     } else {
       current.phase = 'editing'
       triggerRef(interaction)
-      options.scheduleInteractionFrame(drawPreview)
+      schedulePreviewDraw()
     }
     return true
   }
@@ -293,6 +310,8 @@ export function useShapeInteraction(options: ShapeInteractionOptions) {
   }
 
   function clearPreview() {
+    if (previewFrame) cancelAnimationFrame(previewFrame)
+    previewFrame = 0
     const canvas = previewCanvas.value
     const context = canvas?.getContext('2d')
     if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height)
@@ -302,7 +321,7 @@ export function useShapeInteraction(options: ShapeInteractionOptions) {
     const current = interaction.value
     if (!current || current.phase === 'drawing') return
     current.config = normalizeShapeConfig(config)
-    options.scheduleInteractionFrame(drawPreview)
+    schedulePreviewDraw()
   })
 
   watch(options.activeTool, (tool) => {
@@ -318,6 +337,7 @@ export function useShapeInteraction(options: ShapeInteractionOptions) {
     captureShapePreviewCanvas: capturePreviewCanvas,
     commitShape: commit,
     hasShapePointer: hasPointer,
+    refreshShapePreview: refreshPreview,
     shapeInteraction: interaction,
     shapeIsEditing: isEditing,
     shapePreviewDimensions: previewDimensions,

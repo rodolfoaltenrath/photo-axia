@@ -99,6 +99,7 @@ const {
   onViewportOffsetChange: (offset) => {
     canvasRulers.value?.updateViewportOffsets(offset.x, offset.y)
     guideOverlay.value?.updateViewportOffsets(offset.x, offset.y)
+    refreshShapePreview()
   }
 })
 
@@ -321,6 +322,7 @@ const {
   captureShapePreviewCanvas,
   commitShape: commitShapeDraft,
   hasShapePointer,
+  refreshShapePreview,
   shapeInteraction,
   shapeIsEditing,
   shapePreviewDimensions,
@@ -340,7 +342,6 @@ const {
   scale: () => scale.value,
   scrollArea,
   documentPointFromPointer: pointerToDocument,
-  scheduleInteractionFrame,
   discardInteractionFrame,
   confirm: (insertionAnchorId, geometry, config) => {
     emit('shapeGesture', insertionAnchorId, geometry, config)

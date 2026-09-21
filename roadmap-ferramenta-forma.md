@@ -134,6 +134,17 @@ Adicionar uma Ferramenta Forma no padrão do Photoshop: cada gesto cria uma cama
 - Executável de produção atualizado em `bin/axia.exe` (13.483.520 bytes; SHA-256 `EEAC16ADF1694C32C4009549AF37B09A2BCEF3A28A98A2E3AAFD29D74C795EC3`).
 - Instalador NSIS atualizado em `bin/axia-amd64-installer.exe` (7.321.402 bytes; SHA-256 `AE2E397EF42B8544C717767D55364A060FEFD98911177B0A71307DA774DE2E44`).
 
+### 2026-09-21 — Correção da prévia ao navegar o canvas
+
+- Corrigido o desaparecimento do preenchimento da forma pendente ao navegar o canvas
+  com o botão do meio do mouse. A caixa de transformação permanecia visível, mas o
+  canvas da prévia podia ficar transparente.
+- A prévia de forma agora possui um frame de desenho próprio e é solicitada novamente
+  ao alterar o deslocamento do viewport. O pan não pode mais descartar esse desenho
+  ao limpar a fila compartilhada das outras interações.
+- Validação automatizada atualizada: 400 testes do frontend, `vue-tsc --noEmit`, build
+  Vite de desenvolvimento e `go test ./...` aprovados.
+
 ## Validação manual posterior
 
 - Desenhar cada forma nos quatro sentidos e em diferentes níveis de zoom.
@@ -143,5 +154,8 @@ Adicionar uma Ferramenta Forma no padrão do Photoshop: cada gesto cria uma cama
 - Criar formas acima de camadas raster, texto, inteligente e em documento transparente sem conteúdo raster.
 - Depois do `Enter`, alterar cor e parâmetros, duplicar, reordenar, mover e usar `Ctrl+T` sem perda de nitidez.
 - Confirmar `Esc`, troca de ferramenta, `Ctrl+Z`/`Ctrl+Shift+Z`, salvamento/reabertura `.axia` e exportação.
+- Depois de soltar o gesto e antes de confirmar, navegar com o botão do meio em zoom
+  baixo, fracionário e alto; o preenchimento da prévia deve acompanhar a caixa de
+  transformação sem desaparecer.
 - Rasterizar explicitamente uma forma, converter uma ou várias formas em camada inteligente, mesclar e achatar.
 - Estressar formas parcialmente fora do documento e transformações repetidas em zoom baixo e alto.
