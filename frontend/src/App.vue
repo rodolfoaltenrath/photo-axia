@@ -26,7 +26,6 @@ import {
   releaseDesktopPDF,
   releaseAxiaProjectAssets,
   setNativeDocumentDirty,
-  selectDesktopImage,
   selectDesktopImages,
   selectDesktopPDF
 } from './services/backend'
@@ -41,6 +40,7 @@ import {
   releasePreparedImage,
   releaseLayerAssets
 } from './services/imageImport'
+import { prepareImportedDocumentLayer as prepareImportedDocumentLayerAsset } from './services/importedDocumentLayer'
 import {
   renderDocumentBlob,
   renderLayerAppearance,
@@ -65,6 +65,7 @@ import { useHistory, type HistoryRecordOptions, type HistorySnapshot, type Histo
 import { MutationBarrier } from './editor/mutationBarrier'
 import { useDocumentExport } from './composables/useDocumentExport'
 import { useDocumentCreation } from './composables/useDocumentCreation'
+import { useMediaDocumentOpen } from './composables/useMediaDocumentOpen'
 import { useLayerActions } from './composables/useLayerActions'
 import { useLayerStylePresets } from './composables/useLayerStylePresets'
 import { useProjectLifecycle } from './composables/useProjectLifecycle'
@@ -422,6 +423,16 @@ const {
   saveCurrentProject: () => saveProject(),
   showError,
   showUnsavedChangesDialog,
+  statusText
+})
+const { openImageAsDocument, readLocalImageDocument } = useMediaDocumentOpen({
+  canOpenMediaDocument,
+  documentImageInput,
+  errorText,
+  isBusy,
+  releaseUnadoptedImage: releaseUnadoptedImportedImage,
+  replaceDocumentWithImportedImage,
+  showError,
   statusText
 })
 const { saveProject } = useProjectPersistence({
@@ -2069,32 +2080,6 @@ function releaseUnadoptedImportedImage(image: ImportedImage | null | undefined) 
   else if (image.sourceUrl.startsWith('/__axia_asset/')) void releaseDesktopImageImports([image.id])
 }
 
-async function prepareImportedDocumentLayer(layer: LayerItem) {
-  const asset = layer.image
-  const transform = layer.transform
-  if (!asset || !transform) throw new Error('A mídia não possui conteúdo visual válido.')
-  const target = editorPreviewSize(
-    asset,
-    transform.width,
-    transform.height,
-    1,
-    typeof window === 'undefined' ? 1 : window.devicePixelRatio,
-    ACTIVE_PREVIEW_PIXELS
-  )
-  let preview: Awaited<ReturnType<typeof createImagePreview>>
-  try {
-    preview = await createImagePreview(asset, target.width, target.height)
-    await prepareImageSource(preview?.url ?? asset.sourceUrl)
-    asset.previewUrl = preview?.url
-    asset.previewWidth = preview?.width ?? asset.width
-    asset.previewHeight = preview?.height ?? asset.height
-  } catch (error) {
-    if (preview?.url.startsWith('blob:')) URL.revokeObjectURL(preview.url)
-    releasePreparedImage(preview?.url ?? asset.sourceUrl)
-    throw error
-  }
-}
-
 async function replaceDocumentWithImportedImage(
   image: ImportedImage,
   documentName = image.name,
@@ -2111,7 +2096,7 @@ async function replaceDocumentWithImportedImage(
 
   try {
     // Prepare the exact visual source before releasing anything owned by the current document.
-    await prepareImportedDocumentLayer(layer)
+    await prepareImportedDocumentLayerAsset(layer, ACTIVE_PREVIEW_PIXELS)
     canvasViewport.value?.commitPendingTransform()
     if (rasterMutationBarrier.isPending && !await rasterMutationBarrier.wait()) {
       throw new Error('Não foi possível concluir a edição atual antes de abrir a mídia.')
@@ -3413,7 +3398,7 @@ async function stageNextImagePlacement() {
   let layer: LayerItem | undefined
   try {
     layer = createPlacedImageSmartLayer(image, activeDocument.value, imageTransform(image))
-    await prepareImportedDocumentLayer(layer)
+    await prepareImportedDocumentLayerAsset(layer, ACTIVE_PREVIEW_PIXELS)
     if (imagePlacementSession.value !== stagingSession) {
       if (layer.image?.previewUrl?.startsWith('blob:')) {
         releasePreparedImage(layer.image.previewUrl)
@@ -3672,59 +3657,6 @@ async function canOpenMediaDocument(mediaLabel: string) {
     return false
   }
   return !isBusy.value && await confirmDiscardChanges()
-}
-
-async function openImageAsDocument() {
-  if (!await canOpenMediaDocument('outra imagem')) return
-  errorText.value = ''
-  if (!hasDesktopBackend()) {
-    documentImageInput.value?.click()
-    return
-  }
-
-  isBusy.value = true
-  statusText.value = 'Selecionando imagem…'
-  let image: ImportedImage | null = null
-  let adopted = false
-  try {
-    image = await selectDesktopImage()
-    if (!image) {
-      statusText.value = 'Abertura de imagem cancelada'
-      return
-    }
-    statusText.value = 'Abrindo imagem como documento…'
-    await replaceDocumentWithImportedImage(image, image.name, 'Imagem aberta')
-    adopted = true
-  } catch (error) {
-    showError(error, 'Não foi possível abrir a imagem como documento.')
-  } finally {
-    if (!adopted) releaseUnadoptedImportedImage(image)
-    isBusy.value = false
-  }
-}
-
-async function readLocalImageDocument(input: HTMLInputElement) {
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-
-  isBusy.value = true
-  statusText.value = 'Abrindo imagem como documento…'
-  let image: ImportedImage | undefined
-  let adopted = false
-  try {
-    const result = await readBrowserImages([file])
-    image = result.images[0]
-    if (!image) throw new Error(result.errors[0] || 'A imagem não pôde ser lida.')
-    await replaceDocumentWithImportedImage(image, image.name, 'Imagem aberta')
-    adopted = true
-    errorText.value = result.errors.join('\n')
-  } catch (error) {
-    showError(error, 'Não foi possível abrir a imagem como documento.')
-  } finally {
-    if (!adopted) releaseUnadoptedImportedImage(image)
-    isBusy.value = false
-  }
 }
 
 async function importImages() {
