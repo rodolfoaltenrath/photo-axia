@@ -56,6 +56,20 @@ type App struct {
 var previewCacheCapacityBytes int64 = 64 * 1024 * 1024
 var previewCacheMaxEntries = 200
 
+// previewWorkerCount deliberately stays below the number of logical CPUs. A
+// preview first decodes the complete source image, so unrestricted parallelism
+// would trade a short thumbnail queue for large, avoidable RAM spikes.
+func previewWorkerCount() int {
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		return 1
+	}
+	if workers > 2 {
+		return 2
+	}
+	return workers
+}
+
 type previewCacheKey struct {
 	id     string
 	width  int
@@ -189,7 +203,7 @@ func NewApp() *App {
 		projectFiles:    make(map[string]projectSession),
 		recentUploads:   make(map[string]recentUpload),
 		exportUploads:   make(map[string]exportUpload),
-		previewSlots:    make(chan struct{}, 1),
+		previewSlots:    make(chan struct{}, previewWorkerCount()),
 		previewCache:    newPreviewCache(),
 	}
 }

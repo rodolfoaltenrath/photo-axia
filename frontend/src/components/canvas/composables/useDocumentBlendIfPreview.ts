@@ -51,8 +51,13 @@ export function useDocumentBlendIfPreview(options: DocumentBlendIfPreviewOptions
 
   watch(
     () => {
+      // Most documents do not use the underlying-layer half of Blend If. In
+      // that common case, avoid creating style hashes for every layer on each
+      // editor update; `active` still tracks exactly when this changes.
+      if (!active.value) return [false]
       const document = options.document()
       return [
+        true,
         document.id, document.width, document.height, document.background,
         document.layerStyleGlobalLight.angle, document.layerStyleGlobalLight.altitude,
         options.maximumWidth(), options.maximumHeight(),
@@ -67,6 +72,10 @@ export function useDocumentBlendIfPreview(options: DocumentBlendIfPreviewOptions
     () => {
       generation += 1
       clearTimeout(timer)
+      if (!active.value) {
+        clearSource()
+        return
+      }
       const currentGeneration = generation
       timer = setTimeout(() => void refresh(currentGeneration), 120)
     },

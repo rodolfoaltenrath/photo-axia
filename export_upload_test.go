@@ -111,6 +111,26 @@ func TestExportHandlerRejectsWrongMimeWithoutReplacingDestination(t *testing.T) 
 	}
 }
 
+func TestRememberExportUploadKeepsConcurrentTargetsAndDropsExpiredOnes(t *testing.T) {
+	app := NewApp()
+	app.exportUploads["expired"] = exportUpload{ExpiresAt: time.Now().Add(-time.Second)}
+	first := exportUpload{Path: "first.png", MimeType: "image/png", ExpiresAt: time.Now().Add(time.Minute)}
+	second := exportUpload{Path: "second.png", MimeType: "image/png", ExpiresAt: time.Now().Add(time.Minute)}
+
+	app.rememberExportUpload("first", first)
+	app.rememberExportUpload("second", second)
+
+	if len(app.exportUploads) != 2 {
+		t.Fatalf("expected two pending exports, got %d", len(app.exportUploads))
+	}
+	if actual, ok := app.takeExportUpload("first"); !ok || actual.Path != first.Path {
+		t.Fatalf("first export was lost: %#v, exists=%v", actual, ok)
+	}
+	if actual, ok := app.takeExportUpload("second"); !ok || actual.Path != second.Path {
+		t.Fatalf("second export was lost: %#v, exists=%v", actual, ok)
+	}
+}
+
 func TestStoreExportUploadKeepsOnlySmallerLosslessPNGAndPreservesResolution(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "optimized.png")
 	source := pngWithPhysicalResolution(t, png.NoCompression)

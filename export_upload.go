@@ -194,18 +194,24 @@ func (a *App) PrepareExportedImage(suggestedName string, mimeType string) (Expor
 	if err != nil {
 		return ExportSaveTarget{}, fmt.Errorf("preparar exportacao: %w", err)
 	}
+	a.rememberExportUpload(token, exportUpload{
+		Path: absolute, MimeType: mimeType, ExpiresAt: time.Now().Add(exportUploadLifetime),
+	})
+	return ExportSaveTarget{Token: token, Path: absolute}, nil
+}
+
+// rememberExportUpload keeps each in-flight export independent. Preparing a
+// second save dialog must not invalidate a file the user has already chosen.
+func (a *App) rememberExportUpload(token string, upload exportUpload) {
 	a.exportMu.Lock()
+	defer a.exportMu.Unlock()
 	now := time.Now()
-	for candidate, upload := range a.exportUploads {
-		if now.After(upload.ExpiresAt) {
+	for candidate, pending := range a.exportUploads {
+		if now.After(pending.ExpiresAt) {
 			delete(a.exportUploads, candidate)
 		}
 	}
-	a.exportUploads = map[string]exportUpload{
-		token: {Path: absolute, MimeType: mimeType, ExpiresAt: now.Add(exportUploadLifetime)},
-	}
-	a.exportMu.Unlock()
-	return ExportSaveTarget{Token: token, Path: absolute}, nil
+	a.exportUploads[token] = upload
 }
 
 func (a *App) takeExportUpload(token string) (exportUpload, bool) {

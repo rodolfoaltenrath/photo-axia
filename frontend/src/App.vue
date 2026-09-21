@@ -17,22 +17,15 @@ import UnsavedChangesDialog from './components/UnsavedChangesDialog.vue'
 import {
   createEditorDocument,
   finalizeAxiaProjectOpen,
-  clearRecentProjects,
   getEditorStatus,
   hasDesktopBackend,
   openAxiaProject,
   openRecentProject,
-  prepareAxiaProjectSave,
-  listRecentProjects,
-  recordRecentProject,
   registerNativeFileDrop,
   releaseDesktopImageImports,
   releaseDesktopPDF,
   releaseAxiaProjectAssets,
-  saveExportedImageBlob,
-  removeRecentProject,
   setNativeDocumentDirty,
-  uploadRecentThumbnail,
   selectDesktopImage,
   selectDesktopImages,
   selectDesktopPDF
@@ -50,19 +43,12 @@ import {
 } from './services/imageImport'
 import {
   renderDocumentBlob,
-  renderDocumentExportBlob,
-  renderDocumentThumbnail,
   renderLayerAppearance,
   renderMergedLayers,
   sampleDocumentColor
 } from './services/renderDocument'
-import { pngBlobWithResolution } from './services/pngMetadata'
 import { closePDFImport, renderPDFPages, type PDFImportSource, type PDFRenderRequest } from './services/pdfImport'
-import {
-  createAxiaProjectManifest,
-  restoreAxiaProject,
-  uploadAxiaProject
-} from './services/project'
+import { restoreAxiaProject } from './services/project'
 import {
   applyEditorHistoryDelta,
   cloneLayerHistoryState,
@@ -77,7 +63,11 @@ import {
 } from './editor/editorHistory'
 import { useHistory, type HistoryRecordOptions, type HistorySnapshot, type HistoryStep } from './editor/history'
 import { MutationBarrier } from './editor/mutationBarrier'
-import type { ExportSettings } from './editor/exportSettings'
+import { useDocumentExport } from './composables/useDocumentExport'
+import { useLayerActions } from './composables/useLayerActions'
+import { useLayerStylePresets } from './composables/useLayerStylePresets'
+import { useProjectLifecycle } from './composables/useProjectLifecycle'
+import { useProjectPersistence } from './composables/useProjectPersistence'
 import { clampZoom } from './editor/viewport'
 import { documentPixelSize } from './editor/document'
 import {
@@ -88,9 +78,7 @@ import {
 } from './editor/mediaDocument'
 import { readAutoSelectLayerPreference, writeAutoSelectLayerPreference } from './editor/preferences'
 import { canCreateDocument, editorIsBlockedByModal } from './editor/interactionGuards'
-import { moveLayerBy, moveLayerRelativeTo } from './editor/layerOrder'
 import { layerCanRasterize, layerSupportsRotationBaking, rasterizedLayerPatch } from './editor/layerRasterization'
-import { layerCanExportPNG, quickLayerExportName } from './editor/layerExport'
 import { createFlattenedLayer, documentCanFlatten } from './editor/flattenImage'
 import { updateLayerSelection, type LayerSelectionMode } from './editor/layerSelection'
 import { createSmartLayer, layersCanConvertToSmart, smartLayerObjectLayers } from './editor/smartLayers'
@@ -99,9 +87,7 @@ import {
   createSmartLayerEditDocument,
   smartLayerEditHasChanges
 } from './editor/smartLayerEditing'
-import { LatestPathTaskQueue, LatestRequestGate } from './editor/recentTasks'
 import type { EditorGuide, RulerOrigin, RulerUnit } from './editor/guides'
-import { DEFAULT_TEXT_LAYER, measureTextLayer } from './editor/text'
 import {
   cloneLayerStyleConfig,
   createLayerStyleConfig,
@@ -164,10 +150,6 @@ import {
   type LayerStyleTargetChange
 } from './editor/layerStyleOperations'
 import {
-  deleteLayerStylePreset,
-  listLayerStylePresets,
-  presetStyles,
-  saveLayerStylePreset,
   type LayerStylePreset
 } from './editor/layerStylePresets'
 import {
@@ -192,7 +174,6 @@ import type {
   EditorTool,
   ImageAsset,
   ImportedImage,
-  LayerBlendMode,
   LayerEffectType,
   LayerItem,
   LayerStyleConfig,
@@ -200,7 +181,6 @@ import type {
   LayerTransform,
   NewDocumentSettings,
   RecentProject,
-  TextLayerContent
 } from './types/editor'
 
 const RULERS_VISIBLE_PREFERENCE = 'axia:rulers-visible'
@@ -263,15 +243,10 @@ const activeLayerId = ref('layer-bg')
 const selectedLayerIds = ref<string[]>(['layer-bg'])
 const layerSelectionAnchorId = ref('layer-bg')
 const showNewDocumentDialog = ref(false)
-const showExportImageDialog = ref(false)
 const showImportPdfDialog = ref(false)
 const pdfImportSource = shallowRef<PDFImportSource | null>(null)
 const pdfImportProgress = ref('')
 const pdfImportDestination = ref<'document' | 'layer'>('layer')
-const exportEstimateBusy = ref(false)
-const exportEstimatedBytes = ref<number | null>(null)
-const preparedExport = shallowRef<{ key: string; blob: Blob } | null>(null)
-let exportEstimateGeneration = 0
 const appScreen = ref<'home' | 'editor'>('home')
 const hasOpenDocument = ref(false)
 const recentProjects = ref<RecentProject[]>([])
@@ -327,6 +302,26 @@ const activeDocument = ref<DocumentSpec>({
   layerStyleGlobalLight: { ...DEFAULT_LAYER_STYLE_GLOBAL_LIGHT }
 })
 const layers = ref<LayerItem[]>([createBackgroundLayer()])
+const {
+  clearExportEstimate,
+  estimateDocumentExport,
+  exportDocument,
+  exportEstimatedBytes,
+  exportEstimateBusy,
+  exportLayerPNG,
+  performDocumentExport,
+  showExportImageDialog
+} = useDocumentExport({
+  activeDocument,
+  activeLayerId,
+  errorText,
+  isBusy,
+  layers,
+  refreshSmartLayerSource,
+  settleRasterMutation,
+  showError,
+  statusText
+})
 const zoomEventOptions = { capture: true, passive: false }
 const previewGenerations = new Map<string, number>()
 const previewControllers = new Map<string, AbortController>()
@@ -337,10 +332,7 @@ let selectionGeneration = 0
 let pendingSelectionTasks = 0
 let previewRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let previewLayerCountHint = 0
-let discardChangesResolver: ((confirmed: boolean) => void) | undefined
 let rasterPreparationPromise: Promise<void> | undefined
-const recentRefreshGate = new LatestRequestGate()
-const thumbnailQueue = new LatestPathTaskQueue()
 const ACTIVE_PREVIEW_PIXELS = 4_194_304
 const DOCUMENT_PREVIEW_PIXELS = 24_000_000
 const MIN_LAYER_PREVIEW_PIXELS = 262_144
@@ -409,6 +401,56 @@ const documentDirty = computed(() => {
   if (session) return session.parentDirty || history.currentPosition.value > 0
   return savedHistoryRevision.value === null || historyRevision.value !== savedHistoryRevision.value
 })
+const {
+  clearProjectRecents,
+  confirmDiscardChanges,
+  refreshRecentProjects,
+  registerRecentProject,
+  removeProjectFromRecents,
+  resolveDiscardChanges,
+  returnToEditor,
+  saveBeforeDiscarding,
+  showProjectHome
+} = useProjectLifecycle({
+  appScreen,
+  documentDirty,
+  hasActiveImagePlacement: () => imagePlacementActive.value,
+  hasActiveSmartLayerEdit: () => Boolean(activeSmartLayerEditSession.value),
+  hasOpenDocument,
+  isBusy,
+  recentProjects,
+  recentProjectsLoading,
+  saveCurrentProject: () => saveProject(),
+  showError,
+  showUnsavedChangesDialog,
+  statusText
+})
+const { saveProject } = useProjectPersistence({
+  activeDocument,
+  activeLayerId,
+  activeSmartLayerEdit: () => Boolean(activeSmartLayerEditSession.value),
+  commitPendingTransform: () => canvasViewport.value?.commitPendingTransform(),
+  errorText,
+  finishSmartLayerEdit,
+  guideSnappingEnabled,
+  guides,
+  guidesLocked,
+  guidesVisible,
+  hasOpenDocument,
+  historyRevision,
+  isBusy,
+  layers,
+  projectPath,
+  registerRecentProject,
+  rulerOrigin,
+  rulerUnit,
+  savedHistoryRevision,
+  settleRasterMutation,
+  showError,
+  smartGuidesEnabled,
+  statusText,
+  zoom
+})
 const modalOpen = computed(() => editorIsBlockedByModal(
   showNewDocumentDialog.value || showExportImageDialog.value || showImportPdfDialog.value,
   showUnsavedChangesDialog.value,
@@ -425,6 +467,54 @@ watch(documentDirty, (dirty) => {
 
 const activeLayer = computed<LayerItem>(() => {
   return layers.value.find((layer) => layer.id === activeLayerId.value) ?? layers.value[0]!
+})
+const {
+  addLayer,
+  addTextLayer,
+  deleteLayer,
+  duplicateLayer,
+  moveLayer,
+  renameLayer,
+  reorderLayer,
+  toggleLayer,
+  updateLayerBlendMode,
+  updateLayerOpacity,
+  updateTextLayer
+} = useLayerActions({
+  activeDocument,
+  activeLayer,
+  activeLayerId,
+  cancelLayerPreview: (layerId) => {
+    previewControllers.get(layerId)?.abort()
+    previewControllers.delete(layerId)
+    previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
+  },
+  errorText,
+  layers,
+  recordHistory,
+  refreshLayerPreview,
+  statusText
+})
+const {
+  applySavedLayerStylePreset,
+  deleteSavedLayerStylePreset,
+  openLayerStylePresets,
+  refreshLayerStylePresets,
+  saveCurrentLayerStylePreset
+} = useLayerStylePresets({
+  activeLayer,
+  activeLayerId,
+  commitLayerStyleChanges,
+  hasLayer: (layerId) => layers.value.some((layer) => layer.id === layerId),
+  inspectorTab,
+  isBusy,
+  layerStylePresets,
+  modalOpen,
+  selectSingleLayer,
+  selectedLayerIds,
+  showError,
+  statusText,
+  styleTargetLayers
 })
 const selectedLayerItems = computed(() => {
   const selected = new Set(selectedLayerIds.value)
@@ -974,173 +1064,6 @@ function sampleColor(point: SelectionPoint, target: 'foreground' | 'background')
   void processColorSamples()
 }
 
-function addLayer() {
-  const id = crypto.randomUUID()
-  const activeBefore = activeLayerId.value
-  const activeIndex = layers.value.findIndex((layer) => layer.id === activeBefore)
-  const insertionIndex = activeIndex < 0 ? 0 : activeIndex
-  const layer: LayerItem = {
-    id,
-    name: `Camada ${layers.value.length}`,
-    visible: true,
-    opacity: 100,
-    blendMode: 'normal',
-    kind: 'pixel',
-    styles: createLayerStyleConfig()
-  }
-  layers.value.splice(insertionIndex, 0, layer)
-  activeLayerId.value = id
-  recordHistory('Criar camada', {
-    type: 'layers:add',
-    items: [{ index: insertionIndex, layer: cloneLayerHistoryState(layer) }],
-    activeBefore,
-    activeAfter: id
-  })
-  statusText.value = 'Nova camada criada'
-}
-
-function addTextLayer(point: { x: number; y: number }) {
-  const id = crypto.randomUUID()
-  const text = { ...DEFAULT_TEXT_LAYER }
-  const size = measureTextLayer(text)
-  text.baseWidth = size.width
-  text.baseHeight = size.height
-
-  const activeBefore = activeLayerId.value
-  const activeIndex = layers.value.findIndex((layer) => layer.id === activeBefore)
-  const insertionIndex = activeIndex < 0 ? 0 : activeIndex
-  const layer: LayerItem = {
-    id,
-    name: text.content,
-    visible: true,
-    opacity: 100,
-    blendMode: 'normal',
-    kind: 'text',
-    styles: createLayerStyleConfig(),
-    text,
-    transform: {
-      x: Math.round(Math.max(0, Math.min(point.x, activeDocument.value.width - size.width))),
-      y: Math.round(Math.max(0, Math.min(point.y, activeDocument.value.height - size.height))),
-      width: size.width,
-      height: size.height,
-      rotation: 0
-    }
-  }
-  layers.value.splice(insertionIndex, 0, layer)
-  activeLayerId.value = id
-  recordHistory('Criar texto', {
-    type: 'layers:add',
-    items: [{ index: insertionIndex, layer: cloneLayerHistoryState(layer) }],
-    activeBefore,
-    activeAfter: id
-  })
-  statusText.value = 'Camada de texto criada'
-}
-
-function updateTextLayer(layerId: string, patch: Partial<TextLayerContent>) {
-  const layer = layers.value.find((item) => item.id === layerId)
-  if (!layer?.text || !layer.transform) return
-  const patchEntries = Object.entries(patch) as Array<[keyof TextLayerContent, TextLayerContent[keyof TextLayerContent]]>
-  if (!patchEntries.some(([key, value]) => layer.text?.[key] !== value)) return
-
-  const property = Object.keys(patch).sort().join('-')
-  const previous = layer.text
-  const transform = layer.transform
-  const before = cloneLayerPatch({ name: layer.name, text: previous, transform })
-  const scaleX = transform.width / previous.baseWidth
-  const scaleY = transform.height / previous.baseHeight
-  const text: TextLayerContent = { ...previous, ...patch }
-  text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
-  text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
-  text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
-  const size = measureTextLayer(text)
-  text.baseWidth = size.width
-  text.baseHeight = size.height
-  layer.text = text
-  layer.transform = {
-    ...transform,
-    width: Math.round(size.width * scaleX * 100) / 100,
-    height: Math.round(size.height * scaleY * 100) / 100
-  }
-
-  if (patch.content !== undefined) {
-    layer.name = patch.content.trim().split('\n')[0]?.slice(0, 36) || 'Texto'
-  }
-  recordHistory(
-    patch.content !== undefined ? 'Editar texto' : 'Alterar texto',
-    {
-      type: 'layer:patch',
-      layerId,
-      before,
-      after: cloneLayerPatch({ name: layer.name, text: layer.text, transform: layer.transform })
-    },
-    { mergeKey: `text:${layerId}:${property}`, mergeWindowMs: 800 }
-  )
-}
-
-function toggleLayer(layerId: string) {
-  const layer = layers.value.find((item) => item.id === layerId)
-  if (!layer) return
-  const label = layer.visible ? 'Ocultar camada' : 'Mostrar camada'
-  const before = layer.visible
-  layer.visible = !before
-  if (layer.visible && layer.image) void refreshLayerPreview(layer)
-  recordHistory(label, {
-    type: 'layer:patch',
-    layerId,
-    before: { visible: before },
-    after: { visible: layer.visible }
-  })
-}
-
-function renameLayer(layerId: string, name: string) {
-  const layer = layers.value.find((item) => item.id === layerId)
-  const cleanName = name.trim()
-  if (!layer || !cleanName) return
-
-  if (layer.name === cleanName) return
-  const before = layer.name
-  layer.name = cleanName
-  recordHistory('Renomear camada', {
-    type: 'layer:patch',
-    layerId,
-    before: { name: before },
-    after: { name: cleanName }
-  })
-  statusText.value = `Camada renomeada para ${cleanName}`
-}
-
-function duplicateLayer(layerId = activeLayerId.value) {
-  const index = layers.value.findIndex((layer) => layer.id === layerId)
-  const source = layers.value[index]
-  if (!source) return
-
-  const duplicate: LayerItem = {
-    ...cloneLayerState(source),
-    id: crypto.randomUUID(),
-    name: `${source.name} cópia`,
-    kind: source.kind === 'background' ? 'pixel' : source.kind,
-    transform: source.transform
-      ? {
-          ...source.transform,
-          x: source.transform.x + (source.kind === 'background' ? 0 : 12),
-          y: source.transform.y + (source.kind === 'background' ? 0 : 12)
-        }
-      : undefined
-  }
-
-  const activeBefore = activeLayerId.value
-  layers.value.splice(index, 0, duplicate)
-  activeLayerId.value = duplicate.id
-  recordHistory('Duplicar camada', {
-    type: 'layers:add',
-    items: [{ index, layer: cloneLayerHistoryState(duplicate) }],
-    activeBefore,
-    activeAfter: duplicate.id
-  })
-  statusText.value = 'Camada duplicada'
-}
-
 async function settleRasterMutation(status: string) {
   canvasViewport.value?.commitPendingTransform()
   if (rasterMutationBarrier.isPending) statusText.value = status
@@ -1664,79 +1587,6 @@ async function flattenImage() {
   }
 }
 
-function deleteLayer(layerId: string) {
-  const index = layers.value.findIndex((layer) => layer.id === layerId)
-  const layer = layers.value[index]
-  if (!layer) return
-  if (layers.value.length === 1) {
-    errorText.value = 'O documento precisa manter pelo menos uma camada.'
-    statusText.value = 'Não é possível excluir a única camada do documento'
-    return
-  }
-  previewControllers.get(layerId)?.abort()
-  previewControllers.delete(layerId)
-
-  const activeBefore = activeLayerId.value
-  const removed = cloneLayerHistoryState(layer)
-  layers.value.splice(index, 1)
-  previewGenerations.set(layerId, (previewGenerations.get(layerId) ?? 0) + 1)
-  if (activeLayerId.value === layerId) {
-    activeLayerId.value = layers.value[Math.min(index, layers.value.length - 1)]!.id
-  }
-  recordHistory('Excluir camada', {
-    type: 'layers:remove',
-    items: [{ index, layer: removed }],
-    activeBefore,
-    activeAfter: activeLayerId.value
-  })
-  errorText.value = ''
-  statusText.value = 'Camada excluída'
-}
-
-function moveLayer(layerId: string, direction: -1 | 1) {
-  const change = moveLayerBy(layers.value, layerId, direction)
-  if (!change) return
-  layers.value = change.layers
-  recordHistory(direction < 0 ? 'Elevar camada' : 'Abaixar camada', {
-    type: 'layer:reorder',
-    layerId,
-    beforeIndex: change.beforeIndex,
-    afterIndex: change.afterIndex
-  })
-  statusText.value = direction < 0 ? 'Camada elevada' : 'Camada abaixada'
-}
-
-function reorderLayer(layerId: string, targetId: string, position: 'before' | 'after') {
-  const change = moveLayerRelativeTo(layers.value, layerId, targetId, position)
-  if (!change) return
-  layers.value = change.layers
-  recordHistory('Reordenar camada', {
-    type: 'layer:reorder',
-    layerId,
-    beforeIndex: change.beforeIndex,
-    afterIndex: change.afterIndex
-  })
-  statusText.value = 'Ordem das camadas atualizada'
-}
-
-function updateLayerOpacity(value: number) {
-  const layer = activeLayer.value
-  const opacity = Math.min(100, Math.max(0, value))
-  if (layer.opacity === opacity) return
-  const before = layer.opacity
-  layer.opacity = opacity
-  recordHistory(
-    'Alterar opacidade',
-    {
-      type: 'layer:patch',
-      layerId: layer.id,
-      before: { opacity: before },
-      after: { opacity }
-    },
-    { mergeKey: `opacity:${layer.id}`, mergeWindowMs: 800 }
-  )
-}
-
 function currentLayerStyleWindowSession(): LayerStyleWindowSession | null {
   const session = layerStyleDialog.value
   const layer = layerStyleDialogLayer.value
@@ -1983,71 +1833,6 @@ function applyScaleLayerEffects(percentage: number) {
   statusText.value = changes.length === 1
     ? `Efeitos de “${targets.find((layer) => layer.id === changes[0]!.layerId)?.name}” escalados para ${percentage}%`
     : `Efeitos de ${changes.length} camadas escalados para ${percentage}%`
-}
-
-async function refreshLayerStylePresets() {
-  layerStylePresets.value = await listLayerStylePresets()
-}
-
-function openLayerStylePresets(layerId = activeLayerId.value) {
-  if (isBusy.value || modalOpen.value || !layers.value.some((layer) => layer.id === layerId)) return
-  if (!selectedLayerIds.value.includes(layerId)) selectSingleLayer(layerId)
-  else activeLayerId.value = layerId
-  inspectorTab.value = 'styles'
-}
-
-async function saveCurrentLayerStylePreset(name: string) {
-  const layer = activeLayer.value
-  if (!layer || isBusy.value) return
-  isBusy.value = true
-  try {
-    await saveLayerStylePreset(name, layer.styles)
-    await refreshLayerStylePresets()
-    statusText.value = `Estilo “${name.trim()}” salvo`
-  } catch (error) {
-    showError(error, 'Não foi possível salvar o estilo.')
-  } finally { isBusy.value = false }
-}
-
-async function applySavedLayerStylePreset(id: string) {
-  const targets = styleTargetLayers()
-  const preset = layerStylePresets.value.find((item) => item.id === id)
-  if (!targets.length || !preset || isBusy.value) return
-  const styles = presetStyles(preset)
-  if (targets.some((layer) => !layerCanPasteStyle(layer, styles))) {
-    showError(new Error('Rasterize as camadas incompatíveis antes de aplicar este estilo.'), 'Uma ou mais camadas selecionadas não aceitam este estilo.')
-    return
-  }
-  const changes = pastedLayerStyleChanges(targets, styles)
-  if (!commitLayerStyleChanges(targets.length === 1 ? 'Aplicar estilo salvo' : 'Aplicar estilo nas camadas', changes)) {
-    statusText.value = targets.length === 1 ? 'A camada já possui esse estilo' : 'As camadas já possuem esse estilo'
-    return
-  }
-  statusText.value = changes.length === 1
-    ? `Estilo “${preset.name}” aplicado`
-    : `Estilo “${preset.name}” aplicado em ${changes.length} camadas`
-}
-
-async function deleteSavedLayerStylePreset(id: string) {
-  if (isBusy.value) return
-  isBusy.value = true
-  try { await deleteLayerStylePreset(id); await refreshLayerStylePresets(); statusText.value = 'Estilo excluído' }
-  catch (error) { showError(error, 'Não foi possível excluir o estilo.') }
-  finally { isBusy.value = false }
-}
-
-function updateLayerBlendMode(blendMode: LayerBlendMode) {
-  const layer = activeLayer.value
-  if (layer.blendMode === blendMode) return
-  const before = layer.blendMode
-  layer.blendMode = blendMode
-  recordHistory('Alterar modo de mesclagem', {
-    type: 'layer:patch',
-    layerId: layer.id,
-    before: { blendMode: before },
-    after: { blendMode }
-  })
-  statusText.value = 'Modo de mesclagem atualizado'
 }
 
 function updateLayerTransform(layerId: string, transform: LayerTransform) {
@@ -3787,111 +3572,6 @@ function preloadImage(url: string, signal?: AbortSignal) {
   })
 }
 
-function confirmDiscardChanges() {
-  if (!documentDirty.value) return Promise.resolve(true)
-  if (discardChangesResolver) return Promise.resolve(false)
-  showUnsavedChangesDialog.value = true
-  return new Promise<boolean>((resolve) => {
-    discardChangesResolver = resolve
-  })
-}
-
-function resolveDiscardChanges(confirmed: boolean) {
-  showUnsavedChangesDialog.value = false
-  const resolve = discardChangesResolver
-  discardChangesResolver = undefined
-  resolve?.(confirmed)
-}
-
-async function saveBeforeDiscarding() {
-  const saved = await saveProject()
-  resolveDiscardChanges(saved)
-}
-
-async function refreshRecentProjects(showLoading = true) {
-  const request = recentRefreshGate.begin()
-  if (showLoading) recentProjectsLoading.value = true
-  try {
-    const projects = await listRecentProjects()
-    if (request.isCurrent()) recentProjects.value = projects
-  } catch (error) {
-    if (request.isCurrent()) {
-      showError(error, 'Não foi possível carregar os projetos recentes.')
-    }
-  } finally {
-    if (request.isCurrent()) recentProjectsLoading.value = false
-  }
-}
-
-function queueProjectThumbnail(path: string, document: DocumentSpec, projectLayers: LayerItem[]) {
-  if (!path || !hasDesktopBackend()) return
-  void thumbnailQueue.enqueue(path, async (isLatest) => {
-    try {
-      const thumbnail = await renderDocumentThumbnail(document, projectLayers)
-      if (!thumbnail || !isLatest()) return
-      await uploadRecentThumbnail(path, thumbnail)
-      if (!isLatest()) return
-      await refreshRecentProjects(false)
-    } catch {
-      // O cache visual nunca pode transformar um salvamento válido em erro.
-    }
-  })
-}
-
-async function registerRecentProject(
-  path: string,
-  document: DocumentSpec,
-  projectLayers: LayerItem[],
-  createThumbnail = true
-) {
-  if (!path || !hasDesktopBackend()) return
-  await recordRecentProject(path, document.name, document.width, document.height)
-  void refreshRecentProjects(false)
-  if (createThumbnail) queueProjectThumbnail(path, document, projectLayers)
-}
-
-function showProjectHome() {
-  if (isBusy.value) return
-  if (imagePlacementActive.value) {
-    statusText.value = 'Conclua ou cancele o posicionamento das imagens antes de sair.'
-    return
-  }
-  if (activeSmartLayerEditSession.value) {
-    statusText.value = 'Conclua ou cancele a edição da camada inteligente antes de sair.'
-    return
-  }
-  appScreen.value = 'home'
-  void refreshRecentProjects()
-}
-
-function returnToEditor() {
-  if (!hasOpenDocument.value || isBusy.value) return
-  appScreen.value = 'editor'
-}
-
-async function removeProjectFromRecents(path: string) {
-  if (isBusy.value) return
-  try {
-    await removeRecentProject(path)
-    await refreshRecentProjects(false)
-  } catch (error) {
-    showError(error, 'Não foi possível remover o projeto dos recentes.')
-  }
-}
-
-async function clearProjectRecents() {
-  if (isBusy.value || !recentProjects.value.length) return
-  if (!window.confirm('Limpar a lista de projetos recentes? Nenhum arquivo será apagado.')) return
-  try {
-    await clearRecentProjects()
-    recentRefreshGate.invalidate()
-    recentProjects.value = []
-    recentProjectsLoading.value = false
-  } catch (error) {
-    showError(error, 'Não foi possível limpar os projetos recentes.')
-  }
-}
-
 async function requestNewDocument() {
   if (activeSmartLayerEditSession.value) {
     statusText.value = 'Conclua ou cancele a edição da camada inteligente antes de criar outro documento.'
@@ -3899,66 +3579,6 @@ async function requestNewDocument() {
   }
   if (isBusy.value || !await confirmDiscardChanges()) return
   showNewDocumentDialog.value = true
-}
-
-function projectNameFromPath(path: string, fallback: string) {
-  const filename = path.split(/[\\/]/).at(-1)?.replace(/\.axia$/i, '').trim()
-  return filename || fallback.replace(/\.axia$/i, '').trim() || 'Sem título'
-}
-
-async function saveProject(saveAs = false) {
-  if (activeSmartLayerEditSession.value) return finishSmartLayerEdit()
-  if (isBusy.value || !hasOpenDocument.value) return false
-  canvasViewport.value?.commitPendingTransform()
-  if (rasterMutationBarrier.isPending) statusText.value = 'Finalizando edição antes de salvar…'
-  if (!await rasterMutationBarrier.wait()) return false
-  isBusy.value = true
-  errorText.value = ''
-  statusText.value = 'Preparando projeto Axia…'
-  try {
-    const target = await prepareAxiaProjectSave(activeDocument.value.name, projectPath.value, saveAs)
-    if (!target.token || !target.path) {
-      statusText.value = 'Salvamento cancelado'
-      return false
-    }
-    const projectName = projectNameFromPath(target.path, activeDocument.value.name)
-    const documentSnapshot = { ...activeDocument.value, name: projectName }
-    const layerSnapshot = layers.value.map(cloneLayerState)
-    const { manifest, assetSources } = createAxiaProjectManifest({
-      document: documentSnapshot,
-      layers: layerSnapshot,
-      guides: guides.value,
-      view: {
-        activeLayerId: activeLayerId.value,
-        guideSnappingEnabled: guideSnappingEnabled.value,
-        smartGuidesEnabled: smartGuidesEnabled.value,
-        guidesLocked: guidesLocked.value,
-        guidesVisible: guidesVisible.value,
-        rulerOrigin: rulerOrigin.value,
-        rulerUnit: rulerUnit.value,
-        zoom: zoom.value
-      }
-    })
-    statusText.value = assetSources.length
-      ? `Salvando projeto e ${assetSources.length} asset${assetSources.length === 1 ? '' : 's'}…`
-      : 'Salvando projeto…'
-    const saved = await uploadAxiaProject(target.token, manifest, assetSources)
-    activeDocument.value = { ...activeDocument.value, name: projectName }
-    projectPath.value = saved.path || target.path
-    savedHistoryRevision.value = historyRevision.value
-    statusText.value = `Projeto salvo: ${projectPath.value}`
-    try {
-      await registerRecentProject(projectPath.value, documentSnapshot, layerSnapshot)
-    } catch {
-      statusText.value = `Projeto salvo, mas o histórico recente não pôde ser atualizado: ${projectPath.value}`
-    }
-    return true
-  } catch (error) {
-    showError(error, 'Não foi possível salvar o projeto Axia.')
-    return false
-  } finally {
-    isBusy.value = false
-  }
 }
 
 async function openProject(recentPath = '') {
@@ -4416,108 +4036,6 @@ async function performPDFImport(request: PDFRenderRequest) {
     pdfImportController = undefined
     pdfImportProgress.value = ''
     pdfImportDestination.value = 'layer'
-    isBusy.value = false
-  }
-}
-
-function exportDocument() {
-  if (isBusy.value) return
-  clearExportEstimate()
-  showExportImageDialog.value = true
-}
-
-function exportSettingsKey(settings: ExportSettings) {
-  return JSON.stringify(settings)
-}
-
-function clearExportEstimate() {
-  exportEstimateGeneration += 1
-  exportEstimateBusy.value = false
-  exportEstimatedBytes.value = null
-  preparedExport.value = null
-}
-
-async function createDocumentExportBlob(settings: ExportSettings) {
-  if (!await settleRasterMutation('Finalizando edição antes de exportar…')) return null
-  const documentId = activeDocument.value.id
-  const exportLayers = layers.value.slice()
-  for (const layer of exportLayers) {
-    if (layer.visible && layer.kind === 'smart') await refreshSmartLayerSource(layer)
-  }
-  if (
-    activeDocument.value.id !== documentId || layers.value.length !== exportLayers.length ||
-    exportLayers.some((layer, index) => layers.value[index] !== layer)
-  ) throw new Error('O documento foi alterado durante a exportação.')
-  return renderDocumentExportBlob(activeDocument.value, exportLayers, settings)
-}
-
-async function estimateDocumentExport(settings: ExportSettings) {
-  if (isBusy.value || exportEstimateBusy.value) return
-  const generation = ++exportEstimateGeneration
-  exportEstimateBusy.value = true
-  errorText.value = ''
-  try {
-    const blob = await createDocumentExportBlob(settings)
-    if (!blob || generation !== exportEstimateGeneration || !showExportImageDialog.value) return
-    preparedExport.value = { key: exportSettingsKey(settings), blob }
-    exportEstimatedBytes.value = blob.size
-  } catch (error) {
-    showError(error, 'Não foi possível calcular o tamanho do arquivo.')
-  } finally {
-    if (generation === exportEstimateGeneration) exportEstimateBusy.value = false
-  }
-}
-
-async function performDocumentExport(settings: ExportSettings) {
-  if (isBusy.value) return
-  errorText.value = ''
-  isBusy.value = true
-  statusText.value = `Preparando ${settings.format.toUpperCase()}…`
-  try {
-    const key = exportSettingsKey(settings)
-    const cached = preparedExport.value?.key === key ? preparedExport.value.blob : null
-    const blob = cached ?? await createDocumentExportBlob(settings)
-    if (!blob) return
-    const cleanName = activeDocument.value.name.replace(/\.[^.]+$/, '').trim() || 'imagem'
-    const path = await saveExportedImageBlob(cleanName, settings.format, blob)
-    statusText.value = path
-      ? `${settings.format.toUpperCase()} exportado (${(blob.size / (1024 * 1024)).toFixed(2)} MB): ${path}`
-      : 'Exportação cancelada'
-    showExportImageDialog.value = false
-    clearExportEstimate()
-  } catch (error) {
-    showError(error, 'Não foi possível exportar o documento.')
-  } finally {
-    isBusy.value = false
-  }
-}
-
-async function exportLayerPNG(layerId = activeLayerId.value) {
-  if (isBusy.value) return
-  const layer = layers.value.find((item) => item.id === layerId)
-  if (!layer || !layerCanExportPNG(layer, activeDocument.value.background)) {
-    showError(new Error('A camada não possui conteúdo visual exportável.'), 'Não foi possível exportar a camada.')
-    return
-  }
-
-  isBusy.value = true
-  errorText.value = ''
-  statusText.value = `Preparando PNG de ${layer.name}…`
-  try {
-    if (!await settleRasterMutation('Finalizando edição antes de exportar…')) return
-    const documentId = activeDocument.value.id
-    if (layer.kind === 'smart') await refreshSmartLayerSource(layer)
-    if (activeDocument.value.id !== documentId || !layers.value.includes(layer)) {
-      throw new Error('A camada original não está mais disponível.')
-    }
-    const appearance = await renderLayerAppearance(activeDocument.value, layer, 'isolated-export')
-    const filename = quickLayerExportName(activeDocument.value.name, layer.name)
-    const pngBlob = await pngBlobWithResolution(appearance.blob, activeDocument.value.resolutionDpi)
-    const path = await saveExportedImageBlob(filename, 'png', pngBlob)
-    statusText.value = path ? `Camada exportada: ${path}` : 'Exportação cancelada'
-  } catch (error) {
-    showError(error, 'Não foi possível exportar a camada como PNG.')
-  } finally {
     isBusy.value = false
   }
 }
