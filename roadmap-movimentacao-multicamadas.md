@@ -52,7 +52,12 @@ suas posições relativas, dimensões e rotações individuais.
 - [x] Suíte completa do frontend: 269 testes aprovados.
 - [x] Build de produção do frontend com Vite 8.
 - [x] `go test ./...` e `go vet ./...` com Go 1.26.5.
-- [ ] Validação manual no aplicativo instalado.
+- [x] Validação manual no aplicativo instalado.
+
+Estado final: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`.
+
+Em 2026-09-21, o mantenedor revisou manualmente a movimentação em busca de
+regressões e não encontrou falhas.
 
 ## Preferência e seleção temporária — 2026-08-27
 

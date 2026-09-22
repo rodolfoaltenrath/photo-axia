@@ -15,6 +15,11 @@ import {
   type WandResult
 } from '../editor/selection'
 import { colorRegionSpansCooperatively } from '../editor/colorRegion'
+import {
+  quickSelectionSpansCooperatively,
+  type QuickSelectionOptions,
+  type QuickSelectionResult
+} from '../editor/quickSelection'
 import type { ImageAsset, LayerTransform } from '../types/editor'
 
 interface PendingWand {
@@ -42,6 +47,32 @@ function stopWandWorker(error: Error | DOMException) {
     pending.reject(error)
   }
   pendingWands.clear()
+}
+
+interface PendingQuickSelection {
+  resolve: (result: QuickSelectionResult) => void
+  reject: (error: Error | DOMException) => void
+  signal?: AbortSignal
+  abortHandler?: () => void
+}
+
+let quickSelectionWorker: Worker | undefined
+let nextQuickSelectionRequestId = 1
+const pendingQuickSelections = new Map<number, PendingQuickSelection>()
+
+function cleanupPendingQuickSelection(pending: PendingQuickSelection) {
+  if (pending.signal && pending.abortHandler) pending.signal.removeEventListener('abort', pending.abortHandler)
+}
+
+function stopQuickSelectionWorker(error: Error | DOMException, expectedWorker?: Worker) {
+  if (expectedWorker && quickSelectionWorker !== expectedWorker) return
+  quickSelectionWorker?.terminate()
+  quickSelectionWorker = undefined
+  for (const pending of pendingQuickSelections.values()) {
+    cleanupPendingQuickSelection(pending)
+    pending.reject(error)
+  }
+  pendingQuickSelections.clear()
 }
 
 export interface EraseSelectionResult {
@@ -140,6 +171,24 @@ function workerInstance() {
   return worker
 }
 
+function quickSelectionWorkerInstance() {
+  if (typeof Worker === 'undefined') return undefined
+  if (quickSelectionWorker) return quickSelectionWorker
+  const worker = new Worker(new URL('../workers/quickSelection.worker.ts', import.meta.url), { type: 'module' })
+  quickSelectionWorker = worker
+  worker.onmessage = (event: MessageEvent<{ id: number; result?: QuickSelectionResult; error?: string }>) => {
+    const pending = pendingQuickSelections.get(event.data.id)
+    if (!pending) return
+    pendingQuickSelections.delete(event.data.id)
+    cleanupPendingQuickSelection(pending)
+    if (event.data.error) pending.reject(new Error(event.data.error))
+    else if (event.data.result) pending.resolve(event.data.result)
+    else pending.reject(new Error('A Seleção Rápida retornou um resultado inválido.'))
+  }
+  worker.onerror = () => stopQuickSelectionWorker(new Error('A Seleção Rápida foi interrompida.'), worker)
+  return worker
+}
+
 async function fallbackWand(blob: Blob, x: number, y: number, tolerance: number, contiguous: boolean, signal?: AbortSignal) {
   signal?.throwIfAborted()
   const bitmap = await createImageBitmap(blob)
@@ -197,6 +246,65 @@ async function runWand(blob: Blob, x: number, y: number, tolerance: number, cont
   })
 }
 
+async function fallbackQuickSelection(blob: Blob, options: QuickSelectionOptions, signal?: AbortSignal) {
+  signal?.throwIfAborted()
+  const bitmap = await createImageBitmap(blob)
+  if (signal?.aborted) {
+    bitmap.close()
+    signal.throwIfAborted()
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) {
+    bitmap.close()
+    throw new Error('O sistema não disponibilizou leitura de pixels.')
+  }
+  context.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  const image = context.getImageData(0, 0, canvas.width, canvas.height)
+  canvas.width = 1
+  canvas.height = 1
+  return quickSelectionSpansCooperatively(image.data, image.width, image.height, options, {
+    throwIfCancelled: () => signal?.throwIfAborted(),
+    yieldControl: () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+  })
+}
+
+async function runQuickSelection(blob: Blob, options: QuickSelectionOptions, signal?: AbortSignal) {
+  signal?.throwIfAborted()
+  const worker = quickSelectionWorkerInstance()
+  if (!worker) return fallbackQuickSelection(blob, options, signal)
+  const id = nextQuickSelectionRequestId++
+  return new Promise<QuickSelectionResult>((resolve, reject) => {
+    const abortHandler = () => stopQuickSelectionWorker(new DOMException('Seleção cancelada.', 'AbortError'), worker)
+    const pending: PendingQuickSelection = { resolve, reject, signal, abortHandler }
+    pendingQuickSelections.set(id, pending)
+    signal?.addEventListener('abort', abortHandler, { once: true })
+    if (signal?.aborted) {
+      abortHandler()
+      return
+    }
+    try {
+      worker.postMessage({
+        id,
+        blob,
+        options: {
+          positiveSeeds: options.positiveSeeds.map((point) => ({ ...point })),
+          negativeSeeds: options.negativeSeeds?.map((point) => ({ ...point })),
+          colorTolerance: options.colorTolerance,
+          edgeTolerance: options.edgeTolerance
+        }
+      })
+    } catch (error) {
+      pendingQuickSelections.delete(id)
+      cleanupPendingQuickSelection(pending)
+      reject(error instanceof Error ? error : new Error('Não foi possível iniciar a Seleção Rápida.'))
+    }
+  })
+}
+
 export async function createMagicWandSelection(
   layerId: string,
   asset: ImageAsset,
@@ -215,6 +323,37 @@ export async function createMagicWandSelection(
   const response = await fetch(asset.sourceUrl, { signal })
   if (!response.ok) throw new Error('Não foi possível carregar os pixels da camada ativa.')
   const result = await runWand(await response.blob(), sourcePoint.x, sourcePoint.y, tolerance, contiguous, signal)
+  signal?.throwIfAborted()
+  return {
+    kind: 'pixels',
+    sourceLayerId: layerId,
+    sourceWidth: asset.width,
+    sourceHeight: asset.height,
+    sourceToDocument,
+    ...result
+  }
+}
+
+/** Recebe sementes em espaço do documento e devolve a máscara no espaço da camada. */
+export async function createQuickSelection(
+  layerId: string,
+  asset: ImageAsset,
+  transform: LayerTransform,
+  options: QuickSelectionOptions,
+  signal?: AbortSignal
+): Promise<PixelSelection> {
+  signal?.throwIfAborted()
+  const sourceToDocument = layerSourceToDocumentMatrix(transform, asset.width, asset.height)
+  const documentToSource = invertMatrix(sourceToDocument)
+  const sourceOptions: QuickSelectionOptions = {
+    positiveSeeds: options.positiveSeeds.map((point) => transformSelectionPoint(documentToSource, point)),
+    negativeSeeds: options.negativeSeeds?.map((point) => transformSelectionPoint(documentToSource, point)),
+    colorTolerance: options.colorTolerance,
+    edgeTolerance: options.edgeTolerance
+  }
+  const response = await fetch(asset.sourceUrl, { signal })
+  if (!response.ok) throw new Error('Não foi possível carregar os pixels da camada ativa.')
+  const result = await runQuickSelection(await response.blob(), sourceOptions, signal)
   signal?.throwIfAborted()
   return {
     kind: 'pixels',
@@ -413,6 +552,7 @@ export async function extractImageSelection(
 }
 
 export function disposeSelectionEngine() {
+  stopQuickSelectionWorker(new DOMException('Seleção cancelada.', 'AbortError'))
   stopWandWorker(new DOMException('Seleção cancelada.', 'AbortError'))
   eraseWorker?.terminate()
   eraseWorker = undefined

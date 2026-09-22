@@ -6,7 +6,7 @@ export const INTELLIGENT_SELECTION_TOOLS = [
   'magic-wand'
 ] as const satisfies readonly EditorTool[]
 
-export const ENABLED_INTELLIGENT_SELECTION_TOOLS = ['magic-wand'] as const
+export const ENABLED_INTELLIGENT_SELECTION_TOOLS = ['quick-selection', 'magic-wand'] as const
 
 export type IntelligentSelectionTool = (typeof INTELLIGENT_SELECTION_TOOLS)[number]
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import GradientStopsEditor from '../GradientStopsEditor.vue'
 import { formatZoom } from '../../editor/viewport'
 import { MAX_BRUSH_SIZE, normalizeBrushSize } from '../../editor/brush'
@@ -9,12 +9,10 @@ import type { SelectionCombineMode } from '../../editor/selectionCombine'
 import type { GradientStopsConfig } from '../../editor/gradient'
 import { normalizeShapeConfig, type ShapeToolConfig } from '../../editor/shape'
 import { gradientStripBackground } from '../../editor/gradientEditor'
-import type { DocumentSpec, EditorTool, LayerKind } from '../../types/editor'
+import type { DocumentSpec, EditorTool } from '../../types/editor'
 
 const props = defineProps<{
   activeTool: EditorTool
-  activeLayerKind?: LayerKind
-  activeLayerName: string
   autoSelectLayer: boolean
   brushColor: string
   brushSize: number
@@ -41,7 +39,6 @@ const props = defineProps<{
   selectionCombineMode: SelectionCombineMode
   visualZoom: number
   captureRotationOutput: (element: unknown) => void
-  canRasterizeLayer: boolean
 }>()
 
 const emit = defineEmits<{
@@ -53,8 +50,6 @@ const emit = defineEmits<{
   (event: 'commitShape'): void
   (event: 'deleteSelection'): void
   (event: 'fitDocument'): void
-  (event: 'requestRasterizeLayer'): void
-  (event: 'requestEditSmartLayer'): void
   (event: 'updateAutoSelectLayer', enabled: boolean): void
   (event: 'updateBrushColor', color: string): void
   (event: 'updateBrushSize', size: number): void
@@ -85,24 +80,6 @@ function updateShapeConfig(patch: Partial<ShapeToolConfig>) {
 }
 
 const gradientEditorOpen = ref(false)
-const pixelEditingTools = new Set<EditorTool>(['brush', 'eraser', 'gradient', 'paint-bucket'])
-const pixelEditingBlocked = computed(() => (
-  pixelEditingTools.has(props.activeTool) &&
-  props.activeLayerKind !== 'pixel' &&
-  props.activeLayerKind !== 'background'
-))
-const pixelEditingMessage = computed(() => {
-  if (props.activeLayerKind === 'smart') {
-    return 'O original está preservado. Edite seu conteúdo ou rasterize a camada para pintar.'
-  }
-  if (props.activeLayerKind === 'shape') {
-    return 'Esta forma ainda pode ser ajustada. Rasterize a camada para pintar diretamente.'
-  }
-  if (props.activeLayerKind === 'text') {
-    return 'Este texto ainda pode ser editado. Rasterize a camada para pintar diretamente.'
-  }
-  return 'Escolha uma camada com pixels editáveis para usar esta ferramenta.'
-})
 const toolLabels: Record<EditorTool, string> = {
   move: 'Mover',
   brush: 'Pincel',
@@ -126,23 +103,8 @@ watch(() => props.activeTool, (tool) => {
 
 <template>
   <div class="context-bar">
-    <span>{{ toolLabels[activeTool] }}</span>
-    <div v-if="pixelEditingBlocked" class="pixel-editing-notice" role="status">
-      <span><strong>{{ activeLayerName }}:</strong> {{ pixelEditingMessage }}</span>
-      <button
-        v-if="activeLayerKind === 'smart'"
-        type="button"
-        title="Abrir o conteúdo original sem convertê-lo"
-        @click="emit('requestEditSmartLayer')"
-      >Editar conteúdo</button>
-      <button
-        v-if="canRasterizeLayer"
-        class="primary-button"
-        type="button"
-        @click="emit('requestRasterizeLayer')"
-      >Rasterizar camada</button>
-    </div>
-    <div v-if="activeTool === 'crop' || activeTool === 'magic-wand'" class="selection-options">
+    <span class="context-bar-tool-label" :title="toolLabels[activeTool]">{{ toolLabels[activeTool] }}</span>
+    <div v-if="activeTool === 'crop' || activeTool === 'magic-wand' || activeTool === 'quick-selection'" class="selection-options">
       <div
         class="selection-combine-control"
         role="group"
@@ -233,7 +195,7 @@ watch(() => props.activeTool, (tool) => {
       />
       <span>Seleção automática</span>
     </label>
-    <div v-if="(activeTool === 'brush' || activeTool === 'eraser') && !pixelEditingBlocked" class="brush-context-options">
+    <div v-if="activeTool === 'brush' || activeTool === 'eraser'" class="brush-context-options">
       <label class="brush-size-control">
         <span>Tamanho</span>
         <input
@@ -326,7 +288,7 @@ watch(() => props.activeTool, (tool) => {
         <button class="primary-button" type="button" title="Confirmar forma (Enter)" @click="emit('commitShape')">Confirmar</button>
       </div>
     </div>
-    <div v-if="activeTool === 'gradient' && !pixelEditingBlocked" class="gradient-options">
+    <div v-if="activeTool === 'gradient'" class="gradient-options">
       <div class="gradient-editor-control">
         <button
           class="gradient-editor-trigger"
@@ -372,7 +334,7 @@ watch(() => props.activeTool, (tool) => {
         ↔
       </button>
     </div>
-    <div v-if="activeTool === 'paint-bucket' && !pixelEditingBlocked" class="selection-options">
+    <div v-if="activeTool === 'paint-bucket'" class="selection-options">
       <label class="selection-tolerance">
         Tolerância
         <input

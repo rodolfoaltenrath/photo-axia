@@ -6,8 +6,7 @@
 ## Metadados
 
 - Criação: 2026-08-25
-- Estado geral: Fases 0 e 1 `CONCLUÍDAS`; Fases 2 a 6
-  `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+- Estado geral: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`
 - Prioridade: após a validação e estabilização das ferramentas de seleção atuais
 - Plataformas obrigatórias: Windows e Linux
 - Dependências funcionais: Degradê linear/radial, cores principal/secundária,
@@ -165,7 +164,7 @@ Aceite: tabelas de pixels esperados passam para linear, radial, alfa parcial e z
 
 ### Fase 2 — Raster, worker e fallback
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 - Propagar o novo config até `gradientRaster`, serviço e worker.
 - Enviar snapshots clonáveis, nunca proxies Vue.
@@ -177,7 +176,7 @@ Aceite: resultado idêntico nos três caminhos e sem regressão relevante no ben
 
 ### Fase 3 — Preview interativo
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 - Adicionar todas as paradas de cor e alfa ao preview.
 - Quando `CanvasGradient` não representar exatamente o modelo combinado, gerar uma
@@ -189,7 +188,7 @@ com o raster final.
 
 ### Fase 4 — Editor visual de paradas
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 - Criar componente isolado para faixa, marcadores e propriedades.
 - Implementar adicionar, selecionar, duplicar com `Alt`, mover, editar e remover em uma
@@ -201,7 +200,7 @@ Aceite: fluxo completo funciona por mouse e teclado sem perder a configuração.
 
 ### Fase 5 — Integração e compatibilidade
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 - Substituir os dois campos implícitos pelo novo estado no `App` e contratos do canvas.
 - Manter as cores principal/secundária no preset padrão.
@@ -213,7 +212,7 @@ com retângulo, elipse, laço e seleção raster transformada.
 
 ### Fase 6 — Validação, desempenho e documentação
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 - Rodar testes frontend, TypeScript, Vite, Go e builds Windows/Linux.
 - Medir preview e aplicação 4K com 2, 8 e 32 paradas.
@@ -600,3 +599,9 @@ ou regressão nos projetos existentes.
 - Gerado instalador para validação manual em `bin/axia-amd64-installer.exe`, com
   7.020.804 bytes e SHA-256
   `40417A9AC4D39F9B329B032115D766FDE75A638BE1D32AA388B5EB668C26D5C5`.
+
+### 2026-09-21 — Validação manual aprovada
+
+- O mantenedor validou o editor de múltiplas paradas, transparência, preview e
+  aplicação final no aplicativo.
+- Estado final: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`.

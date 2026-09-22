@@ -21,7 +21,7 @@ manter duas representações raster no motor ativo.
 
 ## 2026-09-15 — Canonicalização interna concluída
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO MANUAL`
+Estado: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`
 
 - `LayerItem` aceita somente os tipos canônicos no estado ativo.
 - Imagens abertas como documento são camadas `pixel`, sem reamostragem.
@@ -123,7 +123,10 @@ Estado: `CONCLUÍDO — REVISÃO DE UI APLICADA`
 - Testes novos confirmam que `image` e `pixel` têm a mesma categoria visível e que
   Forma vetorial permanece distinta de Objeto Inteligente.
 
-## Validação manual pendente
+## Validação manual aprovada — 2026-09-21
+
+O mantenedor validou a taxonomia de camadas e os fluxos de Objetos Inteligentes.
+Estado final: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`.
 
 - Abrir uma imagem e um PDF como documento e confirmar **Camada rasterizada**.
 - Importar uma imagem e uma página de PDF em documento existente e confirmar

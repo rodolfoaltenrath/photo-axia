@@ -67,9 +67,10 @@ export interface CanvasViewportEmits {
   (event: 'pdfDropped', file: File, errors: string[]): void
   (event: 'sampleColor', point: DocumentPoint, target: 'foreground' | 'background'): void
   (event: 'deleteSelection'): void
-  (event: 'requestRasterizeLayer', layerId: string): void
-  (event: 'requestEditSmartLayer', layerId: string): void
+  (event: 'requestLayerRasterization', tool: EditorTool, layerId: string): void
   (event: 'magicWandSelect', point: SelectionPoint, combineMode: SelectionCombineMode): void
+  (event: 'quickSelection', points: SelectionPoint[], combineMode: SelectionCombineMode): void
+  (event: 'cancelIntelligentSelection'): void
   (
     event: 'moveSelection',
     originalSelection: SelectionRegion,

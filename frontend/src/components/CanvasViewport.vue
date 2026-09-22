@@ -40,9 +40,11 @@ import {
   type SmartAlignmentGuide
 } from '../editor/smartGuides'
 import {
-  selectionIsEmpty
+  selectionIsEmpty,
+  type SelectionPoint
 } from '../editor/selection'
-import { resolveSelectionCombineMode } from '../editor/selectionCombine'
+import { appendBrushPoint, brushPointSpacing } from '../editor/brush'
+import { resolveSelectionCombineMode, type SelectionCombineMode } from '../editor/selectionCombine'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
 import { layerCanRasterize } from '../editor/layerRasterization'
 import {
@@ -71,6 +73,11 @@ let colorSamplePointer: {
   pointerId: number
   target: ColorSampleTarget
   lastPoint: DocumentPoint
+} | undefined
+let quickSelectionPointer: {
+  pointerId: number
+  points: SelectionPoint[]
+  combineMode: SelectionCombineMode
 } | undefined
 const {
   documentViewportOffset,
@@ -420,6 +427,15 @@ const {
   cancelBrush,
   cancelGradient,
   cancelShape,
+  cancelIntelligentSelection: () => {
+    if (quickSelectionPointer) {
+      quickSelectionPointer = undefined
+      return true
+    }
+    if (!props.isBusy || (props.activeTool !== 'quick-selection' && props.activeTool !== 'magic-wand')) return false
+    emit('cancelIntelligentSelection')
+    return true
+  },
   cancelSelectionMove,
   cancelSelection,
   clearSelection: () => emit('update:selection', null),
@@ -439,7 +455,7 @@ const viewportCursorClass = computed(() => ({
   'canvas-scroll--text': props.activeTool === 'text',
   'canvas-scroll--selection':
     props.activeTool === 'crop' || props.activeTool === 'brush' || props.activeTool === 'eraser' ||
-    props.activeTool === 'gradient' || props.activeTool === 'paint-bucket' || props.activeTool === 'magic-wand' ||
+    props.activeTool === 'gradient' || props.activeTool === 'paint-bucket' || props.activeTool === 'magic-wand' || props.activeTool === 'quick-selection' ||
     props.activeTool === 'shape',
   'canvas-scroll--eyedropper': props.activeTool === 'eyedropper',
   'canvas-scroll--pan-ready':
@@ -714,6 +730,53 @@ function snapTransformForInteraction(
   return result.value
 }
 
+function startQuickSelectionPointer(event: PointerEvent, point: SelectionPoint) {
+  const scroll = scrollArea.value
+  if (!scroll || event.button !== 0 || props.isBusy) return false
+  event.preventDefault()
+  event.stopPropagation()
+  scroll.setPointerCapture(event.pointerId)
+  quickSelectionPointer = {
+    pointerId: event.pointerId,
+    points: [point],
+    combineMode: resolveSelectionCombineMode(props.selectionCombineMode, event)
+  }
+  return true
+}
+
+function updateQuickSelectionPointer(event: PointerEvent) {
+  const interaction = quickSelectionPointer
+  if (!interaction || interaction.pointerId !== event.pointerId) return false
+  event.preventDefault()
+  event.stopPropagation()
+  const spacing = brushPointSpacing(props.brushSize, scale.value)
+  for (const sample of event.getCoalescedEvents?.() ?? []) {
+    const point = pointerToDocument(sample)
+    if (point) appendBrushPoint(interaction.points, point, spacing)
+  }
+  const point = pointerToDocument(event)
+  if (point) appendBrushPoint(interaction.points, point, spacing, true)
+  return true
+}
+
+function stopQuickSelectionPointer(event: PointerEvent) {
+  const interaction = quickSelectionPointer
+  if (!interaction || interaction.pointerId !== event.pointerId) return
+  quickSelectionPointer = undefined
+  if (event.type === 'pointerup' && interaction.points.length) {
+    emit('quickSelection', interaction.points, interaction.combineMode)
+  }
+}
+
+function requestLayerRasterization(event: PointerEvent) {
+  const layer = activeLayer.value
+  if (!layer || layer.kind === 'background' || !layerCanRasterize(layer)) return false
+  event.preventDefault()
+  event.stopPropagation()
+  emit('requestLayerRasterization', props.activeTool, layer.id)
+  return true
+}
+
 function startViewportPointer(event: PointerEvent) {
   const scroll = scrollArea.value
   if (!scroll) return
@@ -770,6 +833,7 @@ function startViewportPointer(event: PointerEvent) {
   if (props.activeTool === 'magic-wand' && !props.isBusy && !isSpacePressed.value && event.button === 0) {
     const point = pointerToDocument(event)
     if (!point || point.x < 0 || point.y < 0 || point.x >= props.document.width || point.y >= props.document.height) return
+    if (requestLayerRasterization(event)) return
     event.preventDefault()
     event.stopPropagation()
     emit(
@@ -778,6 +842,13 @@ function startViewportPointer(event: PointerEvent) {
       resolveSelectionCombineMode(props.selectionCombineMode, event)
     )
     return
+  }
+
+  if (props.activeTool === 'quick-selection' && !isSpacePressed.value && event.button === 0) {
+    const point = pointerToDocument(event)
+    if (!point || point.x < 0 || point.y < 0 || point.x >= props.document.width || point.y >= props.document.height) return
+    if (requestLayerRasterization(event)) return
+    if (startQuickSelectionPointer(event, point)) return
   }
 
   if (props.activeTool === 'crop' && !isSpacePressed.value) {
@@ -793,11 +864,13 @@ function startViewportPointer(event: PointerEvent) {
 
   if ((props.activeTool === 'brush' || props.activeTool === 'eraser') && !isSpacePressed.value) {
     const point = pointerToDocument(event)
+    if (point && requestLayerRasterization(event)) return
     if (point && startBrushPointer(event, point, props.activeTool === 'eraser' ? 'erase' : 'paint')) return
   }
 
   if (props.activeTool === 'gradient' && !isSpacePressed.value) {
     const point = pointerToDocument(event)
+    if (point && requestLayerRasterization(event)) return
     if (point && startGradientPointer(event, point)) return
   }
 
@@ -807,9 +880,10 @@ function startViewportPointer(event: PointerEvent) {
   }
 
   if (props.activeTool === 'paint-bucket' && !isSpacePressed.value && (event.button === 0 || event.button === 2)) {
-    if (!paintableLayer.value) return
     const point = pointerToDocument(event)
     if (!point || point.x < 0 || point.y < 0 || point.x >= props.document.width || point.y >= props.document.height) return
+    if (requestLayerRasterization(event)) return
+    if (!paintableLayer.value) return
     event.preventDefault()
     event.stopPropagation()
     emit('paintBucket', point, event.button === 2 ? props.backgroundColor : props.foregroundColor, props.selection)
@@ -948,6 +1022,8 @@ function updatePointer(event: PointerEvent) {
     return
   }
 
+  if (updateQuickSelectionPointer(event)) return
+
   if (hasBrushPointer(event.pointerId) && updateBrushPointer(event)) return
 
   if (hasGradientPointer(event.pointerId) && updateGradientPointer(event)) return
@@ -971,6 +1047,7 @@ function stopPointer(event: PointerEvent) {
   }
   if (event.type === 'pointerup') stopSelectionPointer(event.pointerId)
   else cancelSelectionPointer(event.pointerId)
+  stopQuickSelectionPointer(event)
   stopBrushPointer(event)
   stopGradientPointer(event)
   stopShapePointer(event)
@@ -1025,13 +1102,10 @@ defineExpose({
   >
     <CanvasContextBar
       :active-tool="activeTool"
-      :active-layer-kind="activeLayer?.kind"
-      :active-layer-name="activeLayer?.name ?? 'Camada selecionada'"
       :auto-select-layer="autoSelectLayer"
       :brush-color="brushColor"
       :brush-size="brushSize"
       :capture-rotation-output="captureTransformRotationOutput"
-      :can-rasterize-layer="layerCanRasterize(activeLayer)"
       :document="document"
       :guide-count="guides.length"
       :gradient-config="gradientConfig"
@@ -1062,8 +1136,6 @@ defineExpose({
       @commit-shape="commitShapeDraft"
       @delete-selection="emit('deleteSelection')"
       @fit-document="fitDocument"
-      @request-rasterize-layer="activeLayer && emit('requestRasterizeLayer', activeLayer.id)"
-      @request-edit-smart-layer="activeLayer && emit('requestEditSmartLayer', activeLayer.id)"
       @update-auto-select-layer="emit('update:autoSelectLayer', $event)"
       @update-brush-color="emit('update:brushColor', $event)"
       @update-brush-size="emit('update:brushSize', $event)"

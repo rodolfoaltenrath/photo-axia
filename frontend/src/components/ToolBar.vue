@@ -85,7 +85,7 @@ const intelligentSelectionTools: Array<{
   enabled: boolean
 }> = [
   { id: 'object-selection', icon: objectSelectionIcon, label: 'Seleção de Objeto (Em breve)', enabled: isIntelligentSelectionToolEnabled('object-selection') },
-  { id: 'quick-selection', icon: quickSelectionIcon, label: 'Seleção Rápida (Em breve)', enabled: isIntelligentSelectionToolEnabled('quick-selection') },
+  { id: 'quick-selection', icon: quickSelectionIcon, label: 'Seleção Rápida (W)', enabled: isIntelligentSelectionToolEnabled('quick-selection') },
   { id: 'magic-wand', icon: magicWandIcon, label: 'Varinha Mágica (W)', enabled: isIntelligentSelectionToolEnabled('magic-wand') }
 ]
 

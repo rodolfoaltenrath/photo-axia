@@ -19,15 +19,16 @@ test('grupo W mantém a ordem de produto aprovada', () => {
   assert.equal(isIntelligentSelectionTool('crop'), false)
 })
 
-test('entrega incremental mantém somente a Varinha habilitada', () => {
-  assert.deepEqual(ENABLED_INTELLIGENT_SELECTION_TOOLS, ['magic-wand'])
-  assert.equal(availableIntelligentSelectionTool('object-selection'), 'magic-wand')
-  assert.equal(availableIntelligentSelectionTool('quick-selection'), 'magic-wand')
+test('entrega incremental habilita Seleção Rápida e Varinha', () => {
+  assert.deepEqual(ENABLED_INTELLIGENT_SELECTION_TOOLS, ['quick-selection', 'magic-wand'])
+  assert.equal(availableIntelligentSelectionTool('object-selection'), 'quick-selection')
+  assert.equal(availableIntelligentSelectionTool('quick-selection'), 'quick-selection')
   assert.equal(availableIntelligentSelectionTool('magic-wand'), 'magic-wand')
   assert.equal(isIntelligentSelectionToolEnabled('object-selection'), false)
-  assert.equal(isIntelligentSelectionToolEnabled('quick-selection'), false)
+  assert.equal(isIntelligentSelectionToolEnabled('quick-selection'), true)
   assert.equal(isIntelligentSelectionToolEnabled('magic-wand'), true)
-  assert.equal(nextIntelligentSelectionTool('magic-wand'), 'magic-wand')
+  assert.equal(nextIntelligentSelectionTool('quick-selection'), 'magic-wand')
+  assert.equal(nextIntelligentSelectionTool('magic-wand'), 'quick-selection')
 })
 
 test('ciclo completo já respeita Objeto, Rápida e Varinha quando as fases forem habilitadas', () => {

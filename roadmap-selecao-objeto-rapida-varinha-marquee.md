@@ -7,8 +7,8 @@
 ## Metadados
 
 - Criado em: 2026-08-24
-- Última atualização: 2026-08-28
-- Estado geral: Fases 0, 1 e 2 implementadas, aguardando validação manual
+- Última atualização: 2026-09-21
+- Estado geral: Fases 0, 1 e 2 implementadas; Fase 3 (Seleção Rápida) em andamento
 - Grupo Marquee: Retangular, Elíptica, Linha única e Coluna única
 - Grupo inteligente: Seleção de Objeto, Seleção Rápida e Varinha Mágica no slot `W`
 - Ordem inicial: infraestrutura comum -> grupo Marquee -> grupo `W` e Varinha -> Seleção Rápida -> Seleção de Objeto -> homologação
@@ -128,7 +128,7 @@ decisão ao registro e explicar o motivo.
 | Operações de máscara compartilhadas | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Integrar às ferramentas conforme cada fase avançar |
 | Grupo Marquee fiel ao Photoshop | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar manualmente no Wails em Windows e Linux |
 | Varinha Mágica no grupo `W` | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Executar teste de fogo com combinações, cancelamento e camadas transformadas |
-| Seleção Rápida | `NÃO INICIADO` | Executar spike comparativo do algoritmo de bordas |
+| Seleção Rápida | `EM ANDAMENTO` | Implementar e medir o núcleo determinístico guiado por sementes e bordas |
 | Seleção de Objeto | `NÃO INICIADO` | Avaliar segmentação por ROI Retângulo/Laço e dependência apropriada |
 | Integração e homologação | `NÃO INICIADO` | Iniciar depois das três ferramentas estarem integradas |
 
@@ -467,7 +467,7 @@ receberá as outras duas ferramentas.
 
 ## Fase 3 — Seleção Rápida
 
-Estado: `NÃO INICIADO`
+Estado: `EM ANDAMENTO`
 
 ### Definição funcional
 
@@ -978,3 +978,60 @@ Não incluir esses itens no MVP sem decisão explícita e atualização deste ro
   encerrada e falha síncrona de `postMessage`, sem alterar pintura, máscara ou qualidade.
 - Validação automatizada: 332 testes frontend, TypeScript, builds Vite de desenvolvimento
   e produção, testes Go, build Wails Windows/amd64 e `git diff --check` aprovados.
+
+### 2026-09-21 — Fase 3 iniciada: núcleo de sementes e bordas
+
+- A Fase 3 passou para `EM ANDAMENTO`. O primeiro incremento criou
+  `frontend/src/editor/quickSelection.ts`, um núcleo puro que produz spans no espaço
+  da camada a partir de sementes positivas e negativas.
+- Foram comparadas duas abordagens sem introduzir dependência externa: a varredura por
+  tolerância de cor fixa já usada pela Varinha e o crescimento por sementes com barreira
+  de gradiente local. A primeira é adequada para a Varinha, mas vaza em gradientes ou
+  obriga uma tolerância baixa demais; a segunda foi escolhida para a Seleção Rápida
+  porque permite atravessar transições suaves e parar em bordas de alto contraste.
+- As fixtures iniciais cobrem objeto opaco, gradiente suave, borda forte, semente
+  negativa e entradas inválidas. Os novos testes são independentes de DOM, Vue e Worker.
+- Validação deste incremento: 404 testes frontend, `vue-tsc --noEmit`, build Vite de
+  desenvolvimento e `git diff --check` aprovados.
+- Risco conhecido antes da integração: a fila atual reserva espaço proporcional a todos
+  os pixels. O próximo incremento moverá o cálculo para Worker e trocará essa fila por
+  estrutura segmentada ou imporá orçamento explícito antes de habilitar imagens grandes.
+- Próximo passo exato: definir o contrato cancelável do Worker/fallback, medir memória
+  em fixtures maiores e integrar traços de sementes ao canvas somente após esse limite
+  estar protegido.
+
+### 2026-09-21 — Fase 3: execução assíncrona e primeiro fluxo utilizável
+
+- A fila do crescimento deixou de reservar um `Int32Array` para todos os pixels da
+  imagem. Ela agora é circular e cresce conforme a fronteira pendente, mantendo os
+  dois buffers binários necessários (`selected` e `blocked`) sem a reserva fixa extra
+  de quatro bytes por pixel.
+- Criados `quickSelection.worker.ts` e o contrato em `selectionEngine.ts`. O Worker
+  decodifica e calcula fora da interface; se Worker não estiver disponível, o mesmo
+  núcleo roda cooperativamente, cede a thread a cada lote e observa `AbortSignal`.
+  Cancelar uma tarefa encerra o Worker ativo, preservando a seleção já confirmada.
+- A Seleção Rápida foi habilitada no grupo `W`. Arrastar sobre uma camada raster ativa
+  coleta sementes em espaço do documento; ao soltar, elas são convertidas pela matriz
+  existente da camada, analisadas e combinadas pelos quatro modos já usados pela
+  Varinha. O primeiro fluxo usa traços positivos e os controles de combinação para
+  adicionar ou subtrair uma seleção confirmada.
+- Testes novos verificam equivalência síncrona/cooperativa e cancelamento entre lotes.
+  Ainda faltam: preview transitório durante o gesto, sementes negativas persistentes,
+  cache por revisão da camada, métricas/fixtures fotográficas e teste manual Windows e
+  Linux antes de considerar a fase concluída.
+- Ao tentar Seleção Rápida em uma Camada Inteligente, o editor agora abre uma confirmação
+  explícita: explica que a ferramenta precisa de pixels e pergunta se a camada atual deve
+  ser rasterizada. Cancelar não altera nada; confirmar rasteriza pela operação já coberta
+  por histórico e permite tentar a seleção novamente.
+
+### 2026-09-22 — Confirmação de rasterização unificada
+
+- A confirmação deixou de pertencer exclusivamente à Seleção Rápida. Pincel, Borracha,
+  Degradê, Balde de Tinta, Varinha Mágica e Seleção Rápida agora usam o mesmo diálogo ao
+  receber um gesto sobre uma Camada Inteligente, texto ou forma rasterizável.
+- Apagar ou mover pixels já selecionados também solicita a conversão quando a camada ativa
+  ainda não é raster. Cancelar preserva camada, seleção e ferramenta; confirmar mantém a
+  rasterização no histórico e o próximo gesto executa a operação normalmente.
+- O aviso persistente na barra contextual foi removido. A barra mantém sempre as opções da
+  ferramenta, e a confirmação aparece apenas no gesto que exige pixels, sem alterar o
+  tamanho ou a posição do preview.

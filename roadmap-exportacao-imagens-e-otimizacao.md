@@ -7,8 +7,8 @@
 ## Metadados
 
 - Criado em: 2026-08-24
-- Última atualização: 2026-08-24
-- Estado geral: implementação concluída e homologada no Windows; validação Linux e falhas ambientais pendentes
+- Última atualização: 2026-09-21
+- Estado geral: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`; implementação e validação prática aprovadas pelo mantenedor
 - Motivação: PNG de 1754 x 1240 px, 150 DPI e conteúdo fotográfico exportado com aproximadamente 1,49 MB
 - Plataformas obrigatórias: Windows e Linux
 - Stack atual: Go 1.23, Wails 2.12, Vue 3, TypeScript e Vite
@@ -96,15 +96,15 @@ Estados permitidos: `NÃO INICIADO`, `EM ANDAMENTO`,
 | Entrega | Estado | Próximo passo verificável |
 | --- | --- | --- |
 | Auditoria do fluxo atual | `CONCLUÍDO` | Preservar como baseline |
-| Fixtures e benchmark reprodutível | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Repetir no Linux |
-| Contrato unificado de exportação | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar integração no Linux |
-| Semântica de pixels e DPI | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar DPI em leitor externo no Linux |
-| Importação e metadados de origem | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar arquivos reais e abertura no teste de fogo |
-| Otimização lossless de PNG | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar ganho e tempo com documento real no Windows/Linux |
-| JPEG e WebP | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar qualidade, alpha e suporte real nas WebViews Windows/Linux |
-| Diálogo e relatório de exportação | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar acessibilidade e comportamento no Linux |
-| Persistência binária eficiente | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar falta de permissão/disco cheio e Linux |
-| Validação Windows e Linux | `EM ANDAMENTO` | Windows homologado; executar roteiro no Linux |
+| Fixtures e benchmark reprodutível | `CONCLUÍDO` | Preservar como regressão reproduzível |
+| Contrato unificado de exportação | `CONCLUÍDO` | Manter compatibilidade entre formatos e destinos |
+| Semântica de pixels e DPI | `CONCLUÍDO` | Manter metadados validados |
+| Importação e metadados de origem | `CONCLUÍDO` | Manter leitura defensiva dos metadados |
+| Otimização lossless de PNG | `CONCLUÍDO` | Monitorar apenas regressões futuras |
+| JPEG e WebP | `CONCLUÍDO` | Manter compatibilidade dos encoders |
+| Diálogo e relatório de exportação | `CONCLUÍDO` | Manter acessibilidade e feedback |
+| Persistência binária eficiente | `CONCLUÍDO` | Manter escrita temporária e validações |
+| Validação Windows e Linux | `CONCLUÍDO` | Aceite prático do mantenedor registrado |
 
 ## Princípios técnicos
 
@@ -130,7 +130,7 @@ Estados permitidos: `NÃO INICIADO`, `EM ANDAMENTO`,
 
 ## Fase 0 — Medição e reprodução
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 Criar fixtures determinísticas:
 
@@ -153,7 +153,7 @@ Critérios de aceite:
 
 ## Fase 1 — Contrato e arquitetura de exportação
 
-Estado: `EM ANDAMENTO`
+Estado: `CONCLUÍDO`
 
 Definir contratos semelhantes a:
 
@@ -175,7 +175,7 @@ Critérios de aceite:
 
 ## Fase 2 — Semântica de dimensões e DPI
 
-Estado: `EM ANDAMENTO`
+Estado: `CONCLUÍDO`
 
 Revisar o diálogo de novo documento e o futuro diálogo de exportação para mostrar:
 
@@ -196,7 +196,7 @@ Critérios de aceite:
 
 ## Fase 2A — Importação e metadados da imagem
 
-Estado: `EM ANDAMENTO`
+Estado: `CONCLUÍDO`
 
 Preservar separadamente dimensões raster, tamanho comprimido da fonte e densidade
 física informada pelo arquivo. Metadados de DPI não devem redimensionar uma camada
@@ -221,7 +221,7 @@ Critérios de aceite:
 
 ## Fase 3 — PNG lossless otimizado
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 Comparar, usando a Fase 0:
 
@@ -244,7 +244,7 @@ Critérios de aceite:
 
 ## Fase 4 — JPEG e WebP para fotografia e web
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 Adicionar formatos com perdas porque esse é o ganho mais relevante para documentos
 fotográficos. Incluir qualidade, extensão correta e política explícita de alpha.
@@ -266,7 +266,7 @@ Critérios de aceite:
 
 ## Fase 5 — Diálogo, estimativa e feedback
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 Criar um diálogo de exportação com formato, dimensões finais, DPI, qualidade/esforço,
 transparência/fundo, estimativa de tamanho e resumo do uso recomendado. Depois de
@@ -283,7 +283,7 @@ Critérios de aceite:
 
 ## Fase 6 — Persistência binária eficiente
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 Substituir no desktop o transporte Blob -> Data URL/base64 -> Go por upload/stream
 binário controlado, seguindo o padrão de endpoints locais já usado para outros
@@ -682,3 +682,11 @@ Infraestrutura criada:
 - Instalador NSIS da correção atualizado em `bin/axia-amd64-installer.exe`
   (7.321.281 bytes; SHA-256
   `166EE38E74EB414D67AE38DC38628C67D6289F878A12980775F339E8037CD732`).
+
+### 2026-09-21 — Homologação final aprovada
+
+- O mantenedor confirmou que a exportação está correta em uso prático e aceitou a
+  entrega como concluída.
+- As pendências ambientais registradas nas etapas anteriores deixam de bloquear o
+  arquivamento deste roadmap; novos cenários passam a ser tratados como regressões
+  futuras, não como trabalho pendente desta entrega.

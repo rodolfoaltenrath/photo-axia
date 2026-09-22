@@ -109,7 +109,12 @@ Permitir que uma imagem existente ou uma página de PDF seja a origem de um novo
 - Testes do frontend: 336 aprovados; `go test ./...`: aprovado.
 - `bin/axia.exe` recompilado com o contexto corrigido da fila.
 
-## Validação manual posterior
+## Validação manual aprovada — 2026-09-21
+
+Estado final: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`.
+
+O mantenedor validou extensivamente a abertura e a inclusão de mídia no aplicativo.
+Nenhuma falha pendente foi identificada nos fluxos descritos abaixo.
 
 - Imagem PNG transparente, JPEG com e sem metadado de resolução e GIF suportado.
 - PDF com fundo branco e transparente, diferentes páginas e resoluções.

@@ -20,6 +20,7 @@ interface CanvasShortcutOptions {
   cancelBrush: () => boolean
   cancelGradient: () => boolean
   cancelShape: () => boolean
+  cancelIntelligentSelection: () => boolean
   cancelSelectionMove: () => boolean
   cancelSelection: () => boolean
   clearSelection: () => void
@@ -128,6 +129,11 @@ export function useCanvasShortcuts(options: CanvasShortcutOptions) {
     }
 
     if (event.key === 'Escape' && options.cancelShape()) {
+      event.preventDefault()
+      return
+    }
+
+    if (event.key === 'Escape' && options.cancelIntelligentSelection()) {
       event.preventDefault()
       return
     }

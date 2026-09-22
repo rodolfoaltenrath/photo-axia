@@ -6,8 +6,8 @@
 
 ## Metadados
 
-- Última atualização: 2026-08-28
-- Estado geral: Fases 1 e 2 implementadas, aguardando validação prática; continuidade antes do teste de fogo autorizada pelo mantenedor
+- Última atualização: 2026-09-21
+- Estado geral: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`; validação prática aprovada pelo mantenedor
 - Ordem aprovada: Degradê linear -> Degradê radial -> Varinha Mágica -> Balde de Tinta
 - Plataformas obrigatórias: Windows e Linux
 - Stack atual: Go 1.26.5, Wails 3.0.0-beta.12, Vue 3.5, TypeScript 5.9 e Vite 8
@@ -62,10 +62,10 @@ Registrar a nova decisão em **Registro de decisões** e explicar o motivo.
 | --- | --- | --- |
 | Base de cores principal/secundária | `CONCLUÍDO` | Manter compatibilidade com os novos consumidores |
 | Conta-gotas contínuo | `CONCLUÍDO` | Usar como referência para pointer capture e coalescência |
-| Degradê linear | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Executar teste de fogo no Wails após completar as ferramentas planejadas |
-| Degradê radial | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar preview, commit e cancelamento no Windows/Linux no teste de fogo |
-| Auditoria e aceite da Varinha Mágica | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar a ferramenta dedicada e suas combinações no Wails |
-| Balde de Tinta | `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` | Validar fluxo completo no Windows/Linux e corrigir achados práticos |
+| Degradê linear | `CONCLUÍDO` | Manter testes de regressão |
+| Degradê radial | `CONCLUÍDO` | Manter testes de regressão |
+| Auditoria e aceite da Varinha Mágica | `CONCLUÍDO` | Manter testes de regressão |
+| Balde de Tinta | `CONCLUÍDO` | Manter testes de regressão |
 
 ## Baseline confirmado em 2026-08-23
 
@@ -148,7 +148,7 @@ Estas regras valem para todas as fases:
 
 ## Fase 1 — Degradê linear
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 ### Progresso da fase
 
@@ -157,7 +157,7 @@ Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
 - [x] Interação por ponteiro e preview ao vivo. (`IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` manual)
 - [x] Integração com toolbar e barra contextual. (`IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` manual)
 - [x] Commit raster, histórico e ciclo de assets. (`IMPLEMENTADO, AGUARDANDO VALIDAÇÃO` manual)
-- [ ] Validação automatizada e manual completa.
+- [x] Validação automatizada e manual completa.
 
 ### Resultado esperado
 
@@ -274,20 +274,20 @@ roadmap antes de usar nomes diferentes e registrar a decisão.
 
 ### Critérios de aceite da Fase 1
 
-- [ ] Ferramenta e atalho funcionam.
-- [ ] Preview acompanha o cursor sem deslocamento em zoom fracionário e alta densidade.
-- [ ] Resultado final coincide visualmente com o preview.
-- [ ] Seleções são respeitadas.
-- [ ] Undo/redo são atômicos.
-- [ ] Não há vazamento aparente de object URLs após aplicar, desfazer, refazer e fechar documento.
-- [ ] Testes automatizados passam.
-- [ ] Build Wails validada manualmente no Windows.
-- [ ] Build Wails validada manualmente no Linux.
-- [ ] README atualizado somente após aceite do produto.
+- [x] Ferramenta e atalho funcionam.
+- [x] Preview acompanha o cursor sem deslocamento em zoom fracionário e alta densidade.
+- [x] Resultado final coincide visualmente com o preview.
+- [x] Seleções são respeitadas.
+- [x] Undo/redo são atômicos.
+- [x] Não há vazamento aparente de object URLs após aplicar, desfazer, refazer e fechar documento.
+- [x] Testes automatizados passam.
+- [x] Build Wails validada manualmente no Windows.
+- [x] Build Wails validada manualmente no Linux.
+- [x] README atualizado somente após aceite do produto.
 
 ## Fase 2 — Degradê radial
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 ### Dependência
 
@@ -317,15 +317,15 @@ histórico ou asset lifecycle.
 
 ### Critérios de aceite da Fase 2
 
-- [ ] Linear continua sem regressões.
-- [ ] Radial coincide entre preview e commit.
-- [ ] Testes automatizados passam.
-- [ ] Windows e Linux validados manualmente.
-- [ ] Estado e registro deste roadmap atualizados.
+- [x] Linear continua sem regressões.
+- [x] Radial coincide entre preview e commit.
+- [x] Testes automatizados passam.
+- [x] Windows e Linux validados manualmente.
+- [x] Estado e registro deste roadmap atualizados.
 
 ## Fase 3 — Auditoria e aceite da Varinha Mágica
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 ### Objetivo
 
@@ -358,17 +358,17 @@ consumi-los.
 
 ### Critérios de aceite da Fase 3
 
-- [ ] Comportamento e métrica de tolerância documentados.
-- [ ] Worker/fallback e cancelamento validados.
-- [ ] Transformações e transparência cobertas por testes.
-- [ ] Decisões de UX registradas.
-- [ ] README reflete o estado verdadeiro.
-- [ ] Windows e Linux validados.
-- [ ] Motor compartilhável com o Balde sem alterar a seleção do usuário por efeito colateral.
+- [x] Comportamento e métrica de tolerância documentados.
+- [x] Worker/fallback e cancelamento validados.
+- [x] Transformações e transparência cobertas por testes.
+- [x] Decisões de UX registradas.
+- [x] README reflete o estado verdadeiro.
+- [x] Windows e Linux validados.
+- [x] Motor compartilhável com o Balde sem alterar a seleção do usuário por efeito colateral.
 
 ## Fase 4 — Balde de Tinta
 
-Estado: `IMPLEMENTADO, AGUARDANDO VALIDAÇÃO`
+Estado: `CONCLUÍDO`
 
 ### Dependência
 
@@ -424,8 +424,14 @@ copiar o algoritmo experimental para outro arquivo.
 - [x] Cores principal/secundária e tolerância funcionam.
 - [x] Undo/redo são atômicos.
 - [x] Testes automatizados passam.
-- [ ] Windows e Linux validados manualmente.
-- [ ] README e atalhos atualizados.
+- [x] Windows e Linux validados manualmente.
+- [x] README e atalhos atualizados.
+
+### 2026-09-21 — Validação manual aprovada
+
+- O mantenedor validou no aplicativo os degradês linear e radial, a Varinha Mágica e
+  o Balde de Tinta.
+- Estado final: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`.
 
 ## Melhorias posteriores, fora do escopo aprovado
 

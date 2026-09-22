@@ -7,7 +7,7 @@
 ## Metadados
 
 - Criado em: 2026-08-26
-- Estado geral: núcleo implementado, aguardando validação manual; indicadores de distância adiados
+- Estado geral: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`; indicadores de distância permanecem uma evolução futura
 - Referência de interação: Guias Inteligentes do Adobe Photoshop
 - Plataformas obrigatórias: Windows e Linux
 
@@ -77,7 +77,7 @@ aos eixos nesta fase.
 - [x] Persistir a preferência em projetos `.axia`, com padrão ligado em projetos antigos.
 - [x] Avaliar indicadores de distância entre objetos sem poluir o canvas: adiados até a
   validação prática das linhas, para não sobrecarregar a primeira entrega.
-- [ ] Validar manualmente contraste, zoom extremo e documentos com muitas camadas.
+- [x] Validar manualmente contraste, zoom extremo e documentos com muitas camadas.
 
 ## Fora do escopo inicial
 
@@ -137,3 +137,9 @@ aos eixos nesta fase.
 - Removido o brilho das linhas magenta e reduzida sua espessura para 0,5 pixel CSS.
 - Validação automatizada atualizada: 279 testes frontend, verificação TypeScript,
   build de produção do Vite e `git diff --check` aprovados.
+
+### 2026-09-21 — Validação manual aprovada
+
+- O mantenedor validou as Guias Inteligentes no aplicativo, incluindo contraste, zoom
+  extremo e documentos com muitas camadas.
+- Estado final: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`.

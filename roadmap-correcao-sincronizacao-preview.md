@@ -28,7 +28,12 @@
 - Build Vite de produção aprovado.
 - `git diff --check` aprovado; restam somente avisos de conversão LF/CRLF do ambiente.
 
-## Validação manual pendente
+## Validação manual aprovada — 2026-09-21
+
+Estado final: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`.
+
+O mantenedor validou os fluxos de seleção e transformação; a sincronização do preview
+permaneceu correta em uso prático.
 
 - Importar uma imagem grande, selecionar parte dela e mover a seleção imediatamente.
 - Redimensionar com `Ctrl+T`, confirmar e iniciar outra transformação enquanto a nova

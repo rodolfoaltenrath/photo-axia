@@ -145,7 +145,12 @@ Adicionar uma Ferramenta Forma no padrão do Photoshop: cada gesto cria uma cama
 - Validação automatizada atualizada: 400 testes do frontend, `vue-tsc --noEmit`, build
   Vite de desenvolvimento e `go test ./...` aprovados.
 
-## Validação manual posterior
+## Validação manual aprovada — 2026-09-21
+
+Estado final: `CONCLUÍDO — APTO PARA ARQUIVAMENTO`.
+
+O mantenedor validou todas as formas, edição, histórico, exportação e a correção do
+pan da prévia. Nenhum defeito pendente foi identificado.
 
 - Desenhar cada forma nos quatro sentidos e em diferentes níveis de zoom.
 - Combinar `Shift`, `Alt` e `Shift+Alt` durante o arraste.

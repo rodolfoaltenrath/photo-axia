@@ -586,6 +586,15 @@ textarea:focus-visible,
   text-transform: capitalize;
 }
 
+.context-bar-tool-label {
+  display: block;
+  flex: 0 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .auto-select-control {
   display: inline-flex;
   align-items: center;
@@ -728,35 +737,6 @@ textarea:focus-visible,
 .context-bar button {
   min-width: 34px;
   height: 28px;
-}
-
-.pixel-editing-notice {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 7px;
-  border-left: 2px solid var(--ui-accent);
-  padding-left: 9px;
-  color: var(--ui-text-muted);
-  text-transform: none;
-}
-
-.pixel-editing-notice > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pixel-editing-notice strong {
-  color: var(--ui-text);
-  font-weight: 600;
-}
-
-.pixel-editing-notice button {
-  flex: none;
-  padding: 0 9px;
-  white-space: nowrap;
 }
 
 .canvas-scroll {

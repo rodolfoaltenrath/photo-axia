@@ -9,6 +9,7 @@ import NewDocumentDialog from './components/NewDocumentDialog.vue'
 import ExportImageDialog from './components/ExportImageDialog.vue'
 import ProjectHome from './components/ProjectHome.vue'
 import PropertiesPanel from './components/PropertiesPanel.vue'
+import RasterizeLayerDialog from './components/RasterizeLayerDialog.vue'
 import LayerStylesPanel from './components/LayerStylesPanel.vue'
 import ScaleLayerEffectsDialog from './components/ScaleLayerEffectsDialog.vue'
 import ToolBar from './components/ToolBar.vue'
@@ -119,6 +120,7 @@ import {
   type IntelligentSelectionTool
 } from './editor/intelligentSelectionTools'
 import {
+  createQuickSelection,
   createMagicWandSelection,
   disposeSelectionEngine,
   eraseImageSelection,
@@ -252,6 +254,7 @@ const recentProjects = ref<RecentProject[]>([])
 const recentProjectsLoading = ref(true)
 const showUnsavedChangesDialog = ref(false)
 const showFlattenImageDialog = ref(false)
+const rasterizeLayerRequest = ref<{ layerId: string; toolLabel: string }>()
 const layerStylePresets = shallowRef<LayerStylePreset[]>([])
 const inspectorTab = ref<'properties' | 'styles'>('styles')
 const scaleLayerEffectsSession = shallowRef<{
@@ -512,7 +515,7 @@ const { createDocument } = useDocumentCreation({
 const modalOpen = computed(() => editorIsBlockedByModal(
   showNewDocumentDialog.value || showExportImageDialog.value || showImportPdfDialog.value,
   showUnsavedChangesDialog.value,
-  Boolean(layerStyleDialog.value) || showFlattenImageDialog.value || Boolean(scaleLayerEffectsSession.value)
+  Boolean(layerStyleDialog.value) || showFlattenImageDialog.value || Boolean(scaleLayerEffectsSession.value) || Boolean(rasterizeLayerRequest.value)
 ))
 const layerStyleDialogLayer = computed(() => {
   const session = layerStyleDialog.value
@@ -668,6 +671,7 @@ let pendingBrushCommit: {
 let pendingGradientCommit: AbortController | undefined
 let pendingPaintBucketCommit: AbortController | undefined
 let pendingMagicWandSelection: AbortController | undefined
+let pendingQuickSelection: AbortController | undefined
 
 function cancelMagicWandSelection() {
   if (!pendingMagicWandSelection) return
@@ -677,10 +681,24 @@ function cancelMagicWandSelection() {
   controller.abort()
 }
 
+function cancelQuickSelection() {
+  if (!pendingQuickSelection) return
+  const controller = pendingQuickSelection
+  pendingQuickSelection = undefined
+  selectionGeneration++
+  controller.abort()
+}
+
+function cancelIntelligentSelection() {
+  cancelMagicWandSelection()
+  cancelQuickSelection()
+}
+
 watch(
   [activeTool, activeLayerId, () => activeDocument.value.id],
   () => {
     cancelMagicWandSelection()
+    cancelQuickSelection()
     if (isIntelligentSelectionTool(activeTool.value)) {
       lastIntelligentSelectionTool.value = availableIntelligentSelectionTool(activeTool.value)
     }
@@ -2612,7 +2630,8 @@ async function selectWithMagicWand(point: SelectionPoint, combineMode: Selection
     return
   }
   if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
-    showError(new Error('A varinha mágica precisa de uma camada de imagem ativa.'), 'Seleção indisponível.')
+    if (layerCanRasterize(layer)) requestLayerRasterization('magic-wand', layer.id)
+    else showError(new Error('A varinha mágica precisa de uma camada de imagem ativa.'), 'Seleção indisponível.')
     return
   }
 
@@ -2661,8 +2680,94 @@ async function selectWithMagicWand(point: SelectionPoint, combineMode: Selection
   }
 }
 
+async function selectWithQuickSelection(points: SelectionPoint[], combineMode: SelectionCombineMode) {
+  if (isBusy.value || !points.length) return
+  clearFloatingSelectionSession()
+  const layer = activeLayer.value
+  if (!layer.visible) {
+    showError(new Error('Torne a camada ativa visível antes de usar a Seleção Rápida.'), 'Seleção indisponível.')
+    return
+  }
+  if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
+    if (layerCanRasterize(layer)) requestLayerRasterization('quick-selection', layer.id)
+    else showError(new Error('A Seleção Rápida precisa de uma camada rasterizada ativa.'), 'Seleção indisponível.')
+    return
+  }
+
+  const generation = ++selectionGeneration
+  const controller = new AbortController()
+  pendingQuickSelection = controller
+  const parentSelection = cloneSelection(selection.value)
+  const document = { width: activeDocument.value.width, height: activeDocument.value.height }
+  pendingSelectionTasks++
+  isBusy.value = true
+  errorText.value = ''
+  statusText.value = 'Analisando o traço e as bordas…'
+  try {
+    const result = await createQuickSelection(
+      layer.id,
+      layer.image,
+      layer.transform,
+      { positiveSeeds: points },
+      controller.signal
+    )
+    if (generation !== selectionGeneration) return
+    const combined = await combineSelectionsAsync(
+      parentSelection,
+      result,
+      combineMode,
+      document,
+      controller.signal,
+      true
+    )
+    if (generation !== selectionGeneration) return
+    selection.value = combined && !selectionIsEmpty(combined) ? combined : null
+    statusText.value = selection.value
+      ? `${result.pixelCount.toLocaleString('pt-BR')} pixels encontrados · seleção atualizada`
+      : 'A combinação resultou em uma seleção vazia'
+  } catch (error) {
+    if (
+      generation === selectionGeneration &&
+      !(error instanceof DOMException && error.name === 'AbortError')
+    ) showError(error, 'Não foi possível criar a seleção rápida.')
+  } finally {
+    if (pendingQuickSelection === controller) pendingQuickSelection = undefined
+    pendingSelectionTasks--
+    if (pendingSelectionTasks === 0) isBusy.value = false
+  }
+}
+
+const rasterRequiredToolLabels: Partial<Record<EditorTool, string>> = {
+  crop: 'Seleção',
+  move: 'Mover pixels',
+  brush: 'Pincel',
+  eraser: 'Borracha',
+  gradient: 'Degradê',
+  'paint-bucket': 'Balde de Tinta',
+  'magic-wand': 'Varinha Mágica',
+  'quick-selection': 'Seleção Rápida'
+}
+
+function requestLayerRasterization(tool: EditorTool, layerId = activeLayerId.value) {
+  if (isBusy.value || modalOpen.value) return
+  const layer = layers.value.find((item) => item.id === layerId)
+  const toolLabel = rasterRequiredToolLabels[tool] ?? tool
+  if (layer && layerCanRasterize(layer)) rasterizeLayerRequest.value = { layerId: layer.id, toolLabel }
+}
+
+function cancelLayerRasterization() {
+  if (!isBusy.value) rasterizeLayerRequest.value = undefined
+}
+
+async function confirmLayerRasterization() {
+  const layerId = rasterizeLayerRequest.value?.layerId
+  rasterizeLayerRequest.value = undefined
+  if (layerId) await rasterizeLayer(layerId)
+}
+
 function setSelectionMode(mode: SelectionMode) {
   cancelMagicWandSelection()
+  cancelQuickSelection()
   selectionGeneration++
   selectionMode.value = mode
   if (isMarqueeSelectionMode(mode)) lastMarqueeMode.value = mode
@@ -2670,6 +2775,7 @@ function setSelectionMode(mode: SelectionMode) {
 
 function updateSelection(value: SelectionRegion | null) {
   cancelMagicWandSelection()
+  cancelQuickSelection()
   selectionGeneration++
   selection.value = selectionIsEmpty(value) ? null : value
   if (selection.value) statusText.value = 'Seleção criada — pressione Delete para apagar os pixels'
@@ -2683,7 +2789,8 @@ async function deleteSelectedPixels() {
   const layer = activeLayer.value
   if (!currentSelection || selectionIsEmpty(currentSelection)) return
   if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
-    showError(new Error('Selecione uma camada de imagem para apagar pixels.'), 'Não foi possível apagar a seleção.')
+    if (layerCanRasterize(layer)) requestLayerRasterization(activeTool.value, layer.id)
+    else showError(new Error('Selecione uma camada de imagem para apagar pixels.'), 'Não foi possível apagar a seleção.')
     return
   }
 
@@ -2792,7 +2899,8 @@ async function commitSelectionMove(
   if (isBusy.value || (!deltaX && !deltaY)) return
   const layer = activeLayer.value
   if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
-    showError(new Error('Selecione uma camada de imagem para mover pixels.'), 'Não foi possível mover a seleção.')
+    if (layerCanRasterize(layer)) requestLayerRasterization(activeTool.value, layer.id)
+    else showError(new Error('Selecione uma camada de imagem para mover pixels.'), 'Não foi possível mover a seleção.')
     return
   }
 
@@ -2969,7 +3077,10 @@ async function performBrushStroke(
   if (isBusy.value) return false
   clearFloatingSelectionSession()
   const layer = activeLayer.value
-  if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform || points.length === 0) return false
+  if ((layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform || points.length === 0) {
+    if (layerCanRasterize(layer)) requestLayerRasterization(operation === 'erase' ? 'eraser' : 'brush', layer.id)
+    return false
+  }
 
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
@@ -3122,7 +3233,10 @@ async function performGradient(
     (layer.kind !== 'background' && layer.kind !== 'pixel') ||
     !layer.image ||
     !layer.transform
-  ) return false
+  ) {
+    if (layerCanRasterize(layer)) requestLayerRasterization('gradient', layer.id)
+    return false
+  }
 
   const documentId = activeDocument.value.id
   const beforeImage = { ...layer.image }
@@ -3274,7 +3388,10 @@ async function performPaintBucket(point: SelectionPoint | null, color: string, b
   if (isBusy.value) return false
   clearFloatingSelectionSession()
   const layer = activeLayer.value
-  if (!layer.visible || (layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) return false
+  if (!layer.visible || (layer.kind !== 'background' && layer.kind !== 'pixel') || !layer.image || !layer.transform) {
+    if (layerCanRasterize(layer)) requestLayerRasterization('paint-bucket', layer.id)
+    return false
+  }
   const documentId = activeDocument.value.id
   const beforeImage = { ...layer.image }
   const beforeTransform = { ...layer.transform }
@@ -4102,6 +4219,7 @@ onBeforeUnmount(() => {
   pendingPaintBucketCommit?.abort()
   pendingPaintBucketCommit = undefined
   cancelMagicWandSelection()
+  cancelQuickSelection()
   rasterMutationBarrier.discard()
   disposeSelectionEngine()
   disposeSelectionCombineEngine()
@@ -4301,13 +4419,14 @@ onBeforeUnmount(() => {
         @images-dropped="addDroppedImages"
         @pdf-dropped="openDroppedPDF"
         @magic-wand-select="selectWithMagicWand"
+        @quick-selection="selectWithQuickSelection"
+        @cancel-intelligent-selection="cancelIntelligentSelection"
         @move-selection="commitSelectionMove"
         @paint-stroke="commitBrushStroke"
         @gradient-gesture="commitGradient"
         @shape-gesture="commitShape"
         @paint-bucket="commitPaintBucket"
-        @request-rasterize-layer="rasterizeLayer"
-        @request-edit-smart-layer="editSmartLayerContent"
+        @request-layer-rasterization="requestLayerRasterization"
         @update:gradient-config="gradientConfig = $event"
         @update:shape-config="updateShapeConfig"
         @update:shape-editing="shapeDraftEditing = $event"
@@ -4445,6 +4564,14 @@ onBeforeUnmount(() => {
       :open="showFlattenImageDialog"
       @cancel="cancelFlattenImage"
       @confirm="confirmFlattenImage"
+    />
+    <RasterizeLayerDialog
+      :busy="isBusy"
+      :layer-name="layers.find((layer) => layer.id === rasterizeLayerRequest?.layerId)?.name ?? ''"
+      :open="Boolean(rasterizeLayerRequest)"
+      :tool-label="rasterizeLayerRequest?.toolLabel ?? ''"
+      @cancel="cancelLayerRasterization"
+      @confirm="confirmLayerRasterization"
     />
     <ScaleLayerEffectsDialog
       :busy="isBusy"
