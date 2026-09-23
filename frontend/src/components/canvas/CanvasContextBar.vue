@@ -30,6 +30,8 @@ const props = defineProps<{
   isViewportReady: boolean
   magicWandContiguous: boolean
   magicWandTolerance: number
+  quickSelectionColorTolerance: number
+  quickSelectionEdgeTolerance: number
   paintBucketContiguous: boolean
   paintBucketTolerance: number
   rotation: number
@@ -61,6 +63,8 @@ const emit = defineEmits<{
   (event: 'updateGuidesVisible', enabled: boolean): void
   (event: 'updateMagicWandContiguous', enabled: boolean): void
   (event: 'updateMagicWandTolerance', tolerance: number): void
+  (event: 'updateQuickSelectionColorTolerance', tolerance: number): void
+  (event: 'updateQuickSelectionEdgeTolerance', tolerance: number): void
   (event: 'updatePaintBucketContiguous', enabled: boolean): void
   (event: 'updatePaintBucketTolerance', tolerance: number): void
   (event: 'updateRulerUnit', unit: RulerUnit): void
@@ -172,6 +176,28 @@ watch(() => props.activeTool, (tool) => {
           @change="emit('updateMagicWandContiguous', ($event.target as HTMLInputElement).checked)"
         />
         Contíguo
+      </label>
+      <label v-if="activeTool === 'quick-selection'" class="selection-tolerance" title="Quanto a cor pode variar a partir das sementes">
+        Cor
+        <input
+          :value="quickSelectionColorTolerance"
+          max="255"
+          min="0"
+          type="range"
+          @input="emit('updateQuickSelectionColorTolerance', Number(($event.target as HTMLInputElement).value))"
+        />
+        <output>{{ quickSelectionColorTolerance }}</output>
+      </label>
+      <label v-if="activeTool === 'quick-selection'" class="selection-tolerance" title="Contraste local necessário para interromper o crescimento">
+        Borda
+        <input
+          :value="quickSelectionEdgeTolerance"
+          max="255"
+          min="0"
+          type="range"
+          @input="emit('updateQuickSelectionEdgeTolerance', Number(($event.target as HTMLInputElement).value))"
+        />
+        <output>{{ quickSelectionEdgeTolerance }}</output>
       </label>
       <button :disabled="!hasSelection" type="button" title="Apagar pixels selecionados (Delete)" @click="emit('deleteSelection')">
         Apagar

@@ -7,7 +7,7 @@
 ## Metadados
 
 - Criado em: 2026-08-24
-- Última atualização: 2026-09-21
+- Última atualização: 2026-09-23
 - Estado geral: Fases 0, 1 e 2 implementadas; Fase 3 (Seleção Rápida) em andamento
 - Grupo Marquee: Retangular, Elíptica, Linha única e Coluna única
 - Grupo inteligente: Seleção de Objeto, Seleção Rápida e Varinha Mágica no slot `W`
@@ -202,9 +202,10 @@ decisão ao registro e explicar o motivo.
 
 ### Atalhos
 
-- `W` ativa a última ferramenta usada no grupo.
-- Quando nenhuma preferência existe, `W` começa pela Seleção de Objeto.
-- `Shift+W` percorre Seleção de Objeto -> Seleção Rápida -> Varinha -> Seleção de Objeto.
+- `W` ativa diretamente a Varinha Mágica.
+- `Shift+W` ativa diretamente a Seleção Rápida.
+- Enquanto a Seleção de Objeto não estiver disponível, ela só pode ser escolhida pelo
+  flyout quando for habilitada; nenhum atalho alterna silenciosamente para ela.
 - A troca deve atualizar imediatamente ícone, `aria-pressed`, cursor e barra contextual.
 - Não executar atalhos quando o foco estiver em `input`, `select`, `textarea` ou
   conteúdo editável, nem quando um modal bloquear o editor.
@@ -427,7 +428,7 @@ receberá as outras duas ferramentas.
 
 - Criar os três ícones seguindo `frontend/src/assets/icons/README.md`.
 - Implementar slot único, ferramenta lembrada e flyout acessível.
-- Entregar atalhos `W` e `Shift+W` com a ordem aprovada.
+- Entregar atalhos diretos: `W` para Varinha e `Shift+W` para Seleção Rápida.
 - Remover Varinha do dropdown geométrico somente depois do novo caminho estar ativo.
 - Preservar tolerância 32, contíguo ativado e amostragem da camada ativa no primeiro MVP.
 - Expor os quatro modos de combinação na barra contextual.
@@ -640,7 +641,7 @@ Estado: `NÃO INICIADO`
 - Criar Marquee Retangular e Elíptica nos quatro sentidos de arraste.
 - Criar Linha única e Coluna única nas bordas e no centro do documento.
 - Alternar Marquees por botão, flyout, `M` e `Shift+M`.
-- Alternar Seleção de Objeto, Rápida e Varinha por botão, flyout, `W` e `Shift+W`.
+- Confirmar Varinha com `W` e Seleção Rápida com `Shift+W`, além do flyout do grupo.
 - Confirmar última ferramenta lembrada e ícone correto.
 - Operar em viewport mínimo, maximizado e alta densidade.
 - Testar zoom baixo, 100%, fracionário e alto.
@@ -744,6 +745,7 @@ Não incluir esses itens no MVP sem decisão explícita e atualização deste ro
 | 2026-08-24 | O risco livre é o modo Laço da Seleção de Objeto | O contorno fornece uma ROI e o motor detecta o objeto dentro dela |
 | 2026-08-24 | Seleção Rápida começa pela camada ativa | Limita custo e ambiguidade no MVP; todas as camadas fica para decisão futura |
 | 2026-08-24 | `W` ativa a lembrada e `Shift+W` percorre o grupo | Mantém acesso rápido sem alternância invisível em um simples `W` |
+| 2026-09-23 | `W` abre Varinha e `Shift+W` abre Seleção Rápida diretamente | Evita dois atalhos consecutivos e torna o acesso à ferramenta previsível |
 | 2026-08-24 | Combinações reais produzem spans em espaço do documento | Permite operar entre vetores, rasters e matrizes diferentes sem atribuir o resultado a uma camada falsa |
 | 2026-08-24 | Varinha permanece temporariamente no modo legado | Removê-la antes do slot `W` estar funcional deixaria a feature atual inacessível |
 | 2026-08-24 | Linha e Coluna usam `RectangleSelection` vetorial de 1 px | Reutiliza marching ants e todos os consumidores raster sem criar outro formato de máscara |
@@ -1035,3 +1037,90 @@ Não incluir esses itens no MVP sem decisão explícita e atualização deste ro
 - O aviso persistente na barra contextual foi removido. A barra mantém sempre as opções da
   ferramenta, e a confirmação aparece apenas no gesto que exige pixels, sem alterar o
   tamanho ou a posição do preview.
+
+### 2026-09-23 — Fase 3: feedback transitório do traço
+
+- Durante o gesto da Seleção Rápida, o canvas agora mostra a trajetória das sementes em
+  coordenadas do documento. O feedback é azul nos modos criar/adicionar, vermelho em
+  subtrair e amarelo em interseção; ele desaparece ao soltar, cancelar, perder a captura
+  ou pressionar `Esc`.
+- O overlay é estritamente visual, não altera a seleção confirmada, camadas, histórico ou
+  exportação. Ao soltar, o mesmo conjunto de sementes continua sendo enviado ao Worker e
+  combinado pelo contrato já validado; no modo subtrair, a região encontrada é removida
+  da seleção anterior.
+- O traço fica acima dos marching ants, usa coordenadas e escala do documento e não
+  participa do layout do viewport, evitando deslocamento de canvas ou réguas.
+- Validação automatizada: 406 testes frontend e build TypeScript/Vite de produção
+  aprovados. `git diff --check` não reportou erros; os avisos de conversão LF/CRLF são
+  configuração do checkout Windows, não whitespace inválido.
+- Permanecem pendentes para concluir a Fase 3: máscara transitória calculada durante a
+  análise, sementes negativas persistentes, cache por revisão da camada, fixtures e
+  métricas fotográficas, além da validação manual em Windows e Linux.
+
+### 2026-09-23 — Atalhos diretos do grupo W
+
+- `W` passou a abrir diretamente a Varinha Mágica e `Shift+W`, a Seleção Rápida. O
+  atalho não depende mais da última ferramenta usada nem exige repetir `Shift+W` para
+  alcançar a ferramenta desejada.
+- O flyout identifica a Seleção Rápida como `Shift+W`. A ordem interna do grupo foi
+  preservada para o flyout e para uma futura habilitação da Seleção de Objeto.
+- Adicionado teste unitário do mapeamento dos dois atalhos. Validação: 407 testes
+  frontend e build TypeScript/Vite de produção aprovados.
+
+### 2026-09-23 — Fase 3: cache da fonte de pixels
+
+- A Seleção Rápida mantém em memória apenas o blob fonte mais recente e, no Worker, a
+  imagem RGBA já decodificada. Repetir traços na mesma camada evita nova busca e nova
+  decodificação antes de crescer a região.
+- A identidade do cache inclui URL, `editToken`, dimensões, MIME e tamanho do asset.
+  Uma edição raster, troca de asset ou alteração de dimensão gera outra chave; uma
+  requisição antiga que termina tarde não pode substituir a entrada mais nova.
+- O cache é descartado junto com o motor de seleção. Transformações não invalidam este
+  cache de fonte porque as sementes continuam sendo reprojetadas pela matriz atual; o
+  futuro cache de resultados/máscaras deverá incluir transformação e configuração.
+- Adicionados testes de identidade, reutilização e invalidação concorrente. Validação:
+  410 testes frontend e build TypeScript/Vite de produção aprovados.
+
+### 2026-09-23 — Fase 3: controles de qualidade da Seleção Rápida
+
+- A barra contextual da Seleção Rápida agora expõe controles independentes para `Cor`
+  (tolerância à cor das sementes, padrão 48) e `Borda` (salto local que interrompe o
+  crescimento, padrão 32). Eles não alteram os controles da Varinha Mágica.
+- Os valores são enviados como snapshot para o Worker/fallback e normalizados no núcleo
+  para o intervalo de 0 a 255. Um teste cobre essa normalização, inclusive limites
+  inválidos.
+- Validação: 411 testes frontend e build TypeScript/Vite de produção aprovados.
+
+### 2026-09-23 — Fase 3: fixtures, métricas e benchmark
+
+- Criadas fixtures determinísticas com máscara esperada para borda forte, cores
+  próximas, antialiasing/transparência, regiões semelhantes separadas, detalhes finos
+  e ruído. As métricas calculam IoU, precisão, recall, pixels extras e ausentes.
+- Adicionado `npm run benchmark:quick-selection`, que mede uma imagem 4K de ruído com
+  borda forte. Nesta máquina, o núcleo síncrono selecionou 4.147.200 pixels em
+  410,58 ms; no produto, esse cálculo acontece no Worker. O número é baseline local,
+  não meta de desempenho nem substituto de perfilamento na WebView Windows/Linux.
+- As novas fixtures são sintéticas e controladas. Fotografias reais, cabelo e folhas
+  continuam pendentes de corpus versionado e validação visual antes de fechar a fase.
+- Validação: 414 testes frontend e build TypeScript/Vite de produção aprovados.
+
+### 2026-09-23 — Fase 3: preview transitório da máscara
+
+- Depois que o Worker encontra a região e antes de publicar a combinação final, a
+  máscara candidata é exibida em azul claro sobre a seleção já confirmada. O traço de
+  sementes continua sendo o feedback durante o gesto; a máscara candidata é o feedback
+  real durante o ajuste/composição.
+- O preview não modifica pixels, histórico, exportação ou a seleção anterior. Cancelar,
+  trocar ferramenta/camada/documento e `Esc` o removem; somente o resultado combinado é
+  confirmado e volta ao overlay normal.
+- Validação: 414 testes frontend e build TypeScript/Vite de produção aprovados.
+
+### 2026-09-23 — Fase 3: cancelamento sem descartar o cache
+
+- Cancelar uma Seleção Rápida agora envia o cancelamento somente para aquela solicitação
+  no Worker. O Worker e a imagem RGBA já decodificada continuam disponíveis para o
+  próximo traço na mesma camada.
+- Falhas reais do Worker e o encerramento do editor ainda fazem a limpeza completa;
+  portanto, não há resultado cancelado sendo publicado nem cache sendo reutilizado após
+  uma falha.
+- Validação: 414 testes frontend e build TypeScript/Vite de produção aprovados.

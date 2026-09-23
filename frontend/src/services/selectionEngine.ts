@@ -20,6 +20,7 @@ import {
   type QuickSelectionOptions,
   type QuickSelectionResult
 } from '../editor/quickSelection'
+import { QuickSelectionAssetCache, quickSelectionAssetKey } from '../editor/quickSelectionAssetCache'
 import type { ImageAsset, LayerTransform } from '../types/editor'
 
 interface PendingWand {
@@ -59,6 +60,7 @@ interface PendingQuickSelection {
 let quickSelectionWorker: Worker | undefined
 let nextQuickSelectionRequestId = 1
 const pendingQuickSelections = new Map<number, PendingQuickSelection>()
+const quickSelectionAssetCache = new QuickSelectionAssetCache()
 
 function cleanupPendingQuickSelection(pending: PendingQuickSelection) {
   if (pending.signal && pending.abortHandler) pending.signal.removeEventListener('abort', pending.abortHandler)
@@ -73,6 +75,18 @@ function stopQuickSelectionWorker(error: Error | DOMException, expectedWorker?: 
     pending.reject(error)
   }
   pendingQuickSelections.clear()
+}
+
+function cancelQuickSelectionRequest(id: number, pending: PendingQuickSelection, worker: Worker) {
+  if (pendingQuickSelections.get(id) !== pending) return
+  pendingQuickSelections.delete(id)
+  cleanupPendingQuickSelection(pending)
+  try {
+    if (quickSelectionWorker === worker) worker.postMessage({ cancel: id })
+  } catch {
+    // A solicitação local já foi cancelada; worker.onerror fará a limpeza global se necessário.
+  }
+  pending.reject(new DOMException('Seleção cancelada.', 'AbortError'))
 }
 
 export interface EraseSelectionResult {
@@ -272,13 +286,18 @@ async function fallbackQuickSelection(blob: Blob, options: QuickSelectionOptions
   })
 }
 
-async function runQuickSelection(blob: Blob, options: QuickSelectionOptions, signal?: AbortSignal) {
+async function runQuickSelection(
+  blob: Blob,
+  sourceKey: string,
+  options: QuickSelectionOptions,
+  signal?: AbortSignal
+) {
   signal?.throwIfAborted()
   const worker = quickSelectionWorkerInstance()
   if (!worker) return fallbackQuickSelection(blob, options, signal)
   const id = nextQuickSelectionRequestId++
   return new Promise<QuickSelectionResult>((resolve, reject) => {
-    const abortHandler = () => stopQuickSelectionWorker(new DOMException('Seleção cancelada.', 'AbortError'), worker)
+    const abortHandler = () => cancelQuickSelectionRequest(id, pending, worker)
     const pending: PendingQuickSelection = { resolve, reject, signal, abortHandler }
     pendingQuickSelections.set(id, pending)
     signal?.addEventListener('abort', abortHandler, { once: true })
@@ -290,6 +309,7 @@ async function runQuickSelection(blob: Blob, options: QuickSelectionOptions, sig
       worker.postMessage({
         id,
         blob,
+        sourceKey,
         options: {
           positiveSeeds: options.positiveSeeds.map((point) => ({ ...point })),
           negativeSeeds: options.negativeSeeds?.map((point) => ({ ...point })),
@@ -351,9 +371,16 @@ export async function createQuickSelection(
     colorTolerance: options.colorTolerance,
     edgeTolerance: options.edgeTolerance
   }
-  const response = await fetch(asset.sourceUrl, { signal })
-  if (!response.ok) throw new Error('Não foi possível carregar os pixels da camada ativa.')
-  const result = await runQuickSelection(await response.blob(), sourceOptions, signal)
+  const blob = await quickSelectionAssetCache.get(
+    quickSelectionAssetKey(asset),
+    async () => {
+      const response = await fetch(asset.sourceUrl)
+      if (!response.ok) throw new Error('Não foi possível carregar os pixels da camada ativa.')
+      return response.blob()
+    },
+    signal
+  )
+  const result = await runQuickSelection(blob, quickSelectionAssetKey(asset), sourceOptions, signal)
   signal?.throwIfAborted()
   return {
     kind: 'pixels',
@@ -553,6 +580,7 @@ export async function extractImageSelection(
 
 export function disposeSelectionEngine() {
   stopQuickSelectionWorker(new DOMException('Seleção cancelada.', 'AbortError'))
+  quickSelectionAssetCache.clear()
   stopWandWorker(new DOMException('Seleção cancelada.', 'AbortError'))
   eraseWorker?.terminate()
   eraseWorker = undefined

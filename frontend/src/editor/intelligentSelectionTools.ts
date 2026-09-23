@@ -34,3 +34,8 @@ export function availableIntelligentSelectionTool(
     ? preferred
     : ENABLED_INTELLIGENT_SELECTION_TOOLS[0]
 }
+
+/** Atalhos diretos evitam alternâncias invisíveis entre as ferramentas do grupo W. */
+export function intelligentSelectionToolForShortcut(shiftKey: boolean): IntelligentSelectionTool {
+  return availableIntelligentSelectionTool(shiftKey ? 'quick-selection' : 'magic-wand')
+}

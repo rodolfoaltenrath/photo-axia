@@ -1259,6 +1259,43 @@ textarea:focus-visible,
   z-index: 15;
 }
 
+.quick-selection-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  --quick-selection-preview-color: #49a4ff;
+}
+
+.quick-selection-preview--subtract {
+  --quick-selection-preview-color: #ff6b6b;
+}
+
+.quick-selection-preview--intersect {
+  --quick-selection-preview-color: #f5c451;
+}
+
+.quick-selection-preview-stroke,
+.quick-selection-preview-point {
+  stroke: var(--quick-selection-preview-color);
+  fill: rgb(12 18 26 / 45%);
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 1px rgb(0 0 0 / 90%));
+}
+
+.quick-selection-preview-stroke {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.quick-selection-preview-point--current {
+  fill: var(--quick-selection-preview-color);
+}
+
 .selection-overlay-outline {
   fill: none;
   vector-effect: non-scaling-stroke;
@@ -1522,6 +1559,18 @@ textarea:focus-visible,
   margin: 0;
   border-bottom: 1px solid #303844;
   padding: 0 8px;
+}
+
+.selection-overlay--preview {
+  opacity: 0.9;
+}
+
+.selection-overlay--preview .selection-overlay-outline--light {
+  stroke: rgb(119 210 255 / 95%);
+}
+
+.selection-overlay--preview .selection-overlay-outline--ants {
+  stroke: #176ca7;
 }
 
 .inspector-tabs {

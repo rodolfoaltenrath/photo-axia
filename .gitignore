@@ -7,6 +7,7 @@
 /build/bin/
 /build/ios/
 /bin/
+/axia.exe
 *.syso
 /frontend/dist/*
 !/frontend/dist/.gitkeep

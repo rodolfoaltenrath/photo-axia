@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   availableIntelligentSelectionTool,
   ENABLED_INTELLIGENT_SELECTION_TOOLS,
+  intelligentSelectionToolForShortcut,
   INTELLIGENT_SELECTION_TOOLS,
   isIntelligentSelectionTool,
   isIntelligentSelectionToolEnabled,
@@ -29,6 +30,11 @@ test('entrega incremental habilita Seleção Rápida e Varinha', () => {
   assert.equal(isIntelligentSelectionToolEnabled('magic-wand'), true)
   assert.equal(nextIntelligentSelectionTool('quick-selection'), 'magic-wand')
   assert.equal(nextIntelligentSelectionTool('magic-wand'), 'quick-selection')
+})
+
+test('atalhos W e Shift+W apontam diretamente para Varinha e Seleção Rápida', () => {
+  assert.equal(intelligentSelectionToolForShortcut(false), 'magic-wand')
+  assert.equal(intelligentSelectionToolForShortcut(true), 'quick-selection')
 })
 
 test('ciclo completo já respeita Objeto, Rápida e Varinha quando as fases forem habilitadas', () => {

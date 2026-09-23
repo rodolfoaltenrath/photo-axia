@@ -115,8 +115,8 @@ import {
 import type { SelectionCombineMode } from './editor/selectionCombine'
 import {
   availableIntelligentSelectionTool,
+  intelligentSelectionToolForShortcut,
   isIntelligentSelectionTool,
-  nextIntelligentSelectionTool,
   type IntelligentSelectionTool
 } from './editor/intelligentSelectionTools'
 import {
@@ -234,9 +234,12 @@ const lastMarqueeMode = ref<MarqueeSelectionMode>('rectangle')
 const selectionCombineMode = ref<SelectionCombineMode>('replace')
 const magicWandTolerance = ref(32)
 const magicWandContiguous = ref(true)
+const quickSelectionColorTolerance = ref(48)
+const quickSelectionEdgeTolerance = ref(32)
 const paintBucketTolerance = ref(32)
 const paintBucketContiguous = ref(true)
 const selection = shallowRef<SelectionRegion | null>(null)
+const quickSelectionResultPreview = shallowRef<SelectionRegion | null>(null)
 const statusText = ref('Inicializando…')
 const errorText = ref('')
 const isBusy = ref(false)
@@ -682,6 +685,7 @@ function cancelMagicWandSelection() {
 }
 
 function cancelQuickSelection() {
+  quickSelectionResultPreview.value = null
   if (!pendingQuickSelection) return
   const controller = pendingQuickSelection
   pendingQuickSelection = undefined
@@ -2708,9 +2712,18 @@ async function selectWithQuickSelection(points: SelectionPoint[], combineMode: S
       layer.id,
       layer.image,
       layer.transform,
-      { positiveSeeds: points },
+      {
+        positiveSeeds: points,
+        colorTolerance: quickSelectionColorTolerance.value,
+        edgeTolerance: quickSelectionEdgeTolerance.value
+      },
       controller.signal
     )
+    if (generation !== selectionGeneration) return
+    quickSelectionResultPreview.value = result
+    statusText.value = 'Máscara encontrada · ajustando a seleção…'
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    controller.signal.throwIfAborted()
     if (generation !== selectionGeneration) return
     const combined = await combineSelectionsAsync(
       parentSelection,
@@ -2731,6 +2744,7 @@ async function selectWithQuickSelection(points: SelectionPoint[], combineMode: S
       !(error instanceof DOMException && error.name === 'AbortError')
     ) showError(error, 'Não foi possível criar a seleção rápida.')
   } finally {
+    if (generation === selectionGeneration) quickSelectionResultPreview.value = null
     if (pendingQuickSelection === controller) pendingQuickSelection = undefined
     pendingSelectionTasks--
     if (pendingSelectionTasks === 0) isBusy.value = false
@@ -4150,9 +4164,7 @@ function handleShortcut(event: KeyboardEvent) {
   }
   if (event.code === 'KeyW') {
     event.preventDefault()
-    const tool = event.shiftKey
-      ? nextIntelligentSelectionTool(lastIntelligentSelectionTool.value)
-      : availableIntelligentSelectionTool(lastIntelligentSelectionTool.value)
+    const tool = intelligentSelectionToolForShortcut(event.shiftKey)
     lastIntelligentSelectionTool.value = tool
     activeTool.value = tool
     return
@@ -4403,8 +4415,11 @@ onBeforeUnmount(() => {
         :layers="layers"
         :magic-wand-contiguous="magicWandContiguous"
         :magic-wand-tolerance="magicWandTolerance"
+        :quick-selection-color-tolerance="quickSelectionColorTolerance"
+        :quick-selection-edge-tolerance="quickSelectionEdgeTolerance"
         :paint-bucket-contiguous="paintBucketContiguous"
         :paint-bucket-tolerance="paintBucketTolerance"
+        :quick-selection-result-preview="quickSelectionResultPreview"
         :selection="selection"
         :selection-combine-mode="selectionCombineMode"
         :selection-move-anchor="selectionMoveAnchor"
@@ -4441,6 +4456,8 @@ onBeforeUnmount(() => {
         @transform-committed="confirmCurrentImagePlacement"
         @update:magic-wand-contiguous="magicWandContiguous = $event"
         @update:magic-wand-tolerance="magicWandTolerance = $event"
+        @update:quick-selection-color-tolerance="quickSelectionColorTolerance = $event"
+        @update:quick-selection-edge-tolerance="quickSelectionEdgeTolerance = $event"
         @update:paint-bucket-contiguous="paintBucketContiguous = $event"
         @update:paint-bucket-tolerance="paintBucketTolerance = $event"
         @update:guides-locked="guidesLocked = $event"

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { quickSelectionSpans, quickSelectionSpansCooperatively } from '../src/editor/quickSelection.ts'
+import {
+  normalizeQuickSelectionOptions,
+  quickSelectionSpans,
+  quickSelectionSpansCooperatively
+} from '../src/editor/quickSelection.ts'
 
 function rgba(width, rows) {
   const pixels = new Uint8ClampedArray(width * rows.length * 4)
@@ -45,6 +49,20 @@ test('sementes negativas impedem a inclusão dos pixels indicados', () => {
 
   assert.deepEqual(result.spans, [{ y: 0, x0: 0, x1: 3 }])
   assert.equal(result.pixelCount, 3)
+})
+
+test('normaliza os controles separados de cor e borda', () => {
+  assert.deepEqual(
+    normalizeQuickSelectionOptions({
+      positiveSeeds: [{ x: 1.8, y: 0.2 }], colorTolerance: 999, edgeTolerance: -1
+    }, 3, 2),
+    {
+      positiveSeeds: [{ x: 1, y: 0 }],
+      negativeSeeds: [],
+      colorTolerance: 255,
+      edgeTolerance: 0
+    }
+  )
 })
 
 test('recusa buffers incompletos e sementes fora da imagem', () => {

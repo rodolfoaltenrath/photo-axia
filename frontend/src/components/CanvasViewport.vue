@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import CanvasContextBar from './canvas/CanvasContextBar.vue'
 import CanvasSurface from './canvas/CanvasSurface.vue'
 import type { LayerItem, LayerTransform } from '../types/editor'
@@ -79,6 +79,10 @@ let quickSelectionPointer: {
   points: SelectionPoint[]
   combineMode: SelectionCombineMode
 } | undefined
+const quickSelectionPreview = shallowRef<{
+  points: SelectionPoint[]
+  combineMode: SelectionCombineMode
+} | null>(null)
 const {
   documentViewportOffset,
   fitDocument,
@@ -430,6 +434,7 @@ const {
   cancelIntelligentSelection: () => {
     if (quickSelectionPointer) {
       quickSelectionPointer = undefined
+      quickSelectionPreview.value = null
       return true
     }
     if (!props.isBusy || (props.activeTool !== 'quick-selection' && props.activeTool !== 'magic-wand')) return false
@@ -502,6 +507,8 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
   rulerUnit: props.rulerUnit,
   rulersVisible: props.rulersVisible,
   scale: scale.value,
+  quickSelectionPreview: quickSelectionPreview.value,
+  quickSelectionResultPreview: props.quickSelectionResultPreview,
   selection: visibleSelection.value,
   selectedGuideId: selectedGuideId.value,
   selectionMoveInteraction: selectionMoveInteraction.value,
@@ -741,6 +748,10 @@ function startQuickSelectionPointer(event: PointerEvent, point: SelectionPoint) 
     points: [point],
     combineMode: resolveSelectionCombineMode(props.selectionCombineMode, event)
   }
+  quickSelectionPreview.value = {
+    points: [...quickSelectionPointer.points],
+    combineMode: quickSelectionPointer.combineMode
+  }
   return true
 }
 
@@ -756,6 +767,10 @@ function updateQuickSelectionPointer(event: PointerEvent) {
   }
   const point = pointerToDocument(event)
   if (point) appendBrushPoint(interaction.points, point, spacing, true)
+  quickSelectionPreview.value = {
+    points: [...interaction.points],
+    combineMode: interaction.combineMode
+  }
   return true
 }
 
@@ -763,6 +778,7 @@ function stopQuickSelectionPointer(event: PointerEvent) {
   const interaction = quickSelectionPointer
   if (!interaction || interaction.pointerId !== event.pointerId) return
   quickSelectionPointer = undefined
+  quickSelectionPreview.value = null
   if (event.type === 'pointerup' && interaction.points.length) {
     emit('quickSelection', interaction.points, interaction.combineMode)
   }
@@ -1120,6 +1136,8 @@ defineExpose({
       :is-viewport-ready="isViewportReady"
       :magic-wand-contiguous="magicWandContiguous"
       :magic-wand-tolerance="magicWandTolerance"
+      :quick-selection-color-tolerance="quickSelectionColorTolerance"
+      :quick-selection-edge-tolerance="quickSelectionEdgeTolerance"
       :paint-bucket-contiguous="paintBucketContiguous"
       :paint-bucket-tolerance="paintBucketTolerance"
       :rotation="activeDisplayTransform?.rotation ?? 0"
@@ -1147,6 +1165,8 @@ defineExpose({
       @update-guides-visible="emit('update:guidesVisible', $event)"
       @update-magic-wand-contiguous="emit('update:magicWandContiguous', $event)"
       @update-magic-wand-tolerance="emit('update:magicWandTolerance', $event)"
+      @update-quick-selection-color-tolerance="emit('update:quickSelectionColorTolerance', $event)"
+      @update-quick-selection-edge-tolerance="emit('update:quickSelectionEdgeTolerance', $event)"
       @update-paint-bucket-contiguous="emit('update:paintBucketContiguous', $event)"
       @update-paint-bucket-tolerance="emit('update:paintBucketTolerance', $event)"
       @update-ruler-unit="emit('update:rulerUnit', $event)"

@@ -46,8 +46,11 @@ export interface CanvasViewportProps {
   layers: LayerItem[]
   magicWandContiguous: boolean
   magicWandTolerance: number
+  quickSelectionColorTolerance: number
+  quickSelectionEdgeTolerance: number
   paintBucketContiguous: boolean
   paintBucketTolerance: number
+  quickSelectionResultPreview: SelectionRegion | null
   selection: SelectionRegion | null
   selectionCombineMode: SelectionCombineMode
   selectionMoveAnchor: SelectionMoveAnchor | null
@@ -114,6 +117,8 @@ export interface CanvasViewportEmits {
   (event: 'update:brushSize', size: number): void
   (event: 'update:magicWandContiguous', enabled: boolean): void
   (event: 'update:magicWandTolerance', tolerance: number): void
+  (event: 'update:quickSelectionColorTolerance', tolerance: number): void
+  (event: 'update:quickSelectionEdgeTolerance', tolerance: number): void
   (event: 'update:paintBucketContiguous', enabled: boolean): void
   (event: 'update:paintBucketTolerance', tolerance: number): void
   (event: 'update:gradientConfig', config: GradientStopsConfig): void
@@ -165,6 +170,8 @@ export interface CanvasSurfaceView {
   pasteboardStyle: CSSProperties
   rulerUnit: RulerUnit
   rulersVisible: boolean
+  quickSelectionPreview: { points: SelectionPoint[]; combineMode: SelectionCombineMode } | null
+  quickSelectionResultPreview: SelectionRegion | null
   scale: number
   selection: SelectionRegion | null
   selectedGuideId: string | null

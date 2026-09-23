@@ -144,6 +144,44 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
       :document-width="view.documentWidth"
       :selection="view.selection"
     />
+    <SelectionOverlay
+      v-if="view.quickSelectionResultPreview"
+      class="selection-overlay--preview"
+      :document-height="view.documentHeight"
+      :document-width="view.documentWidth"
+      :selection="view.quickSelectionResultPreview"
+    />
+    <svg
+      v-if="view.quickSelectionPreview"
+      class="quick-selection-preview"
+      :class="`quick-selection-preview--${view.quickSelectionPreview.combineMode}`"
+      :viewBox="`0 0 ${view.documentWidth} ${view.documentHeight}`"
+      aria-hidden="true"
+      preserveAspectRatio="none"
+    >
+      <polyline
+        v-if="view.quickSelectionPreview.points.length > 1"
+        class="quick-selection-preview-stroke"
+        :points="view.quickSelectionPreview.points.map((point) => `${point.x},${point.y}`).join(' ')"
+        fill="none"
+        :stroke-width="2 / Math.max(0.01, view.scale)"
+      />
+      <circle
+        class="quick-selection-preview-point"
+        :cx="view.quickSelectionPreview.points[0]?.x"
+        :cy="view.quickSelectionPreview.points[0]?.y"
+        :r="4 / Math.max(0.01, view.scale)"
+        :stroke-width="2 / Math.max(0.01, view.scale)"
+      />
+      <circle
+        v-if="view.quickSelectionPreview.points.length > 1"
+        class="quick-selection-preview-point quick-selection-preview-point--current"
+        :cx="view.quickSelectionPreview.points.at(-1)?.x"
+        :cy="view.quickSelectionPreview.points.at(-1)?.y"
+        :r="4 / Math.max(0.01, view.scale)"
+        :stroke-width="2 / Math.max(0.01, view.scale)"
+      />
+    </svg>
     <svg
       v-if="view.gradientInteraction"
       class="gradient-controls"
