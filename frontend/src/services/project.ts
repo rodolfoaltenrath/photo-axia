@@ -1,5 +1,5 @@
 import type { EditorGuide, RulerOrigin, RulerUnit } from '../editor/guides'
-import type { DocumentSpec, ImageAsset, LayerItem, LayerKind, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, ShapeLayerContent, SmartLayerContent, TextLayerContent } from '../types/editor'
+import type { DocumentSpec, ImageAsset, LayerItem, LayerKind, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, PDFSmartSource, ShapeLayerContent, SmartLayerContent, TextLayerContent } from '../types/editor'
 import { normalizeLayerBlendMode } from '../editor/blendModes.ts'
 import {
   cloneLayerStyleConfig,
@@ -10,7 +10,7 @@ import {
 import { SMART_LAYER_MAX_DEPTH } from '../editor/smartLayers.ts'
 import { normalizeShapeConfig } from '../editor/shape.ts'
 
-export const AXIA_PROJECT_VERSION = 3
+export const AXIA_PROJECT_VERSION = 4
 export const AXIA_PROJECT_MAX_LAYERS = 10_000
 
 export interface AxiaProjectViewState {
@@ -45,8 +45,13 @@ interface AxiaStoredImage extends Omit<ImageAsset, 'sourceUrl' | 'previewUrl' | 
   assetId: string
 }
 
-interface AxiaStoredSmartContent extends Omit<SmartLayerContent, 'layers'> {
+interface AxiaStoredPDFSource extends Omit<PDFSmartSource, 'sourceUrl'> {
+  assetId: string
+}
+
+interface AxiaStoredSmartContent extends Omit<SmartLayerContent, 'layers' | 'pdf'> {
   layers: AxiaStoredLayer[]
+  pdf?: AxiaStoredPDFSource
 }
 
 type AxiaStoredLayerKind = LayerKind | 'image'
@@ -75,6 +80,7 @@ export interface AxiaProjectAssetSource {
 }
 
 function extensionForMime(mimeType: string) {
+  if (mimeType === 'application/pdf') return 'pdf'
   if (mimeType === 'image/jpeg') return 'jpg'
   if (mimeType === 'image/gif') return 'gif'
   if (mimeType === 'image/webp') return 'webp'
@@ -172,6 +178,19 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
       let smart: AxiaStoredSmartContent | undefined
       if (layer.kind === 'smart') {
         if (!layer.smart || !layer.smart.layers.length) throw new Error('Camada inteligente incompleta.')
+        let pdf: AxiaStoredPDFSource | undefined
+        if (layer.smart.pdf) {
+          const source = layer.smart.pdf
+          const asset = registerAsset(source.sourceUrl, {
+            mimeType: 'application/pdf',
+            width: Math.max(1, Math.ceil(source.widthPoints)),
+            height: Math.max(1, Math.ceil(source.heightPoints)),
+            byteSize: source.byteSize,
+            name: source.name
+          })
+          const { sourceUrl: _sourceUrl, ...storedPDF } = source
+          pdf = { ...storedPDF, assetId: asset.id }
+        }
         smart = {
           id: layer.smart.id,
           width: layer.smart.width,
@@ -181,6 +200,7 @@ export function createAxiaProjectManifest(state: AxiaProjectState) {
           background: layer.smart.background,
           layerStyleGlobalLight: normalizeLayerStyleGlobalLight(layer.smart.layerStyleGlobalLight),
           layers: storeLayers(layer.smart.layers, depth + 1),
+          pdf,
           revision: layer.smart.revision
         }
       }
@@ -342,7 +362,7 @@ function restoreLayerStyles(
 
 export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<string, string>): AxiaProjectState {
   const parsed = JSON.parse(manifestJSON) as Partial<AxiaProjectManifest>
-  if (parsed.format !== 'axia' || ![1, 2, AXIA_PROJECT_VERSION].includes(parsed.version ?? 0)) {
+  if (parsed.format !== 'axia' || ![1, 2, 3, AXIA_PROJECT_VERSION].includes(parsed.version ?? 0)) {
     throw new Error(`Versão de projeto .axia não suportada: ${String(parsed.version ?? 'desconhecida')}.`)
   }
   const projectVersion = parsed.version!
@@ -425,6 +445,38 @@ export function restoreAxiaProject(manifestJSON: string, assetUrls: Record<strin
         layerStyleGlobalLight: normalizeLayerStyleGlobalLight(source.layerStyleGlobalLight),
         layers: restoreStoredLayers(source.layers, depth + 1),
         revision: Math.floor(source.revision)
+      }
+      if (source.pdf !== undefined) {
+        if (projectVersion < 4 || !source.pdf || typeof source.pdf !== 'object' || Array.isArray(source.pdf)) {
+          throw new Error('Origem PDF da camada inteligente invÃ¡lida.')
+        }
+        const storedPDF = source.pdf as unknown as Record<string, unknown>
+        const assetId = requireString(storedPDF.assetId, 'Asset PDF')
+        const archiveAsset = assets.get(assetId)
+        const sourceUrl = assetUrls[assetId]
+        const pageNumber = finiteNumber(storedPDF.pageNumber)
+        const widthPoints = finiteNumber(storedPDF.widthPoints)
+        const heightPoints = finiteNumber(storedPDF.heightPoints)
+        if (
+          !archiveAsset || archiveAsset.mimeType !== 'application/pdf' || !sourceUrl ||
+          !pageNumber || !Number.isInteger(pageNumber) || pageNumber < 1 ||
+          !widthPoints || !heightPoints || widthPoints <= 0 || heightPoints <= 0 ||
+          widthPoints > 100_000 || heightPoints > 100_000 ||
+          (storedPDF.background !== 'white' && storedPDF.background !== 'transparent')
+        ) throw new Error('Origem PDF da camada inteligente invÃ¡lida.')
+        const cacheLayerId = typeof storedPDF.cacheLayerId === 'string' && storedPDF.cacheLayerId
+          ? storedPDF.cacheLayerId
+          : undefined
+        smart.pdf = {
+          name: requireString(storedPDF.name, 'Nome do PDF'),
+          sourceUrl,
+          byteSize: archiveAsset.byteSize,
+          pageNumber,
+          widthPoints,
+          heightPoints,
+          background: storedPDF.background,
+          ...(cacheLayerId ? { cacheLayerId } : {})
+        }
       }
       if (!transform) throw new Error('Camada inteligente incompleta.')
     } else if (stored.smart) {

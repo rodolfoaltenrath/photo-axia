@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import CanvasViewport from './components/CanvasViewport.vue'
 import FlattenImageDialog from './components/FlattenImageDialog.vue'
 import ImportPdfDialog from './components/ImportPdfDialog.vue'
+import PDFRerenderDialog from './components/PDFRerenderDialog.vue'
 import LayerStyleDialog from './components/LayerStyleDialog.vue'
 import LayersPanel from './components/LayersPanel.vue'
 import NewDocumentDialog from './components/NewDocumentDialog.vue'
@@ -45,7 +46,7 @@ import {
   renderMergedLayers,
   sampleDocumentColor
 } from './services/renderDocument'
-import { closePDFImport, renderPDFPages, type PDFImportSource, type PDFRenderRequest } from './services/pdfImport'
+import { closePDFImport, openPDFImport, renderPDFPages, type PDFImportSource, type PDFRenderRequest } from './services/pdfImport'
 import { applyPreparedProject, prepareRestoredProject, selectAndRestoreAxiaProject } from './services/projectOpen'
 import {
   applyEditorHistoryDelta,
@@ -74,6 +75,7 @@ import { clampZoom } from './editor/viewport'
 import {
   createNativePixelLayer,
   createPlacedImageSmartLayer,
+  createPlacedPDFSmartLayer,
   importedImageDocumentSettings,
   validateImportedImageDocument
 } from './editor/mediaDocument'
@@ -82,7 +84,8 @@ import { editorIsBlockedByModal } from './editor/interactionGuards'
 import { layerCanRasterize, layerSupportsRotationBaking, rasterizedLayerPatch } from './editor/layerRasterization'
 import { createFlattenedLayer, documentCanFlatten } from './editor/flattenImage'
 import { updateLayerSelection, type LayerSelectionMode } from './editor/layerSelection'
-import { createSmartLayer, layersCanConvertToSmart, smartLayerObjectLayers } from './editor/smartLayers'
+import { cloneSmartLayerContent, createSmartLayer, layersCanConvertToSmart, smartLayerObjectLayers } from './editor/smartLayers'
+import { replacePDFSmartLayerCache } from './editor/pdfSmartLayer'
 import {
   createEditedSmartLayerContent,
   createSmartLayerEditDocument,
@@ -251,6 +254,9 @@ const showImportPdfDialog = ref(false)
 const pdfImportSource = shallowRef<PDFImportSource | null>(null)
 const pdfImportProgress = ref('')
 const pdfImportDestination = ref<'document' | 'layer'>('layer')
+const pdfRerenderLayerId = ref<string>()
+const pdfRerenderError = ref('')
+const pdfRerenderProgress = ref('')
 const appScreen = ref<'home' | 'editor'>('home')
 const hasOpenDocument = ref(false)
 const recentProjects = ref<RecentProject[]>([])
@@ -516,7 +522,7 @@ const { createDocument } = useDocumentCreation({
   zoom
 })
 const modalOpen = computed(() => editorIsBlockedByModal(
-  showNewDocumentDialog.value || showExportImageDialog.value || showImportPdfDialog.value,
+  showNewDocumentDialog.value || showExportImageDialog.value || showImportPdfDialog.value || Boolean(pdfRerenderLayerId.value),
   showUnsavedChangesDialog.value,
   Boolean(layerStyleDialog.value) || showFlattenImageDialog.value || Boolean(scaleLayerEffectsSession.value) || Boolean(rasterizeLayerRequest.value)
 ))
@@ -886,6 +892,7 @@ function layerObjectUrls(layer: LayerItem) {
   return smartLayerObjectLayers(layer).flatMap((item) => [
     item.image?.sourceUrl,
     item.image?.previewUrl,
+    item.smart?.pdf?.sourceUrl,
     ...layerStylePatternAssets(item.styles).map((asset) => asset.sourceUrl)
   ]).filter(
     (source): source is string => Boolean(source?.startsWith('blob:'))
@@ -2541,13 +2548,17 @@ async function finishSmartLayerEdit() {
   }
 }
 
-async function addImportedImages(images: ImportedImage[], errors: string[] = []) {
+async function addImportedImages(
+  images: ImportedImage[],
+  errors: string[] = [],
+  makeLayer: (image: ImportedImage) => LayerItem = (image) => createPlacedImageSmartLayer(
+    image,
+    activeDocument.value,
+    imageTransform(image)
+  )
+) {
   if (images.length) {
-    const placedLayers = images.map((image) => createPlacedImageSmartLayer(
-      image,
-      activeDocument.value,
-      imageTransform(image)
-    ))
+    const placedLayers = images.map(makeLayer)
     const importedIds = new Set(placedLayers.map((layer) => layer.id))
     const activeBefore = activeLayerId.value
     const toolBefore = activeTool.value
@@ -3803,6 +3814,7 @@ async function canOpenMediaDocument(mediaLabel: string) {
 }
 
 let pdfImportController: AbortController | undefined
+let pdfRerenderController: AbortController | undefined
 
 async function releasePDFSource() {
   const source = pdfImportSource.value
@@ -3810,6 +3822,41 @@ async function releasePDFSource() {
   if (!source) return
   if (source.id) await releaseDesktopPDF(source.id).catch(() => undefined)
   else if (source.sourceUrl.startsWith('blob:')) URL.revokeObjectURL(source.sourceUrl)
+}
+
+/**
+ * Transfers the original PDF to a smart layer. Desktop URLs are short-lived,
+ * so they are copied to a browser Blob before their native registration is
+ * released. Browser-picked files already are Blob URLs and can be adopted.
+ */
+async function adoptPDFSource(source: PDFImportSource, request: PDFRenderRequest) {
+  const pageNumber = request.pages[0]
+  const page = pageNumber ? request.pageSizes[pageNumber - 1] : undefined
+  if (!page) throw new Error('A página selecionada não está disponível.')
+
+  let sourceUrl = source.sourceUrl
+  if (source.id) {
+    const response = await fetch(sourceUrl)
+    if (!response.ok) throw new Error('Não foi possível preservar o PDF original.')
+    const blob = await response.blob()
+    sourceUrl = URL.createObjectURL(blob)
+    trackedObjectUrls.add(sourceUrl)
+  } else {
+    // The dialog owns this Blob URL until import succeeds; ownership now moves
+    // to the layer so releasePDFSource must not revoke it.
+    pdfImportSource.value = null
+    trackedObjectUrls.add(sourceUrl)
+  }
+
+  return {
+    name: source.name,
+    sourceUrl,
+    byteSize: source.byteSize,
+    pageNumber,
+    widthPoints: page.widthPoints,
+    heightPoints: page.heightPoints,
+    background: request.background
+  } as const
 }
 
 async function handleNativeFileDrop(
@@ -4002,11 +4049,21 @@ async function performPDFImport(request: PDFRenderRequest) {
       }
     } else {
       pdfImportProgress.value = 'Adicionando página ao documento…'
-      await addImportedImages(images)
+      const source = pdfImportSource.value
+      if (!source) throw new Error('O arquivo PDF original não está mais disponível.')
+      const pdf = await adoptPDFSource(source, request)
+      await addImportedImages(images, [], (image) => createPlacedPDFSmartLayer(
+        image,
+        pdf,
+        activeDocument.value,
+        imageTransform(image)
+      ))
     }
     showImportPdfDialog.value = false
     await releasePDFSource()
-    statusText.value = pdfImportDestination.value === 'document' ? 'PDF aberto como documento' : 'Página do PDF importada'
+    statusText.value = pdfImportDestination.value === 'document'
+      ? 'PDF aberto como documento'
+      : 'Página do PDF importada como camada inteligente'
   } catch (error) {
     showImportPdfDialog.value = false
     await releasePDFSource()
@@ -4025,6 +4082,109 @@ async function performPDFImport(request: PDFRenderRequest) {
     pdfImportController = undefined
     pdfImportProgress.value = ''
     pdfImportDestination.value = 'layer'
+    isBusy.value = false
+  }
+}
+
+function openPDFRerenderDialog() {
+  if (isBusy.value || modalOpen.value) return
+  const layer = activeLayer.value
+  if (layer.kind !== 'smart' || !layer.smart?.pdf) {
+    errorText.value = 'Selecione uma camada inteligente criada a partir de um PDF.'
+    return
+  }
+  pdfRerenderError.value = ''
+  pdfRerenderProgress.value = ''
+  pdfRerenderLayerId.value = layer.id
+}
+
+function cancelPDFRerender() {
+  if (isBusy.value && pdfRerenderController) {
+    pdfRerenderProgress.value = 'Cancelando processamento…'
+    pdfRerenderController.abort()
+    return
+  }
+  if (isBusy.value) return
+  pdfRerenderLayerId.value = undefined
+  pdfRerenderError.value = ''
+  pdfRerenderProgress.value = ''
+}
+
+async function performPDFRerender(request: { dpi: number; password: string }) {
+  const layerId = pdfRerenderLayerId.value
+  const layer = layers.value.find((item) => item.id === layerId)
+  if (isBusy.value || !layer || layer.kind !== 'smart' || !layer.smart?.pdf) return
+
+  const before = cloneSmartLayerContent(layer.smart)
+  if (!before?.pdf) return
+  let document: Awaited<ReturnType<typeof openPDFImport>>['document'] | undefined
+  let cacheImage: ImportedImage | undefined
+  let applied = false
+  isBusy.value = true
+  errorText.value = ''
+  pdfRerenderError.value = ''
+  pdfRerenderProgress.value = 'Abrindo o PDF original…'
+  statusText.value = pdfRerenderProgress.value
+  pdfRerenderController = new AbortController()
+  try {
+    const opened = await openPDFImport(before.pdf.sourceUrl, request.password, pdfRerenderController.signal)
+    document = opened.document
+    const page = opened.pages.find((item) => item.pageNumber === before.pdf!.pageNumber)
+    if (!page) throw new Error(`A página ${before.pdf.pageNumber} não está disponível no PDF original.`)
+
+    pdfRerenderProgress.value = `Renderizando página em ${request.dpi} DPI…`
+    statusText.value = pdfRerenderProgress.value
+    const images = await renderPDFPages({
+      background: before.pdf.background,
+      document,
+      dpi: request.dpi,
+      name: before.pdf.name,
+      pages: [before.pdf.pageNumber],
+      pageSizes: opened.pages
+    }, pdfRerenderController.signal)
+    cacheImage = images[0]
+    if (!cacheImage) throw new Error('A página do PDF não gerou uma imagem.')
+    if (!layers.value.includes(layer)) throw new Error('A camada não está mais disponível.')
+
+    layer.smart = replacePDFSmartLayerCache(before, cacheImage)
+    layer.image = undefined
+    applied = true
+    trackLayerAssets([layer])
+    pdfRerenderProgress.value = 'Atualizando a visualização da camada…'
+    statusText.value = pdfRerenderProgress.value
+    await refreshSmartLayerSource(layer)
+    recordHistory(`Re-renderizar PDF em ${request.dpi} DPI`, {
+      type: 'layer:patch',
+      layerId: layer.id,
+      before: cloneLayerPatch({ smart: before }),
+      after: cloneLayerPatch({ smart: layer.smart })
+    })
+    cacheImage = undefined
+    pdfRerenderLayerId.value = undefined
+    statusText.value = `PDF re-renderizado em ${request.dpi} DPI`
+  } catch (error) {
+    if (applied) {
+      layer.smart = before
+      layer.image = undefined
+      try { await refreshSmartLayerSource(layer) } catch { /* mantém o cache anterior se possível */ }
+    }
+    if (cacheImage) {
+      releaseUnadoptedImportedImage(cacheImage)
+      trackedObjectUrls.delete(cacheImage.sourceUrl)
+    }
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      pdfRerenderLayerId.value = undefined
+      statusText.value = 'Re-renderização do PDF cancelada'
+    } else {
+      pdfRerenderError.value = error instanceof Error && error.message
+        ? error.message
+        : 'Não foi possível re-renderizar a página do PDF.'
+      statusText.value = 'Não foi possível re-renderizar o PDF'
+    }
+  } finally {
+    if (document) await closePDFImport(document).catch(() => undefined)
+    pdfRerenderController = undefined
+    pdfRerenderProgress.value = ''
     isBusy.value = false
   }
 }
@@ -4222,6 +4382,7 @@ onBeforeUnmount(() => {
   unregisterNativeFileDrop?.()
   unregisterLayerStyleWindowHost?.()
   pdfImportController?.abort()
+  pdfRerenderController?.abort()
   void releasePDFSource()
   if (previewRefreshTimer) clearTimeout(previewRefreshTimer)
   pendingBrushCommit?.controller.abort()
@@ -4281,6 +4442,7 @@ onBeforeUnmount(() => {
       :can-merge-layers="selectedLayerIds.length > 1"
       :can-paste-layer-styles="canPasteActiveLayerStyles"
       :can-rasterize-layer="layerCanRasterize(activeLayer)"
+      :can-rerender-pdf-layer="activeLayer.kind === 'smart' && Boolean(activeLayer.smart?.pdf)"
       :can-scale-layer-effects="canScaleActiveLayerEffects"
       :can-redo="canRedo"
       :can-undo="canUndo"
@@ -4321,6 +4483,7 @@ onBeforeUnmount(() => {
       @open-project="openProject"
       @paste-layer-styles="pasteLayerStyles()"
       @rasterize-layer="rasterizeLayer()"
+      @rerender-pdf-layer="openPDFRerenderDialog"
       @scale-layer-effects="openScaleLayerEffects()"
       @redo="redoHistory"
       @save-project="saveProject()"
@@ -4562,6 +4725,15 @@ onBeforeUnmount(() => {
       :source="pdfImportSource"
       @cancel="cancelPDFImport"
       @import="performPDFImport"
+    />
+    <PDFRerenderDialog
+      :busy="isBusy"
+      :error="pdfRerenderError"
+      :open="Boolean(pdfRerenderLayerId)"
+      :progress="pdfRerenderProgress"
+      :source="layers.find((layer) => layer.id === pdfRerenderLayerId)?.smart?.pdf"
+      @cancel="cancelPDFRerender"
+      @rerender="performPDFRerender"
     />
     <LayerStyleDialog
       v-if="!nativeLayerStyleWindowEnabled || nativeLayerStyleDialogFallback"

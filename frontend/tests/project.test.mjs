@@ -66,7 +66,7 @@ function projectState() {
 test('manifesto .axia deduplica originals e descarta previews derivados', () => {
   const { manifest, assetSources } = createAxiaProjectManifest(projectState())
   assert.equal(manifest.format, 'axia')
-  assert.equal(manifest.version, 3)
+  assert.equal(manifest.version, 4)
   assert.equal(manifest.assets.length, 1)
   assert.equal(assetSources.length, 1)
   assert.equal(manifest.layers[0].image.assetId, manifest.layers[1].image.assetId)
@@ -200,7 +200,7 @@ test('persiste estilos, luz global e padrões sem gravar URLs transitórias no m
   }
 
   const { manifest, assetSources } = createAxiaProjectManifest(state)
-  assert.equal(manifest.version, 3)
+  assert.equal(manifest.version, 4)
   assert.equal(manifest.assets.length, 2)
   assert.equal(assetSources.length, 2)
   assert.equal(JSON.stringify(manifest).includes('blob:pattern'), false)
@@ -287,7 +287,7 @@ test('persiste e restaura conteúdo inteligente aninhado com assets deduplicados
   state.view.activeLayerId = 'smart'
 
   const { manifest, assetSources } = createAxiaProjectManifest(state)
-  assert.equal(manifest.version, 3)
+  assert.equal(manifest.version, 4)
   assert.equal(manifest.layers[0].kind, 'smart')
   assert.equal(manifest.layers[0].image, undefined)
   assert.equal(manifest.layers[0].smart.layers[0].image.assetId, 'asset-0001')
@@ -305,6 +305,43 @@ test('persiste e restaura conteúdo inteligente aninhado com assets deduplicados
   assert.equal(smart.smart.layers[0].id, 'nested-image')
   assert.equal(smart.smart.layers[0].image.sourceUrl, '/__axia_asset/asset-0001')
   assert.equal(smart.smart.layers[0].transform.x, 6)
+})
+
+test('preserva o PDF original e seus metadados dentro da camada inteligente', () => {
+  const state = projectState()
+  const source = state.layers[0]
+  state.layers = [{
+    id: 'smart-pdf', name: 'Documento', visible: true, opacity: 100, blendMode: 'normal', kind: 'smart',
+    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    transform: { x: 20, y: 30, width: 800, height: 600, rotation: 0 },
+    smart: {
+      id: 'content-pdf', width: 800, height: 600, resolutionDpi: 150, colorSpace: 'sRGB',
+      background: 'transparent', layerStyleGlobalLight: { angle: 120, altitude: 30 },
+      layers: [{ ...source, id: 'pdf-cache', transform: { x: 0, y: 0, width: 800, height: 600, rotation: 0 } }],
+      pdf: {
+        name: 'documento.pdf', sourceUrl: 'blob:original-pdf', byteSize: 456_789,
+        pageNumber: 3, widthPoints: 384, heightPoints: 288, background: 'transparent'
+      },
+      revision: 1
+    }
+  }]
+
+  const { manifest, assetSources } = createAxiaProjectManifest(state)
+  assert.equal(manifest.version, 4)
+  assert.equal(manifest.assets.length, 2)
+  const pdfAsset = manifest.assets.find((asset) => asset.mimeType === 'application/pdf')
+  assert.ok(pdfAsset)
+  assert.equal(pdfAsset.path.endsWith('.pdf'), true)
+  assert.equal(assetSources.find((asset) => asset.id === pdfAsset.id).sourceUrl, 'blob:original-pdf')
+  assert.equal(JSON.stringify(manifest).includes('blob:original-pdf'), false)
+
+  const restored = restoreAxiaProject(JSON.stringify(manifest), Object.fromEntries(
+    manifest.assets.map((asset) => [asset.id, `/__axia_asset/${asset.id}`])
+  ))
+  assert.deepEqual(restored.layers[0].smart.pdf, {
+    name: 'documento.pdf', sourceUrl: `/__axia_asset/${pdfAsset.id}`, byteSize: 456_789,
+    pageNumber: 3, widthPoints: 384, heightPoints: 288, background: 'transparent'
+  })
 })
 
 test('rejeita conteúdo inteligente incompleto e aninhamento acima do limite', () => {

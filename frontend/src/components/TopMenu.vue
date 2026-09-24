@@ -16,6 +16,7 @@ const props = defineProps<{
   canMergeLayers: boolean
   canPasteLayerStyles: boolean
   canRasterizeLayer: boolean
+  canRerenderPdfLayer: boolean
   canScaleLayerEffects: boolean
   canRedo: boolean
   canUndo: boolean
@@ -59,6 +60,7 @@ const emit = defineEmits<{
   (event: 'openProject'): void
   (event: 'pasteLayerStyles'): void
   (event: 'rasterizeLayer'): void
+  (event: 'rerenderPdfLayer'): void
   (event: 'scaleLayerEffects'): void
   (event: 'redo'): void
   (event: 'saveProject'): void
@@ -175,6 +177,7 @@ onBeforeUnmount(() => {
           <button type="button" role="menuitem" :disabled="isBusy || !canDuplicateLayer" @click="runCommand(() => emit('duplicateLayer'))">Duplicar camada</button>
           <button type="button" role="menuitem" :disabled="isBusy || !canDeleteLayer" @click="runCommand(() => emit('deleteLayer'))">Excluir camada</button>
           <button type="button" role="menuitem" :disabled="isBusy || !canMergeLayers" @click="runCommand(() => emit('mergeLayers'))">Mesclar selecionadas</button>
+          <button v-if="canRerenderPdfLayer" type="button" role="menuitem" :disabled="isBusy" title="Reconstrói o cache da página a partir do PDF preservado" @click="runCommand(() => emit('rerenderPdfLayer'))">Re-renderizar PDF…</button>
           <div class="application-menu-separator" role="separator"></div>
           <button v-if="canConvertToSmartLayer" type="button" role="menuitem" :disabled="isBusy" title="Agrupa as camadas e preserva o conteúdo original" @click="runCommand(() => emit('convertToSmartLayer'))">Converter em Objeto Inteligente</button>
           <button v-if="canEditSmartLayer" type="button" role="menuitem" :disabled="isBusy" title="Abre o conteúdo do Objeto Inteligente" @click="runCommand(() => emit('editSmartLayer'))">Editar conteúdo…</button>

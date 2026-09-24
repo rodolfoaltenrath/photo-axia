@@ -173,6 +173,8 @@ export interface CanvasSurfaceView {
   quickSelectionPreview: { points: SelectionPoint[]; combineMode: SelectionCombineMode } | null
   quickSelectionResultPreview: SelectionRegion | null
   scale: number
+  selectionOverlayAnimated: boolean
+  selectionOverlayReducedDetail: boolean
   selection: SelectionRegion | null
   selectedGuideId: string | null
   selectionMoveInteraction: SelectionMoveInteraction | null

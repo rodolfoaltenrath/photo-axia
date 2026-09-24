@@ -273,7 +273,25 @@ export interface SmartLayerContent {
   background: DocumentBackground
   layerStyleGlobalLight: LayerStyleGlobalLight
   layers: LayerItem[]
+  /** Arquivo PDF de origem, quando esta camada nasceu de uma página importada. */
+  pdf?: PDFSmartSource
   revision: number
+}
+
+/**
+ * Metadados do PDF preservado por uma camada inteligente. A imagem interna da
+ * camada continua sendo apenas o cache raster usado pelo editor.
+ */
+export interface PDFSmartSource {
+  name: string
+  sourceUrl: string
+  byteSize?: number
+  pageNumber: number
+  widthPoints: number
+  heightPoints: number
+  background: 'white' | 'transparent'
+  /** ID da camada interna que guarda o cache raster da página. */
+  cacheLayerId?: string
 }
 
 export interface TextLayerContent {

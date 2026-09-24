@@ -93,10 +93,10 @@ func TestAxiaProjectRoundTripWithNativeAsset(t *testing.T) {
 }
 
 func TestValidateManifestAcceptsCurrentAndPreviousVersions(t *testing.T) {
-	if axiaFormatVersion != 3 {
-		t.Fatalf("backend project version %d diverges from the frontend manifest version 3", axiaFormatVersion)
+	if axiaFormatVersion != 4 {
+		t.Fatalf("backend project version %d diverges from the frontend manifest version 4", axiaFormatVersion)
 	}
-	for _, version := range []int{1, 2, axiaFormatVersion} {
+	for _, version := range []int{1, 2, 3, axiaFormatVersion} {
 		if _, err := validateManifest(projectManifest("assets/asset-0001.png", version)); err != nil {
 			t.Fatalf("version %d should be supported: %v", version, err)
 		}
@@ -131,6 +131,41 @@ func TestAxiaProjectStoresUploadedEditedAsset(t *testing.T) {
 	}
 	if opened.AssetURLs["asset-0001"] == "" {
 		t.Fatal("uploaded asset was not restored")
+	}
+	app.shutdown(nil)
+}
+
+func TestAxiaProjectStoresPDFAsset(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "pdf.axia")
+	manifest := map[string]any{
+		"format": "axia", "version": axiaFormatVersion,
+		"document": map[string]any{"id": "document-1", "name": "Teste", "width": 40, "height": 20},
+		"layers":   []any{},
+		"assets": []map[string]any{{
+			"id": "asset-0001", "path": "assets/asset-0001.pdf", "mimeType": "application/pdf", "width": 595, "height": 842,
+		}},
+	}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.projectSaves["pdf-token"] = target
+	pdf := []byte("%PDF-1.7\n% Axia test\n")
+	response := httptest.NewRecorder()
+	app.projectHandler().ServeHTTP(response, projectSaveRequest(t, "pdf-token", manifestData, nil, pdf))
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected save status %d: %s", response.Code, response.Body.String())
+	}
+	opened, err := app.openAxiaProject(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetResponse := httptest.NewRecorder()
+	app.assetHandler().ServeHTTP(assetResponse, httptest.NewRequest(http.MethodGet, opened.AssetURLs["asset-0001"], nil))
+	if assetResponse.Code != http.StatusOK || assetResponse.Body.String() != string(pdf) {
+		t.Fatalf("restored PDF asset differs: %d %q", assetResponse.Code, assetResponse.Body.String())
 	}
 	app.shutdown(nil)
 }

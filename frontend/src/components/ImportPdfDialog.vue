@@ -3,6 +3,7 @@ import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import {
   PDF_IMPORT_DPI_OPTIONS,
   estimatePDFImportBytes,
+  maximumPDFImportDPI,
   normalizePDFDPI,
   normalizePDFPages,
   pdfPagePixelSize,
@@ -34,6 +35,7 @@ const emit = defineEmits<{
 
 const dialog = ref<HTMLElement | null>(null)
 const dpiInput = ref<HTMLSelectElement | null>(null)
+const customDpiInput = ref<HTMLInputElement | null>(null)
 const pageGrid = ref<HTMLElement | null>(null)
 const pdf = shallowRef<PDFDocumentProxy>()
 const pages = ref<Awaited<ReturnType<typeof openPDFImport>>['pages']>([])
@@ -73,6 +75,10 @@ const estimatedBytes = computed(() => estimatePDFImportBytes({
 const selectedSize = computed(() => {
   const page = pages.value[normalizedSelection.value[0]! - 1]
   return page ? pdfPagePixelSize(page, effectiveDpi.value) : undefined
+})
+const maximumDpi = computed(() => {
+  const page = pages.value[normalizedSelection.value[0]! - 1]
+  return page ? maximumPDFImportDPI(page) : undefined
 })
 const opensDocument = computed(() => props.destination === 'document')
 
@@ -217,6 +223,13 @@ function selectPage(pageNumber: number) {
   selectedPage.value = pageNumber
 }
 
+function useMaximumDpi() {
+  if (maximumDpi.value === undefined) return
+  dpiMode.value = 'custom'
+  customDpi.value = maximumDpi.value
+  void nextTick(() => customDpiInput.value?.focus())
+}
+
 function cancel() {
   loadController?.abort()
   emit('cancel')
@@ -290,7 +303,7 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
 
       <div v-if="loading" class="pdf-import-loading" role="status">Lendo páginas e preparando miniaturas…</div>
 
-      <form v-else-if="pages.length" class="pdf-import-body" @submit.prevent="confirm">
+      <div v-else-if="pages.length" class="pdf-import-body">
         <aside class="pdf-import-options">
           <label>
             Qualidade
@@ -303,7 +316,16 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
           </label>
           <label v-if="dpiMode === 'custom'">
             Resolução
-            <input v-model.number="customDpi" :disabled="props.busy" max="600" min="36" step="1" type="number" />
+            <input
+              ref="customDpiInput"
+              v-model.number="customDpi"
+              :disabled="props.busy"
+              max="600"
+              min="36"
+              step="1"
+              type="number"
+              @keydown.enter.prevent.stop="customDpiInput?.blur()"
+            />
           </label>
           <fieldset>
             <legend>Fundo</legend>
@@ -318,6 +340,7 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
           <p>
             A página será convertida em pixels. Textos e vetores não permanecerão editáveis.
             <template v-if="opensDocument"> O tamanho final acima será o tamanho do novo documento.</template>
+            <template v-else> O PDF original será preservado no projeto como fonte da camada inteligente.</template>
           </p>
         </aside>
 
@@ -345,15 +368,22 @@ watch(() => [props.open, props.source?.sourceUrl] as const, async ([open]) => {
           </div>
         </section>
 
-        <p v-if="validationError" class="form-error pdf-import-error">{{ validationError }}</p>
+        <div v-if="validationError" class="form-error pdf-import-error">
+          <p>{{ validationError }}</p>
+          <button
+            v-if="maximumDpi !== undefined && effectiveDpi > maximumDpi"
+            type="button"
+            @click="useMaximumDpi"
+          >Usar {{ maximumDpi }} DPI</button>
+        </div>
         <p v-if="props.busy" class="pdf-import-progress" role="status">{{ progress }}</p>
         <footer class="dialog-actions pdf-import-actions">
           <button type="button" @click="cancel">{{ props.busy ? 'Cancelar processamento' : 'Cancelar' }}</button>
-          <button class="primary-button" :disabled="controlsBusy || Boolean(validationError)" type="submit">
+          <button class="primary-button" :disabled="controlsBusy || Boolean(validationError)" type="button" @click="confirm">
             {{ props.busy ? 'Processando…' : opensDocument ? 'Abrir página' : 'Adicionar página' }}
           </button>
         </footer>
-      </form>
+      </div>
 
       <form v-else class="pdf-import-error-state" @submit.prevent="loadDocument">
         <p :class="{ 'form-error': !passwordRequired }">{{ errorText || 'O PDF não contém páginas disponíveis.' }}</p>

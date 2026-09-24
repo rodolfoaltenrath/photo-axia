@@ -32,6 +32,29 @@ export function normalizePDFDPI(value: number) {
   return Math.max(36, Math.min(600, Math.round(value)))
 }
 
+function pdfPageFitsImportLimits(page: Pick<PDFPageSize, 'widthPoints' | 'heightPoints'>, dpi: number) {
+  const pixels = pdfPagePixelSize(page, dpi)
+  return pixels.width <= MAX_DOCUMENT_DIMENSION &&
+    pixels.height <= MAX_DOCUMENT_DIMENSION &&
+    pixels.width * pixels.height <= MAX_DOCUMENT_PIXELS &&
+    pixels.width * pixels.height * 4 <= MAX_PDF_PAGE_RASTER_BYTES
+}
+
+/** Returns the highest whole DPI that can be rasterized, or undefined when 36 DPI is too large. */
+export function maximumPDFImportDPI(page: Pick<PDFPageSize, 'widthPoints' | 'heightPoints'>) {
+  const minimum = 36
+  const maximum = 600
+  if (!pdfPageFitsImportLimits(page, minimum)) return undefined
+  let accepted = minimum
+  let rejected = maximum + 1
+  while (accepted + 1 < rejected) {
+    const candidate = Math.floor((accepted + rejected) / 2)
+    if (pdfPageFitsImportLimits(page, candidate)) accepted = candidate
+    else rejected = candidate
+  }
+  return accepted
+}
+
 export function normalizePDFPages(pages: readonly number[], pageCount: number) {
   const maximum = Math.max(0, Math.min(MAX_PDF_PAGES, Math.floor(pageCount)))
   return [...new Set(pages.map(Math.floor))]
@@ -48,14 +71,18 @@ export function validatePDFImport(settings: PDFImportSettings, pageSizes: readon
     const page = pageSizes[pageNumber - 1]
     if (!page) return `A página ${pageNumber} não está disponível.`
     const pixels = pdfPagePixelSize(page, dpi)
+    const maximumDpi = maximumPDFImportDPI(page)
+    const suggestion = maximumDpi === undefined
+      ? ' Mesmo 36 DPI ultrapassa o limite; escolha outra página ou recorte o PDF antes de importar.'
+      : ` Escolha no máximo ${maximumDpi} DPI.`
     if (pixels.width > MAX_DOCUMENT_DIMENSION || pixels.height > MAX_DOCUMENT_DIMENSION) {
-      return `A página ${pageNumber} ultrapassa 16.384 pixels em uma das dimensões nessa resolução.`
+      return `A página ${pageNumber} ultrapassa 16.384 pixels em uma das dimensões nessa resolução.${suggestion}`
     }
     if (pixels.width * pixels.height > MAX_DOCUMENT_PIXELS) {
-      return `A página ${pageNumber} ultrapassa o limite de 64 megapixels nessa resolução.`
+      return `A página ${pageNumber} ultrapassa o limite de 64 megapixels nessa resolução.${suggestion}`
     }
     if (pixels.width * pixels.height * 4 > MAX_PDF_PAGE_RASTER_BYTES) {
-      return `A página ${pageNumber} usaria mais de 48 MB na memória nessa resolução. Escolha uma qualidade menor.`
+      return `A página ${pageNumber} usaria mais de 48 MB na memória nessa resolução.${suggestion}`
     }
   }
   return ''

@@ -6,7 +6,8 @@ import type {
   ImportedImage,
   LayerItem,
   LayerTransform,
-  NewDocumentSettings
+  NewDocumentSettings,
+  PDFSmartSource
 } from '../types/editor.ts'
 
 export const MEDIA_DOCUMENT_FALLBACK_DPI = 72
@@ -110,4 +111,16 @@ export function createPlacedImageSmartLayer(
     },
     transform: { ...transform }
   }
+}
+
+/** Cria uma camada inteligente cuja imagem é cache, mas cujo PDF segue preservado. */
+export function createPlacedPDFSmartLayer(
+  image: ImportedImage,
+  pdf: PDFSmartSource,
+  document: Pick<DocumentSpec, 'colorSpace' | 'layerStyleGlobalLight'>,
+  transform: LayerTransform
+) {
+  const layer = createPlacedImageSmartLayer(image, document, transform)
+  layer.smart!.pdf = { ...pdf, cacheLayerId: layer.smart!.layers[0]!.id }
+  return layer
 }

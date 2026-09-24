@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   MAX_PDF_PAGE_RASTER_BYTES,
   estimatePDFImportBytes,
+  maximumPDFImportDPI,
   normalizePDFDPI,
   normalizePDFPages,
   pdfPagePixelSize,
@@ -32,6 +33,15 @@ test('exige uma única página e bloqueia raster acima do limite de memória do 
   assert.match(validatePDFImport({ background: 'white', dpi: 150, pages: [1] }, [aboveMemoryLimit]), /mais de 48 MB/)
   const huge = { pageNumber: 1, widthPoints: 20_000, heightPoints: 20_000 }
   assert.match(validatePDFImport({ background: 'white', dpi: 600, pages: [1] }, [huge]), /16\.384|64 megapixels/)
+})
+
+test('informa o maior DPI seguro sem ultrapassar os limites do raster', () => {
+  const aboveMemoryLimit = { pageNumber: 1, widthPoints: 3_000, heightPoints: 1_000 }
+  const maximum = maximumPDFImportDPI(aboveMemoryLimit)
+  assert.ok(maximum)
+  assert.equal(validatePDFImport({ background: 'white', dpi: maximum, pages: [1] }, [aboveMemoryLimit]), '')
+  assert.match(validatePDFImport({ background: 'white', dpi: maximum + 1, pages: [1] }, [aboveMemoryLimit]), new RegExp(`no máximo ${maximum} DPI`))
+  assert.equal(maximumPDFImportDPI({ pageNumber: 1, widthPoints: 100_000, heightPoints: 100_000 }), undefined)
 })
 
 test('estima o uso RGBA da página selecionada', () => {

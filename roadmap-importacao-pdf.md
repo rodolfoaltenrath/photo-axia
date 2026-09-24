@@ -83,8 +83,16 @@ O mantenedor usa o editor diariamente e valida a importação com documentos rea
 durante esse uso. Achados práticos devem virar casos de regressão automatizados quando
 reproduzíveis; não há um roteiro manual separado a manter.
 
+## Correção — 2026-09-24
+
+- O campo de DPI personalizado não submete mais o formulário quando o usuário pressiona
+  `Enter`; a janela continua aberta para que a resolução seja revisada antes de importar.
+- Quando a resolução ultrapassa algum limite, o diálogo calcula o maior DPI inteiro
+  compatível com dimensões, megapixels e memória e oferece o botão `Usar N DPI`.
+- Teste automatizado cobre o limite calculado e a mensagem de orientação.
+
 ## Possíveis evoluções posteriores
 
 - Abrir cada página como documento separado quando o editor suportar múltiplos documentos.
-- Manter o PDF como camada inteligente para trocar DPI sem perda acumulada.
+- Re-renderizar a fonte preservada da camada PDF inteligente em outro DPI, sem perda acumulada.
 - Importação vetorial/semântica de texto e formas, tratada como projeto independente.

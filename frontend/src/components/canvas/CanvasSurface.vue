@@ -142,6 +142,9 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
       v-if="view.selection"
       :document-height="view.documentHeight"
       :document-width="view.documentWidth"
+      :scale="view.scale"
+      :animate="view.selectionOverlayAnimated"
+      :reduced-detail="view.selectionOverlayReducedDetail"
       :selection="view.selection"
     />
     <SelectionOverlay
@@ -149,6 +152,9 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
       class="selection-overlay--preview"
       :document-height="view.documentHeight"
       :document-width="view.documentWidth"
+      :scale="view.scale"
+      :animate="view.selectionOverlayAnimated"
+      :reduced-detail="view.selectionOverlayReducedDetail"
       :selection="view.quickSelectionResultPreview"
     />
     <svg

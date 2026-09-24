@@ -26,6 +26,7 @@ export function useCanvasNavigation(options: CanvasNavigationOptions) {
   const viewportScroll = ref({ left: 0, top: 0 })
   const visualZoom = ref(options.zoom())
   const zoomTarget = ref(options.zoom())
+  const isWheelZooming = ref(false)
   const viewportSize = ref({ width: 1, height: 1 })
   const isViewportReady = ref(false)
 
@@ -157,6 +158,7 @@ export function useCanvasNavigation(options: CanvasNavigationOptions) {
     wheelZoomFrame = 0
     wheelZoomFrameTime = 0
     wheelZoomAnchor = undefined
+    isWheelZooming.value = false
   }
 
   function animateWheelZoom(timestamp: number) {
@@ -179,6 +181,7 @@ export function useCanvasNavigation(options: CanvasNavigationOptions) {
       wheelZoomFrameTime = 0
       wheelZoomAnchor = undefined
       options.emitZoom(target)
+      isWheelZooming.value = false
       return
     }
 
@@ -269,6 +272,7 @@ export function useCanvasNavigation(options: CanvasNavigationOptions) {
 
     if (event.ctrlKey || event.metaKey || event.altKey) {
       event.preventDefault()
+      isWheelZooming.value = true
       zoomTarget.value = wheelZoomLevel(zoomTarget.value, event.deltaY)
       wheelZoomAnchor = { clientX: event.clientX, clientY: event.clientY }
       startWheelZoomAnimation()
@@ -325,6 +329,7 @@ export function useCanvasNavigation(options: CanvasNavigationOptions) {
     handleNativeScroll,
     handleWheel,
     isViewportReady,
+    isWheelZooming,
     pasteboardStyle,
     requestZoom,
     scale,

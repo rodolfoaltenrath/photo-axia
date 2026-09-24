@@ -205,7 +205,7 @@ export function historyDeltaObjectUrls(delta: EditorHistoryDelta) {
   const urls = new Set<string>()
   const collect = (layer: Partial<LayerItem>) => {
     for (const item of historyLayerTree(layer)) {
-      for (const source of [item.image?.sourceUrl, item.image?.previewUrl]) {
+      for (const source of [item.image?.sourceUrl, item.image?.previewUrl, item.smart?.pdf?.sourceUrl]) {
         if (source?.startsWith('blob:')) urls.add(source)
       }
       for (const asset of layerStylePatternAssets(item.styles)) {

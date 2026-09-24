@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	axiaFormatVersion       = 3
+	axiaFormatVersion       = 4
 	axiaMinimumReadVersion  = 1
 	maxProjectManifestBytes = 8 * 1024 * 1024
 	maxProjectAssetBytes    = int64(1024 * 1024 * 1024)
@@ -239,7 +239,7 @@ func safeArchiveAssetPath(path string) bool {
 }
 
 func supportedProjectMime(mimeType string) bool {
-	return mimeType == "image/png" || mimeType == "image/jpeg" || mimeType == "image/gif"
+	return mimeType == "image/png" || mimeType == "image/jpeg" || mimeType == "image/gif" || mimeType == "application/pdf"
 }
 
 func imageFormatMime(format string) string {
@@ -261,6 +261,22 @@ func validateProjectImage(source io.ReadSeeker, asset axiaArchiveAsset) error {
 		return fmt.Errorf("asset %s diverge do manifesto", asset.ID)
 	}
 	return nil
+}
+
+func validateProjectPDF(source io.ReadSeeker, asset axiaArchiveAsset) error {
+	header := make([]byte, 5)
+	if _, err := io.ReadFull(source, header); err != nil || string(header) != "%PDF-" {
+		return fmt.Errorf("asset %s nao contem um PDF valido", asset.ID)
+	}
+	_, err := source.Seek(0, io.SeekStart)
+	return err
+}
+
+func validateProjectAsset(source io.ReadSeeker, asset axiaArchiveAsset) error {
+	if asset.MimeType == "application/pdf" {
+		return validateProjectPDF(source, asset)
+	}
+	return validateProjectImage(source, asset)
 }
 
 func (a *App) takeProjectSaveTarget(token string) (string, bool) {
@@ -396,7 +412,7 @@ func (a *App) writeAxiaProject(target string, manifestData []byte, manifest axia
 			source.Close()
 			return fmt.Errorf("asset %s excede o limite permitido", asset.ID)
 		}
-		if err := validateProjectImage(source, asset); err != nil {
+		if err := validateProjectAsset(source, asset); err != nil {
 			source.Close()
 			return err
 		}
@@ -529,7 +545,7 @@ func (a *App) openAxiaProject(path string) (result OpenedAxiaProject, returnErr 
 		if err != nil {
 			return result, err
 		}
-		if err := validateProjectImage(file, asset); err != nil {
+		if err := validateProjectAsset(file, asset); err != nil {
 			file.Close()
 			return result, err
 		}

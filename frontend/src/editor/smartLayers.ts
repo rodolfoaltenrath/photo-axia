@@ -71,6 +71,7 @@ export function smartLayerContentHash(content: SmartLayerContent) {
     resolutionDpi: content.resolutionDpi,
     colorSpace: content.colorSpace,
     background: content.background,
+    pdf: content.pdf,
     layerStyleGlobalLight: content.layerStyleGlobalLight,
     layers: content.layers.map(smartContentLayerIdentity)
   }))
@@ -101,6 +102,7 @@ export function cloneSmartLayerContent(content?: SmartLayerContent): SmartLayerC
   if (!content) return undefined
   return {
     ...content,
+    pdf: content.pdf ? { ...content.pdf } : undefined,
     layerStyleGlobalLight: { ...content.layerStyleGlobalLight },
     layers: content.layers.map(cloneSmartLayerSource)
   }

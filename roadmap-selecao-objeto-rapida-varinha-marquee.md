@@ -1124,3 +1124,25 @@ Não incluir esses itens no MVP sem decisão explícita e atualização deste ro
   portanto, não há resultado cancelado sendo publicado nem cache sendo reutilizado após
   uma falha.
 - Validação: 414 testes frontend e build TypeScript/Vite de produção aprovados.
+
+### 2026-09-24 — Overlay de seleção estável durante zoom
+
+- O contorno de seleção agora converte espessura, dash e deslocamento da animação para
+  unidades do documento a partir do zoom atual. Como a superfície usa `transform: scale`,
+  isto preserva uma linha de um pixel visual, em vez de ampliar a linha junto com a imagem.
+- Durante zoom contínuo, a animação é pausada. Seleções por pixels com mais de 2.000
+  spans também mantêm o tracejado estático: isso evita repintar milhares de arestas a
+  cada quadro, sem ocultar nem simplificar a máscara selecionada.
+- Adicionados testes para a métrica visual e a política de animação. Validação: 416
+  testes frontend e build TypeScript/Vite de produção aprovados.
+
+### 2026-09-24 — Zoom com seleção por pixels: nível de detalhe interativo
+
+- A pausa da animação não era suficiente: o SVG ainda precisava rasterizar o contorno
+  completo da Varinha, potencialmente com milhares de arestas, em cada frame de zoom.
+- Durante zoom contínuo, a seleção pixelada agora usa somente o retângulo de seus
+  limites no mesmo espaço transformado da camada. Ao terminar o zoom, o contorno
+  preciso volta automaticamente; a máscara, os pixels selecionados e as operações não
+  sofrem nenhuma alteração.
+- Adicionado teste para a troca de contorno detalhado por contorno interativo.
+  Validação: 420 testes frontend e build TypeScript/Vite de produção aprovados.
