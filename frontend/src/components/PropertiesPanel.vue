@@ -73,15 +73,43 @@ watch(
         </label>
 
         <label>
+          Tipo
+          <select
+            :value="activeLayer.text.layoutMode ?? 'point'"
+            @change="$emit('update:text', { layoutMode: ($event.target as HTMLSelectElement).value as TextLayerContent['layoutMode'] })"
+          >
+            <option value="point">Texto pontual</option>
+            <option value="paragraph">Texto de parágrafo</option>
+          </select>
+        </label>
+
+        <label v-if="(activeLayer.text.layoutMode ?? 'point') === 'paragraph'">
+          Largura do parágrafo
+          <input
+            :value="activeLayer.text.baseWidth"
+            max="16384"
+            min="1"
+            type="number"
+            @input="$emit('update:text', { baseWidth: Number(($event.target as HTMLInputElement).value) })"
+          />
+        </label>
+
+        <label>
           Fonte
           <select
             :value="activeLayer.text.fontFamily"
             @change="$emit('update:text', { fontFamily: ($event.target as HTMLSelectElement).value })"
           >
             <option value="Arial, sans-serif">Arial</option>
+            <option value="Helvetica, Arial, sans-serif">Helvetica</option>
             <option value="Verdana, sans-serif">Verdana</option>
+            <option value="Tahoma, sans-serif">Tahoma</option>
+            <option value="Trebuchet MS, sans-serif">Trebuchet MS</option>
             <option value="Georgia, serif">Georgia</option>
+            <option value="Times New Roman, serif">Times New Roman</option>
             <option value="'Courier New', monospace">Courier New</option>
+            <option value="Impact, sans-serif">Impact</option>
+            <option value="system-ui, sans-serif">Sistema</option>
           </select>
         </label>
 
@@ -108,6 +136,16 @@ watch(
               <option :value="700">Negrito</option>
             </select>
           </label>
+          <label>
+            Estilo
+            <select
+              :value="activeLayer.text.fontStyle ?? 'normal'"
+              @change="$emit('update:text', { fontStyle: ($event.target as HTMLSelectElement).value as 'normal' | 'italic' })"
+            >
+              <option value="normal">Normal</option>
+              <option value="italic">Itálico</option>
+            </select>
+          </label>
         </div>
 
         <div class="property-grid">
@@ -131,6 +169,17 @@ watch(
               @input="$emit('update:text', { lineHeight: Number(($event.target as HTMLInputElement).value) })"
             />
           </label>
+          <label>
+            Espaçamento
+            <input
+              :value="activeLayer.text.letterSpacing ?? 0"
+              max="1000"
+              min="-100"
+              step="0.1"
+              type="number"
+              @input="$emit('update:text', { letterSpacing: Number(($event.target as HTMLInputElement).value) })"
+            />
+          </label>
         </div>
 
         <label>
@@ -142,8 +191,30 @@ watch(
             <option value="left">Esquerda</option>
             <option value="center">Centro</option>
             <option value="right">Direita</option>
+            <option value="justify">Justificado</option>
           </select>
         </label>
+        <div class="property-grid">
+          <label>
+            Decoração
+            <select
+              :value="activeLayer.text.decoration ?? 'none'"
+              @change="$emit('update:text', { decoration: ($event.target as HTMLSelectElement).value as TextLayerContent['decoration'] })"
+            >
+              <option value="none">Nenhuma</option>
+              <option value="underline">Sublinhado</option>
+              <option value="line-through">Tachado</option>
+            </select>
+          </label>
+          <label class="property-checkbox">
+            <input
+              :checked="activeLayer.text.textTransform === 'uppercase'"
+              type="checkbox"
+              @change="$emit('update:text', { textTransform: ($event.target as HTMLInputElement).checked ? 'uppercase' : 'none' })"
+            />
+            Caixa alta
+          </label>
+        </div>
       </section>
 
       <section

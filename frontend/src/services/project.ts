@@ -287,6 +287,24 @@ function restoreText(value: unknown): TextLayerContent | undefined {
   if (!fontSize || !fontWeight || !lineHeight || !baseWidth || !baseHeight) throw new Error('Camada de texto inválida.')
   const alignment = text.alignment
   if (alignment !== 'left' && alignment !== 'center' && alignment !== 'right') throw new Error('Alinhamento de texto inválido.')
+  const layoutMode = text.layoutMode
+  if (layoutMode !== undefined && layoutMode !== 'point' && layoutMode !== 'paragraph') {
+    throw new Error('Modo de layout de texto inválido.')
+  }
+  const fontStyle = text.fontStyle
+  if (fontStyle !== undefined && fontStyle !== 'normal' && fontStyle !== 'italic') throw new Error('Estilo de fonte inválido.')
+  const decoration = text.decoration
+  if (decoration !== undefined && decoration !== 'none' && decoration !== 'underline' && decoration !== 'line-through') {
+    throw new Error('Decoração de texto inválida.')
+  }
+  const textTransform = text.textTransform
+  if (textTransform !== undefined && textTransform !== 'none' && textTransform !== 'uppercase') {
+    throw new Error('Transformação de texto inválida.')
+  }
+  const letterSpacing = finiteNumber(text.letterSpacing, 0)
+  if (letterSpacing === undefined || letterSpacing < -100 || letterSpacing > 1_000) {
+    throw new Error('Espaçamento entre letras inválido.')
+  }
   return {
     content: requireString(text.content, 'Conteúdo de texto', true),
     fontFamily: requireString(text.fontFamily, 'Fonte'),
@@ -296,7 +314,12 @@ function restoreText(value: unknown): TextLayerContent | undefined {
     alignment,
     lineHeight,
     baseWidth,
-    baseHeight
+    baseHeight,
+    layoutMode: layoutMode ?? 'point',
+    fontStyle: fontStyle ?? 'normal',
+    letterSpacing,
+    decoration: decoration ?? 'none',
+    textTransform: textTransform ?? 'none'
   }
 }
 

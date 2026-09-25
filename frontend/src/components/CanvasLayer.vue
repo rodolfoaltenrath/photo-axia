@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch, type CSSProperties } from 'vue'
 import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../types/editor'
 import { layerCompositingStyle } from '../editor/blendModes'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
@@ -13,6 +13,7 @@ const props = defineProps<{
   grouped: boolean
   layer: LayerItem
   layerStyleGlobalLight: LayerStyleGlobalLight
+  textEditor?: { value: string; selectAll: boolean }
   transform: LayerTransform
 }>()
 
@@ -20,9 +21,13 @@ const emit = defineEmits<{
   (event: 'pointerdown', pointerEvent: PointerEvent): void
   (event: 'imageLoaded', layerId: string, source: string): void
   (event: 'imageError', layerId: string, source: string): void
+  (event: 'textCancel'): void
+  (event: 'textCommit'): void
+  (event: 'textInput', value: string): void
 }>()
 
 const layerRoot = ref<HTMLElement | null>(null)
+const textEditorElement = ref<HTMLTextAreaElement | null>(null)
 const {
   desiredImageSource,
   geometryForSource,
@@ -82,7 +87,7 @@ const layerStyle = computed(() => {
   }
 })
 
-const textStyle = computed(() => {
+const textStyle = computed<CSSProperties | undefined>(() => {
   const text = props.layer.text
   if (!text) return undefined
 
@@ -93,8 +98,14 @@ const textStyle = computed(() => {
     fontFamily: text.fontFamily,
     fontSize: `${text.fontSize}px`,
     fontWeight: text.fontWeight,
+    fontStyle: text.fontStyle ?? 'normal',
+    letterSpacing: `${text.letterSpacing ?? 0}px`,
     lineHeight: text.lineHeight,
     textAlign: text.alignment,
+    textDecoration: text.decoration ?? 'none',
+    textTransform: text.textTransform ?? 'none',
+    whiteSpace: text.layoutMode === 'paragraph' ? 'pre-wrap' : 'pre',
+    overflowWrap: text.layoutMode === 'paragraph' ? 'break-word' : 'normal',
     transform: `scale(${props.transform.width / text.baseWidth}, ${props.transform.height / text.baseHeight})`
   }
 })
@@ -108,6 +119,29 @@ const shapeViewBox = computed(() => {
   const shape = props.layer.shape
   return shape ? `0 0 ${shape.baseWidth} ${shape.baseHeight}` : undefined
 })
+
+watch(
+  () => props.textEditor,
+  async (editor) => {
+    if (!editor) return
+    await nextTick()
+    textEditorElement.value?.focus()
+    if (editor.selectAll) textEditorElement.value?.select()
+  },
+  { flush: 'post' }
+)
+
+function handleTextEditorKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    emit('textCancel')
+    return
+  }
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault()
+    emit('textCommit')
+  }
+}
 </script>
 
 <template>
@@ -145,6 +179,19 @@ const shapeViewBox = computed(() => {
         @load="handleImageLoad(slot as 0 | 1, $event)"
       />
     </template>
+    <textarea
+      v-else-if="layer.kind === 'text' && layer.text && textEditor"
+      ref="textEditorElement"
+      class="document-text document-text-editor"
+      :style="textStyle"
+      :value="textEditor.value"
+      aria-label="Editar texto"
+      spellcheck="false"
+      @blur="emit('textCommit')"
+      @input="emit('textInput', ($event.target as HTMLTextAreaElement).value)"
+      @keydown.stop="handleTextEditorKeydown"
+      @pointerdown.stop
+    ></textarea>
     <div
       v-else-if="layer.kind === 'text' && layer.text"
       class="document-text"

@@ -2,7 +2,9 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import {
   EXPORT_FORMAT_CAPABILITIES,
+  exportPixelSize,
   normalizeExportSettings,
+  validateExportPixelSize,
   type ExportFormat,
   type ExportSettings
 } from '../editor/exportSettings'
@@ -30,7 +32,8 @@ const formatInput = ref<HTMLSelectElement | null>(null)
 const form = reactive({
   format: 'png' as ExportFormat,
   qualityPercent: 90,
-  matteColor: '#ffffff'
+  matteColor: '#ffffff',
+  resolutionDpi: 72
 })
 const capabilities = computed(() => EXPORT_FORMAT_CAPABILITIES[form.format])
 const hasTransparency = computed(() => props.background === 'transparent')
@@ -40,6 +43,10 @@ const formatHelp = computed(() => ({
   webp: 'Boa opção para sites: costuma ficar pequeno e pode manter transparência.'
 }[form.format]))
 const controlsBusy = computed(() => props.busy || props.estimating)
+const outputSize = computed(() => exportPixelSize(props.width, props.height, props.resolutionDpi, form.resolutionDpi))
+const resolutionError = computed(() => validateExportPixelSize(
+  props.width, props.height, props.resolutionDpi, form.resolutionDpi
+))
 const estimatedSize = computed(() => {
   if (props.estimatedBytes === null) return ''
   const units = ['bytes', 'KB', 'MB', 'GB']
@@ -56,7 +63,7 @@ function currentSettings() {
   return normalizeExportSettings({
     format: form.format,
     quality: form.qualityPercent / 100,
-    resolutionDpi: props.resolutionDpi,
+    resolutionDpi: form.resolutionDpi,
     preserveMetadata: form.format === 'png',
     matteColor: form.matteColor
   })
@@ -67,12 +74,12 @@ function cancel() {
 }
 
 function confirm() {
-  if (controlsBusy.value) return
+  if (controlsBusy.value || resolutionError.value) return
   emit('export', currentSettings())
 }
 
 function estimate() {
-  if (controlsBusy.value) return
+  if (controlsBusy.value || resolutionError.value) return
   emit('estimate', currentSettings())
 }
 
@@ -100,11 +107,12 @@ function handleKeydown(event: KeyboardEvent) {
 
 watch(() => props.open, async (open) => {
   if (!open) return
+  form.resolutionDpi = props.resolutionDpi
   await nextTick()
   formatInput.value?.focus()
 })
 
-watch(() => [form.format, form.qualityPercent, form.matteColor], () => emit('settings-change'))
+watch(() => [form.format, form.qualityPercent, form.matteColor, form.resolutionDpi], () => emit('settings-change'))
 </script>
 
 <template>
@@ -121,7 +129,7 @@ watch(() => [form.format, form.qualityPercent, form.matteColor], () => emit('set
       <header class="dialog-header">
         <div>
           <h2 id="export-image-title">Exportar imagem</h2>
-          <span>Tamanho: {{ width }} × {{ height }} pixels</span>
+          <span>Tamanho: {{ outputSize.width }} × {{ outputSize.height }} pixels</span>
         </div>
         <button :disabled="controlsBusy" type="button" title="Fechar" aria-label="Fechar" @click="cancel">×</button>
       </header>
@@ -143,6 +151,13 @@ watch(() => [form.format, form.qualityPercent, form.matteColor], () => emit('set
           <input v-model.number="form.qualityPercent" :disabled="controlsBusy" max="100" min="1" step="1" type="range" />
         </label>
 
+        <label>
+          Resolução de exportação (DPI)
+          <input v-model.number="form.resolutionDpi" :disabled="controlsBusy" max="2400" min="1" step="1" type="number" @keydown.enter.prevent.stop="($event.target as HTMLInputElement).blur()" />
+        </label>
+
+        <p class="export-format-help">O arquivo será renderizado em {{ outputSize.width }} × {{ outputSize.height }} pixels.</p>
+
         <label v-if="!capabilities.supportsAlpha && hasTransparency">
           Fundo para transparência
           <span class="export-matte-control">
@@ -152,25 +167,26 @@ watch(() => [form.format, form.qualityPercent, form.matteColor], () => emit('set
         </label>
 
         <dl class="export-summary">
-          <div><dt>Tamanho da imagem</dt><dd>{{ width }} × {{ height }} pixels</dd></div>
+          <div><dt>Tamanho da imagem</dt><dd>{{ outputSize.width }} × {{ outputSize.height }} pixels</dd></div>
           <div><dt>Fundo transparente</dt><dd>{{ capabilities.supportsAlpha ? 'será mantido' : 'será substituído' }}</dd></div>
-          <div><dt>Qualidade para impressão</dt><dd>{{ form.format === 'png' ? `${resolutionDpi} pixels por polegada` : 'não será incluída' }}</dd></div>
+          <div><dt>Qualidade para impressão</dt><dd>{{ form.format === 'png' ? `${form.resolutionDpi} pixels por polegada` : 'não será incluída' }}</dd></div>
         </dl>
 
         <p v-if="estimatedBytes !== null" class="export-size-note" role="status">
           Tamanho aproximado: <strong>{{ estimatedSize }}</strong>
           <span v-if="form.format === 'png'"> (pode ficar um pouco menor ao salvar)</span>
         </p>
-        <button v-else class="export-estimate-button" :disabled="controlsBusy" type="button" @click="estimate">
+        <button v-else class="export-estimate-button" :disabled="controlsBusy || Boolean(resolutionError)" type="button" @click="estimate">
           {{ estimating ? 'Calculando…' : 'Calcular tamanho do arquivo' }}
         </button>
         <p v-if="form.format === 'jpeg' && hasTransparency" class="export-warning" role="status">
           JPEG não suporta transparência. As áreas transparentes usarão a cor de fundo escolhida.
         </p>
+        <p v-if="resolutionError" class="form-error" role="alert">{{ resolutionError }}</p>
 
         <footer class="dialog-actions">
           <button :disabled="controlsBusy" type="button" @click="cancel">Cancelar</button>
-          <button class="primary-button" :disabled="controlsBusy" type="submit">
+          <button class="primary-button" :disabled="controlsBusy || Boolean(resolutionError)" type="submit">
             {{ busy ? 'Exportando…' : 'Exportar' }}
           </button>
         </footer>

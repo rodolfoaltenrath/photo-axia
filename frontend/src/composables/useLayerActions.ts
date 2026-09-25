@@ -54,9 +54,13 @@ export function useLayerActions(options: LayerActionsOptions) {
     options.statusText.value = 'Nova camada criada'
   }
 
-  function addTextLayer(point: { x: number; y: number }) {
+  function addTextLayer(point: { x: number; y: number }, paragraphWidth?: number) {
     const id = crypto.randomUUID()
     const text = { ...DEFAULT_TEXT_LAYER }
+    if (paragraphWidth && paragraphWidth > 2) {
+      text.layoutMode = 'paragraph'
+      text.baseWidth = Math.min(16_384, Math.max(1, Math.round(paragraphWidth)))
+    }
     const size = measureTextLayer(text)
     text.baseWidth = size.width
     text.baseHeight = size.height
@@ -107,6 +111,17 @@ export function useLayerActions(options: LayerActionsOptions) {
     text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
     text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
     text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
+    text.layoutMode = text.layoutMode === 'paragraph' ? 'paragraph' : 'point'
+    text.baseWidth = Math.min(16_384, Math.max(1, Number.isFinite(text.baseWidth) ? text.baseWidth : previous.baseWidth))
+    text.fontStyle = text.fontStyle === 'italic' ? 'italic' : 'normal'
+    text.letterSpacing = Math.min(1000, Math.max(-100,
+      typeof text.letterSpacing === 'number' && Number.isFinite(text.letterSpacing) ? text.letterSpacing : 0
+    ))
+    text.decoration = text.decoration === 'underline' || text.decoration === 'line-through' ? text.decoration : 'none'
+    text.textTransform = text.textTransform === 'uppercase' ? 'uppercase' : 'none'
+    text.alignment = text.alignment === 'center' || text.alignment === 'right' || text.alignment === 'justify'
+      ? text.alignment
+      : 'left'
     const size = measureTextLayer(text)
     text.baseWidth = size.width
     text.baseHeight = size.height

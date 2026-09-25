@@ -72,6 +72,7 @@ import { useLayerStylePresets } from './composables/useLayerStylePresets'
 import { useProjectLifecycle } from './composables/useProjectLifecycle'
 import { useProjectPersistence } from './composables/useProjectPersistence'
 import { clampZoom } from './editor/viewport'
+import { maximumPDFImportDPI, normalizePDFDPI } from './editor/pdfImport'
 import {
   createNativePixelLayer,
   createPlacedImageSmartLayer,
@@ -328,6 +329,7 @@ const {
   errorText,
   isBusy,
   layers,
+  preparePDFSmartLayerForExport,
   refreshSmartLayerSource,
   settleRasterMutation,
   showError,
@@ -4189,6 +4191,93 @@ async function performPDFRerender(request: { dpi: number; password: string }) {
   }
 }
 
+/**
+ * Cria uma versão temporária de alta resolução para a exportação. Não toca no
+ * cache de trabalho nem no histórico: ao terminar, todos os URLs temporários
+ * são liberados e a camada exibida continua exatamente como estava.
+ */
+async function preparePDFSmartLayerForExport(layer: LayerItem, outputScale: number) {
+  const content = cloneSmartLayerContent(layer.smart)
+  if (layer.kind !== 'smart' || !content?.pdf) {
+    throw new Error('A camada PDF não possui a origem necessária para exportação.')
+  }
+
+  const pdf = content.pdf
+  const pageDescriptor = {
+    pageNumber: pdf.pageNumber,
+    widthPoints: pdf.widthPoints,
+    heightPoints: pdf.heightPoints
+  }
+  const maximumDpi = maximumPDFImportDPI(pageDescriptor)
+  if (!maximumDpi) {
+    throw new Error('A página PDF excede o limite seguro mesmo na menor resolução de exportação.')
+  }
+  const sourceDpi = Math.max(1, Math.round(content.resolutionDpi))
+  const requestedDpi = normalizePDFDPI(sourceDpi * Math.max(1, outputScale))
+  // O limite protege o pico de memória de um canvas único. Enquanto mosaicos
+  // não existem, a melhor saída é usar o maior raster seguro do PDF, em vez de
+  // voltar ao cache de baixa resolução ou falhar a exportação inteira.
+  const exportDpi = Math.min(requestedDpi, maximumDpi)
+
+  let document: Awaited<ReturnType<typeof openPDFImport>>['document'] | undefined
+  let cacheImage: ImportedImage | undefined
+  let sourceUrl: string | undefined
+  try {
+    statusText.value = `Renderizando “${layer.name}” a partir do PDF original…`
+    const opened = await openPDFImport(pdf.sourceUrl)
+    document = opened.document
+    if (!opened.pages.some((page) => page.pageNumber === pdf.pageNumber)) {
+      throw new Error(`A página ${pdf.pageNumber} não está disponível no PDF original.`)
+    }
+    const images = await renderPDFPages({
+      background: pdf.background,
+      document,
+      dpi: exportDpi,
+      name: pdf.name,
+      pages: [pdf.pageNumber],
+      pageSizes: opened.pages
+    }, new AbortController().signal)
+    cacheImage = images[0]
+    if (!cacheImage) throw new Error('A página do PDF não gerou uma imagem para exportação.')
+
+    const exportContent = replacePDFSmartLayerCache(content, cacheImage)
+    const rendered = await renderSmartLayer({
+      consumerId: `export-pdf:${activeDocument.value.id}:${layer.id}`,
+      content: exportContent,
+      quality: 'final'
+    })
+    sourceUrl = URL.createObjectURL(rendered.blob)
+    const exportedLayer = cloneLayerState(layer)
+    exportedLayer.smart = exportContent
+    exportedLayer.image = {
+      width: rendered.width,
+      height: rendered.height,
+      mimeType: 'image/png',
+      sourceUrl,
+      byteSize: rendered.blob.size,
+      editToken: rendered.cacheKey
+    }
+    releasePreparedImage(cacheImage.sourceUrl)
+    URL.revokeObjectURL(cacheImage.sourceUrl)
+    cacheImage = undefined
+
+    return {
+      layer: exportedLayer,
+      dispose: () => {
+        if (!sourceUrl) return
+        releasePreparedImage(sourceUrl)
+        URL.revokeObjectURL(sourceUrl)
+      }
+    }
+  } finally {
+    if (cacheImage) {
+      releasePreparedImage(cacheImage.sourceUrl)
+      URL.revokeObjectURL(cacheImage.sourceUrl)
+    }
+    if (document) await closePDFImport(document).catch(() => undefined)
+  }
+}
+
 function showError(error: unknown, fallback: string) {
   errorText.value = error instanceof Error && error.message ? error.message : fallback
   statusText.value = fallback
@@ -4612,7 +4701,8 @@ onBeforeUnmount(() => {
         @update:brush-size="brushSize = $event"
         @sample-color="sampleColor"
         @update-guide="updateGuide"
-        @create-text="addTextLayer"
+        @create-text="addTextLayer($event.point, $event.paragraphWidth)"
+        @commit-text-edit="updateTextLayer($event.layerId, { content: $event.content })"
         @select-layer="selectSingleLayer"
         @move-layers="moveLayerTransforms"
         @transform-cancelled="cancelCurrentImagePlacement"

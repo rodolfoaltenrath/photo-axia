@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { exportFilename, normalizeExportSettings, pngPixelsPerMeter } from '../src/editor/exportSettings.ts'
+import {
+  exportFilename,
+  exportPixelSize,
+  normalizeExportSettings,
+  pngPixelsPerMeter,
+  validateExportPixelSize
+} from '../src/editor/exportSettings.ts'
 
 test('normaliza formato, qualidade, esforço PNG e fundo JPEG', () => {
   assert.deepEqual(normalizeExportSettings({ format: 'png', resolutionDpi: 150 }), {
@@ -23,4 +29,13 @@ test('normaliza nome e extensão conforme o formato', () => {
 test('converte DPI para pixels por metro usados pelo PNG', () => {
   assert.equal(pngPixelsPerMeter(150), 5906)
   assert.equal(pngPixelsPerMeter(300), 11811)
+})
+
+test('converte DPI de exportação em dimensões reais do raster e limita excessos', () => {
+  assert.deepEqual(exportPixelSize(1920, 1080, 72, 300), {
+    width: 8000, height: 4500, scale: 300 / 72
+  })
+  assert.equal(validateExportPixelSize(1920, 1080, 72, 300), '')
+  assert.match(validateExportPixelSize(3840, 2160, 72, 300), /64 megapixels/)
+  assert.match(validateExportPixelSize(20_000, 10, 300, 300), /16\.384/)
 })

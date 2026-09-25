@@ -20,7 +20,7 @@ export type LayerKind = 'pixel' | 'text' | 'shape' | 'smart' | 'adjustment' | 'b
 export type LayerBlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
 export type DocumentUnit = 'px' | 'cm' | 'mm' | 'in'
 export type DocumentBackground = 'transparent' | 'white' | 'black'
-export type TextAlignment = 'left' | 'center' | 'right'
+export type TextAlignment = 'left' | 'center' | 'right' | 'justify'
 
 export interface LayerStyleGlobalLight {
   angle: number
@@ -294,6 +294,10 @@ export interface PDFSmartSource {
   cacheLayerId?: string
 }
 
+export type TextLayoutMode = 'point' | 'paragraph'
+export type TextDecoration = 'none' | 'underline' | 'line-through'
+export type TextTransform = 'none' | 'uppercase'
+
 export interface TextLayerContent {
   content: string
   fontFamily: string
@@ -304,6 +308,12 @@ export interface TextLayerContent {
   lineHeight: number
   baseWidth: number
   baseHeight: number
+  /** Projetos anteriores não possuem este campo e continuam como texto pontual. */
+  layoutMode?: TextLayoutMode
+  fontStyle?: 'normal' | 'italic'
+  letterSpacing?: number
+  decoration?: TextDecoration
+  textTransform?: TextTransform
 }
 
 export interface ImageAsset {

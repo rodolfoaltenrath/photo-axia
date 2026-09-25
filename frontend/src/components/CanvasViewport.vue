@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import CanvasContextBar from './canvas/CanvasContextBar.vue'
 import CanvasSurface from './canvas/CanvasSurface.vue'
 import type { LayerItem, LayerTransform } from '../types/editor'
@@ -83,6 +83,13 @@ const quickSelectionPreview = shallowRef<{
   points: SelectionPoint[]
   combineMode: SelectionCombineMode
 } | null>(null)
+const textEditorSession = ref<{
+  layerId: string
+  initialContent: string
+  value: string
+  selectAll: boolean
+} | null>(null)
+let textCreatePointer: { pointerId: number; start: DocumentPoint; current: DocumentPoint } | undefined
 const {
   documentViewportOffset,
   fitDocument,
@@ -517,6 +524,11 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
   selectionMoveInteraction: selectionMoveInteraction.value,
   selectionMovePreviewStyle: selectionMovePreviewStyle.value,
   smartGuides: smartAlignmentGuides.value,
+  textEditor: textEditorSession.value && {
+    layerId: textEditorSession.value.layerId,
+    value: textEditorSession.value.value,
+    selectAll: textEditorSession.value.selectAll
+  },
   snappedX: snappedGuides.value.x,
   snappedY: snappedGuides.value.y,
   surfaceStyle: surfaceStyle.value,
@@ -558,6 +570,9 @@ const canvasSurfaceActions: CanvasSurfaceActions = {
   startShapeTransformResize,
   startViewportPointer,
   stopPointer,
+  textEditorCancel,
+  textEditorCommit,
+  textEditorInput,
   updatePointer
 }
 
@@ -922,7 +937,8 @@ function startViewportPointer(event: PointerEvent) {
       return
     event.preventDefault()
     event.stopPropagation()
-    emit('createText', point)
+    scroll.setPointerCapture(event.pointerId)
+    textCreatePointer = { pointerId: event.pointerId, start: point, current: point }
     return
   }
   const shouldZoom = event.button === 0 && (props.activeTool === 'zoom' || temporaryZoom)
@@ -959,6 +975,42 @@ function onCanvasContextMenu(event: MouseEvent) {
   if (props.activeTool === 'paint-bucket') event.preventDefault()
 }
 
+function beginTextEditor(layerId: string, selectAll: boolean) {
+  const layer = props.layers.find((item) => item.id === layerId)
+  if (!layer?.text) return
+  textEditorSession.value = {
+    layerId,
+    initialContent: layer.text.content,
+    value: layer.text.content,
+    selectAll
+  }
+}
+
+async function beginNewTextEditor() {
+  await nextTick()
+  const layer = props.layers.find((item) => item.id === props.activeLayerId)
+  if (layer?.kind === 'text') beginTextEditor(layer.id, true)
+}
+
+function textEditorInput(value: string) {
+  if (textEditorSession.value) {
+    textEditorSession.value = { ...textEditorSession.value, value, selectAll: false }
+  }
+}
+
+function textEditorCommit() {
+  const session = textEditorSession.value
+  if (!session) return
+  textEditorSession.value = null
+  if (session.value !== session.initialContent) {
+    emit('commitTextEdit', { layerId: session.layerId, content: session.value })
+  }
+}
+
+function textEditorCancel() {
+  textEditorSession.value = null
+}
+
 function startLayerPointer(event: PointerEvent, layer: LayerItem) {
   if (
     props.isBusy ||
@@ -975,6 +1027,7 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
     event.stopPropagation()
     event.preventDefault()
     emit('selectLayer', layer.id)
+    if (event.detail >= 2) beginTextEditor(layer.id, false)
     return
   }
   if (props.activeTool !== 'move') return
@@ -1003,6 +1056,11 @@ function startLayerPointer(event: PointerEvent, layer: LayerItem) {
 }
 
 function updatePointer(event: PointerEvent) {
+  if (textCreatePointer?.pointerId === event.pointerId) {
+    const point = pointerToDocument(event)
+    if (point) textCreatePointer.current = point
+    return
+  }
   if (colorSamplePointer?.pointerId === event.pointerId) {
     event.preventDefault()
     event.stopPropagation()
@@ -1060,6 +1118,20 @@ function updatePointer(event: PointerEvent) {
 
 function stopPointer(event: PointerEvent) {
   flushInteractionFrame()
+  if (textCreatePointer?.pointerId === event.pointerId) {
+    const draft = textCreatePointer
+    textCreatePointer = undefined
+    if (event.type === 'pointerup') {
+      const width = Math.abs(draft.current.x - draft.start.x)
+      const height = Math.abs(draft.current.y - draft.start.y)
+      emit('createText', {
+        point: { x: Math.min(draft.start.x, draft.current.x), y: Math.min(draft.start.y, draft.current.y) },
+        paragraphWidth: width > 4 || height > 4 ? width : undefined
+      })
+      void beginNewTextEditor()
+    }
+    return
+  }
   if (colorSamplePointer?.pointerId === event.pointerId) {
     flushColorSample()
     colorSamplePointer = undefined

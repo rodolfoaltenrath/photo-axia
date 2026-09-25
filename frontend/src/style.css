@@ -2670,6 +2670,23 @@ html.layer-style-native-window body {
   user-select: none;
 }
 
+.document-text-editor {
+  display: block;
+  box-sizing: border-box;
+  margin: 0;
+  min-width: 1px;
+  min-height: 1px;
+  border: 1px solid #72b5ff;
+  border-radius: 0;
+  outline: 1px solid rgb(114 181 255 / 32%);
+  background: transparent;
+  padding: 0;
+  resize: none;
+  overflow: hidden;
+  pointer-events: auto;
+  user-select: text;
+}
+
 .layer-style-dialog--native-window {
   border: 0;
   border-radius: 0;

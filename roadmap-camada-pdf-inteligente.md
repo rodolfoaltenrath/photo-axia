@@ -52,10 +52,10 @@ Estado: `CONCLUÍDA`
 
 ### Fase 2 — Re-renderização controlada
 
-Estado: `EM ANDAMENTO`
+Estado: `CONCLUÍDA`
 
 - [x] Recriar o cache em DPI escolhido, sem alterar o arquivo original.
-- [ ] Re-renderizar para exportação na resolução solicitada.
+- [x] Re-renderizar para exportação na resolução solicitada.
 - [x] Cancelar o processamento em andamento e manter o cache anterior em caso de falha.
 
 ### Fase 3 — Preview por zoom e mosaicos
@@ -109,3 +109,22 @@ Estado: `NÃO INICIADO`
 - Cancelamento, senha incorreta ou falha de renderização não substituem o cache já
   confirmado. O cache interno passa a ter um identificador persistido, com fallback
   compatível para projetos criados antes desse identificador.
+
+### 2026-09-25 — Exportação a partir da fonte PDF
+
+- O diálogo de exportação agora recebe DPI e mostra as dimensões reais do raster final.
+  O DPI deixou de ser apenas metadado no PNG: 300 DPI gera mais pixels que 72 DPI,
+  sempre dentro de 16.384 px por dimensão e 64 megapixels.
+- Cada camada PDF inteligente visível é reconstruída temporariamente a partir do PDF
+  incorporado na qualidade necessária para a saída. O cache usado no editor, o projeto
+  salvo e o histórico não são modificados.
+- Se um canvas único não comportar a qualidade ideal da página, a exportação usa o maior
+  DPI seguro disponível para o PDF. Mosaicos continuam sendo a próxima fase para remover
+  essa limitação em páginas muito grandes.
+
+### 2026-09-25 — Fase 2 validada na prática
+
+- Re-renderização manual e exportação a partir da fonte PDF foram validadas pelo
+  mantenedor. A camada mantém o PDF incorporado; mudar DPI não reaproveita o PNG anterior.
+- A Fase 3 permanece propositalmente adiada: mosaicos só passam a ser prioridade se PDFs
+  grandes demonstrarem um limite real de memória ou fluidez no uso cotidiano.

@@ -17,7 +17,7 @@ import {
   layerStyleBlendIfUsesUnderlying,
   layerStyleFillOpacity
 } from '../editor/layerStyles.ts'
-import { textFont, textLines } from '../editor/text.ts'
+import { layoutTextLines, textFont } from '../editor/text.ts'
 import { traceShapePath } from '../editor/shape.ts'
 import { sourceScaleFactor } from '../editor/selection.ts'
 import { applyLayerStyleBlendIfUnderlying } from '../editor/layerStyleRaster.ts'
@@ -27,7 +27,12 @@ import {
   releaseLayerStyleRenderConsumer,
   renderLayerStyle
 } from './layerStyleCompositor.ts'
-import { EXPORT_FORMAT_CAPABILITIES, type ExportSettings } from '../editor/exportSettings.ts'
+import {
+  EXPORT_FORMAT_CAPABILITIES,
+  exportPixelSize,
+  validateExportPixelSize,
+  type ExportSettings
+} from '../editor/exportSettings.ts'
 import { pngBlobWithResolution } from './pngMetadata.ts'
 
 interface PreparedLayerRaster {
@@ -253,9 +258,12 @@ function drawPreparedLayer(
       context.clip()
       context.fillStyle = text.color
       context.font = textFont(text)
-      context.textAlign = text.alignment
+      ;(context as unknown as { letterSpacing?: string }).letterSpacing = `${text.letterSpacing ?? 0}px`
+      // Canvas 2D não possui `justify`; o DOM justifica o preview e o núcleo
+      // conservará a linha final alinhada à esquerda até a fase de distribuição.
+      context.textAlign = text.alignment === 'justify' ? 'left' : text.alignment
       context.textBaseline = 'top'
-      for (const [index, line] of textLines(text.content).entries()) {
+      for (const [index, line] of layoutTextLines(text, context).entries()) {
         context.fillText(line, textX, index * lineHeight + (lineHeight - text.fontSize) / 2)
       }
     } else if (layer.shape) {
@@ -414,7 +422,12 @@ export async function renderDocumentExportBlob(
   layers: LayerItem[],
   settings: ExportSettings
 ) {
-  const canvas = await renderDocumentCanvas(document, layers, document.width, document.height, false, 'export')
+  const sizeError = validateExportPixelSize(
+    document.width, document.height, document.resolutionDpi, settings.resolutionDpi
+  )
+  if (sizeError) throw new Error(sizeError)
+  const size = exportPixelSize(document.width, document.height, document.resolutionDpi, settings.resolutionDpi)
+  const canvas = await renderDocumentCanvas(document, layers, size.width, size.height, false, 'export')
   const capabilities = EXPORT_FORMAT_CAPABILITIES[settings.format]
   let outputCanvas = canvas
   if (!capabilities.supportsAlpha && document.background === 'transparent') {

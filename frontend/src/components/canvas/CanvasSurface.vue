@@ -82,10 +82,14 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
             grouped
             :layer="layer"
             :layer-style-global-light="view.layerStyleGlobalLight"
+            :text-editor="view.textEditor?.layerId === layer.id ? view.textEditor : undefined"
             :transform="actions.displayTransform(layer) ?? view.defaultLayerTransform"
             @image-error="actions.handleLayerImageError"
             @image-loaded="actions.handleLayerImageLoaded"
             @pointerdown="actions.startLayerPointer($event, layer)"
+            @text-cancel="actions.textEditorCancel"
+            @text-commit="actions.textEditorCommit"
+            @text-input="actions.textEditorInput"
           />
           <canvas
             v-if="view.brushPreviewStyle && view.activeBrushOperation === 'paint' && view.paintableLayerId === layer.id"

@@ -89,6 +89,7 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
   assert.equal(restored.layers[0].image.resolutionDpiY, 150.01)
   assert.equal(restored.layers[0].image.resolutionSource, 'png-phys')
   assert.equal(restored.layers[2].text.content, 'Axia')
+  assert.equal(restored.layers[2].text.layoutMode, 'point')
   assert.equal(restored.layers[2].transform.rotation, -5)
   assert.deepEqual(restored.guides, projectState().guides)
   assert.equal(restored.view.activeLayerId, 'image-a')

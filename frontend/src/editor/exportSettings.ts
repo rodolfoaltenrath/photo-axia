@@ -23,6 +23,42 @@ export const EXPORT_FORMAT_CAPABILITIES: Record<ExportFormat, ExportFormatCapabi
   webp: { mimeType: 'image/webp', extension: '.webp', supportsAlpha: true, supportsLossyQuality: true }
 }
 
+export const MAX_EXPORT_DIMENSION = 16_384
+export const MAX_EXPORT_PIXELS = 64_000_000
+
+/** Dimensões reais do raster de saída para a resolução escolhida na exportação. */
+export function exportPixelSize(
+  width: number,
+  height: number,
+  documentDpi: number,
+  exportDpi: number
+) {
+  const sourceDpi = Math.max(1, Number.isFinite(documentDpi) ? documentDpi : 72)
+  const targetDpi = Math.max(1, Number.isFinite(exportDpi) ? exportDpi : sourceDpi)
+  const scale = targetDpi / sourceDpi
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+    scale
+  }
+}
+
+export function validateExportPixelSize(
+  width: number,
+  height: number,
+  documentDpi: number,
+  exportDpi: number
+) {
+  const size = exportPixelSize(width, height, documentDpi, exportDpi)
+  if (size.width > MAX_EXPORT_DIMENSION || size.height > MAX_EXPORT_DIMENSION) {
+    return `A resolução escolhida ultrapassa ${MAX_EXPORT_DIMENSION.toLocaleString('pt-BR')} px em uma das dimensões.`
+  }
+  if (size.width * size.height > MAX_EXPORT_PIXELS) {
+    return 'A resolução escolhida ultrapassa o limite seguro de 64 megapixels para exportação.'
+  }
+  return ''
+}
+
 export function normalizeExportSettings(settings: Partial<ExportSettings>): ExportSettings {
   const format: ExportFormat = settings.format && settings.format in EXPORT_FORMAT_CAPABILITIES
     ? settings.format

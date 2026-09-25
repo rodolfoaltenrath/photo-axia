@@ -1,5 +1,7 @@
 # Roadmap — Importação raster de PDF
 
+**Estado final: CONCLUÍDO — APTO PARA ARQUIVAMENTO.**
+
 ## Objetivo
 
 Permitir que o usuário escolha um PDF, visualize suas páginas e importe uma
@@ -96,3 +98,9 @@ reproduzíveis; não há um roteiro manual separado a manter.
 - Abrir cada página como documento separado quando o editor suportar múltiplos documentos.
 - Re-renderizar a fonte preservada da camada PDF inteligente em outro DPI, sem perda acumulada.
 - Importação vetorial/semântica de texto e formas, tratada como projeto independente.
+
+## Encerramento
+
+O fluxo raster de PDF foi aceito em uso prático. A preservação da fonte e a
+re-renderização em outra resolução pertencem ao roadmap separado
+`roadmap-camada-pdf-inteligente.md`; não são pendências desta entrega.

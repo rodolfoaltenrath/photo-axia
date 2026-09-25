@@ -4,6 +4,7 @@ import type { ExportSettings } from '../editor/exportSettings'
 import { saveExportedImageBlob } from '../services/backend'
 import { pngBlobWithResolution } from '../services/pngMetadata'
 import { renderDocumentExportBlob, renderLayerAppearance } from '../services/renderDocument'
+import { exportPixelSize } from '../editor/exportSettings'
 import type { DocumentSpec, LayerItem } from '../types/editor'
 
 interface DocumentExportOptions {
@@ -12,6 +13,10 @@ interface DocumentExportOptions {
   errorText: Ref<string>
   isBusy: Ref<boolean>
   layers: Ref<LayerItem[]>
+  preparePDFSmartLayerForExport: (layer: LayerItem, outputScale: number) => Promise<{
+    dispose: () => void
+    layer: LayerItem
+  }>
   refreshSmartLayerSource: (layer: LayerItem) => Promise<void>
   settleRasterMutation: (status: string) => Promise<boolean>
   showError: (error: unknown, fallback: string) => void
@@ -47,14 +52,33 @@ export function useDocumentExport(options: DocumentExportOptions) {
     if (!await options.settleRasterMutation('Finalizando edição antes de exportar…')) return null
     const documentId = options.activeDocument.value.id
     const exportLayers = options.layers.value.slice()
-    for (const layer of exportLayers) {
-      if (layer.visible && layer.kind === 'smart') await options.refreshSmartLayerSource(layer)
+    const originalLayers = options.layers.value.slice()
+    const outputScale = exportPixelSize(
+      options.activeDocument.value.width,
+      options.activeDocument.value.height,
+      options.activeDocument.value.resolutionDpi,
+      settings.resolutionDpi
+    ).scale
+    const prepared: Array<{ dispose: () => void }> = []
+    try {
+      for (const [index, layer] of exportLayers.entries()) {
+        if (!layer.visible || layer.kind !== 'smart') continue
+        if (layer.smart?.pdf) {
+          const result = await options.preparePDFSmartLayerForExport(layer, outputScale)
+          exportLayers[index] = result.layer
+          prepared.push(result)
+        } else {
+          await options.refreshSmartLayerSource(layer)
+        }
+      }
+      if (
+        options.activeDocument.value.id !== documentId || options.layers.value.length !== originalLayers.length ||
+        originalLayers.some((layer, index) => layer !== options.layers.value[index])
+      ) throw new Error('O documento foi alterado durante a exportação.')
+      return await renderDocumentExportBlob(options.activeDocument.value, exportLayers, settings)
+    } finally {
+      for (const result of prepared) result.dispose()
     }
-    if (
-      options.activeDocument.value.id !== documentId || options.layers.value.length !== exportLayers.length ||
-      exportLayers.some((layer, index) => options.layers.value[index] !== layer)
-    ) throw new Error('O documento foi alterado durante a exportação.')
-    return renderDocumentExportBlob(options.activeDocument.value, exportLayers, settings)
   }
 
   async function estimateDocumentExport(settings: ExportSettings) {

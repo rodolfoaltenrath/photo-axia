@@ -63,7 +63,8 @@ export interface CanvasViewportProps {
 
 export interface CanvasViewportEmits {
   (event: 'update:zoom', zoom: number): void
-  (event: 'createText', point: DocumentPoint): void
+  (event: 'createText', request: { point: DocumentPoint; paragraphWidth?: number }): void
+  (event: 'commitTextEdit', edit: { layerId: string; content: string }): void
   (event: 'createGuide', guide: EditorGuide): void
   (event: 'deleteGuide', guideId: string): void
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
@@ -180,6 +181,7 @@ export interface CanvasSurfaceView {
   selectionMoveInteraction: SelectionMoveInteraction | null
   selectionMovePreviewStyle?: CSSProperties
   smartGuides: SmartAlignmentGuide[]
+  textEditor: { layerId: string; value: string; selectAll: boolean } | null
   snappedX?: number
   snappedY?: number
   surfaceStyle: CSSProperties
@@ -213,6 +215,9 @@ export interface CanvasSurfaceActions {
   startGuideCreation: (orientation: GuideOrientation, event: PointerEvent) => void
   startGuideMove: (guide: EditorGuide, event: PointerEvent) => void
   startLayerPointer: (event: PointerEvent, layer: LayerItem) => void
+  textEditorCancel: () => void
+  textEditorCommit: () => void
+  textEditorInput: (value: string) => void
   startRulerOrigin: (event: PointerEvent) => void
   startTransformMove: (event: PointerEvent) => void
   startTransformResize: (event: PointerEvent, handle: TransformHandle) => void
