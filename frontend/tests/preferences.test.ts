@@ -6,12 +6,12 @@ import {
   writeAutoSelectLayerPreference
 } from '../src/editor/preferences.ts'
 
-function memoryStorage(initial = {}) {
-  const values = new Map(Object.entries(initial))
+function memoryStorage(initial: Record<string, string> = {}) {
+  const values = new Map<string, string>(Object.entries(initial))
   return {
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => values.set(key, value),
-    value: (key) => values.get(key)
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem(key: string, value: string) { values.set(key, value) },
+    value: (key: string) => values.get(key)
   }
 }
 

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { layoutTextLines, measureTextLayer, textDisplayContent, textLayoutMode, textLines } from '../src/editor/text.ts'
+import type { TextLayerContent } from '../src/types/editor.ts'
 
 test('normaliza quebras de linha sem eliminar linhas vazias', () => {
   assert.deepEqual(textLines('Título\r\n\r\nSubtítulo'), ['Título', '', 'Subtítulo'])
@@ -29,7 +30,7 @@ test('medição possui fallback determinístico fora do DOM', () => {
 })
 
 test('parágrafo preserva largura e quebra em limites de palavra', () => {
-  const text = {
+  const text: TextLayerContent = {
     content: 'aa bb cc', fontFamily: 'sans-serif', fontSize: 10, fontWeight: 400,
     color: '#fff', alignment: 'left', lineHeight: 1, baseWidth: 18, baseHeight: 1,
     layoutMode: 'paragraph', letterSpacing: 0

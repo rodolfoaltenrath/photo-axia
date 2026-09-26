@@ -9,8 +9,9 @@ import {
   pdfPagePixelSize,
   validatePDFImport
 } from '../src/editor/pdfImport.ts'
+import type { PDFPageSize } from '../src/editor/pdfImport.ts'
 
-const a4 = { pageNumber: 1, widthPoints: 595.28, heightPoints: 841.89 }
+const a4: PDFPageSize = { pageNumber: 1, widthPoints: 595.28, heightPoints: 841.89 }
 
 test('rasteriza uma página A4 nas dimensões esperadas para web e impressão', () => {
   assert.deepEqual(pdfPagePixelSize(a4, 150), { width: 1240, height: 1754 })
@@ -41,7 +42,7 @@ test('informa o maior DPI seguro sem ultrapassar os limites do raster', () => {
   assert.ok(maximum)
   assert.equal(validatePDFImport({ background: 'white', dpi: maximum, pages: [1] }, [aboveMemoryLimit]), '')
   assert.match(validatePDFImport({ background: 'white', dpi: maximum + 1, pages: [1] }, [aboveMemoryLimit]), new RegExp(`no máximo ${maximum} DPI`))
-  assert.equal(maximumPDFImportDPI({ pageNumber: 1, widthPoints: 100_000, heightPoints: 100_000 }), undefined)
+  assert.equal(maximumPDFImportDPI({ widthPoints: 100_000, heightPoints: 100_000 }), undefined)
 })
 
 test('estima o uso RGBA da página selecionada', () => {

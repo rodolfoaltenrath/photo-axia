@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createFlattenedLayer, documentCanFlatten } from '../src/editor/flattenImage.ts'
 import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import type { DocumentSpec, LayerItem } from '../src/types/editor.ts'
 
-const document = { width: 200, height: 100, background: 'transparent' }
-const fullPixel = {
+const document: Pick<DocumentSpec, 'width' | 'height' | 'background'> = {
+  width: 200, height: 100, background: 'transparent'
+}
+const fullPixel: LayerItem = {
   id: 'pixel', name: 'Pixels', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
   styles: createLayerStyleConfig(),
   image: { width: 200, height: 100, mimeType: 'image/png', sourceUrl: 'blob:pixel' },

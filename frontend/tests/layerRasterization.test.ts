@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { layerCanRasterize, rasterizedLayerPatch } from '../src/editor/layerRasterization.ts'
 import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import type { LayerItem } from '../src/types/editor.ts'
 
-function baseLayer(patch = {}) {
+function baseLayer(patch: Partial<LayerItem> = {}): LayerItem {
   return {
     id: 'layer-1',
     name: 'Camada',

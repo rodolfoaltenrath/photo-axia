@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { MutationBarrier } from '../src/editor/mutationBarrier.ts'
 
-function deferred() {
-  let resolve
-  let reject
-  const promise = new Promise((resolvePromise, rejectPromise) => {
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
     reject = rejectPromise
   })
@@ -14,8 +14,8 @@ function deferred() {
 
 test('histórico aguarda o commit raster pendente antes de navegar', async () => {
   const barrier = new MutationBarrier()
-  const commit = deferred()
-  const order = []
+  const commit = deferred<void>()
+  const order: string[] = []
   barrier.track(commit.promise.then(() => {
     order.push('commit')
     return true
@@ -34,7 +34,7 @@ test('histórico aguarda o commit raster pendente antes de navegar', async () =>
 
 test('falha no commit não desfaz uma ação anterior por engano', async () => {
   const barrier = new MutationBarrier()
-  const commit = deferred()
+  const commit = deferred<boolean>()
   barrier.track(commit.promise)
   const navigation = barrier.wait()
   commit.resolve(false)
@@ -43,8 +43,8 @@ test('falha no commit não desfaz uma ação anterior por engano', async () => {
 
 test('limpeza de uma operação antiga não remove uma operação mais recente', async () => {
   const barrier = new MutationBarrier()
-  const first = deferred()
-  const second = deferred()
+  const first = deferred<boolean>()
+  const second = deferred<boolean>()
   barrier.track(first.promise)
   barrier.track(second.promise)
   first.resolve(true)
@@ -58,7 +58,7 @@ test('limpeza de uma operação antiga não remove uma operação mais recente',
 
 test('operação pendente pode ser descartada sem aguardar sua conclusão', async () => {
   const barrier = new MutationBarrier()
-  const commit = deferred()
+  const commit = deferred<boolean>()
   barrier.track(commit.promise)
 
   assert.equal(barrier.discard(), true)

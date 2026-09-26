@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { pngWithResolution } from '../src/services/pngMetadata.ts'
 
-function chunk(type, data) {
+function chunk(type: string, data: Uint8Array) {
   const result = new Uint8Array(12 + data.length)
   new DataView(result.buffer).setUint32(0, data.length)
   result.set([...type].map((character) => character.charCodeAt(0)), 4)
@@ -10,7 +10,7 @@ function chunk(type, data) {
   return result
 }
 
-function minimalPng(existingPhys) {
+function minimalPng(existingPhys: boolean) {
   const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
   const ihdr = chunk('IHDR', new Uint8Array(13))
   const iend = chunk('IEND', new Uint8Array())
@@ -21,8 +21,8 @@ function minimalPng(existingPhys) {
   return result
 }
 
-function physChunks(bytes) {
-  const result = []
+function physChunks(bytes: Uint8Array) {
+  const result: Uint8Array[] = []
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   for (let offset = 8; offset + 12 <= bytes.length;) {
     const length = view.getUint32(offset)

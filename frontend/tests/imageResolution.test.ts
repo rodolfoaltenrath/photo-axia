@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { imageResolutionFromHeader } from '../src/editor/imageResolution.ts'
 
-function pngWithPhys(xPixelsPerMeter, yPixelsPerMeter, unit = 1) {
+function pngWithPhys(xPixelsPerMeter: number, yPixelsPerMeter: number, unit = 1) {
   const bytes = new Uint8Array(8 + 12 + 9)
   const view = new DataView(bytes.buffer)
   view.setUint32(0, 0x89504e47)
@@ -15,7 +15,7 @@ function pngWithPhys(xPixelsPerMeter, yPixelsPerMeter, unit = 1) {
   return bytes.buffer
 }
 
-function jpegWithJfif(units, densityX, densityY) {
+function jpegWithJfif(units: number, densityX: number, densityY: number) {
   const bytes = new Uint8Array(20)
   const view = new DataView(bytes.buffer)
   view.setUint16(0, 0xffd8)
@@ -30,7 +30,7 @@ function jpegWithJfif(units, densityX, densityY) {
   return bytes.buffer
 }
 
-function jpegWithExifResolution(densityX, densityY, unit = 2) {
+function jpegWithExifResolution(densityX: number, densityY: number, unit = 2) {
   const bytes = new Uint8Array(82)
   const view = new DataView(bytes.buffer)
   view.setUint16(0, 0xffd8)
