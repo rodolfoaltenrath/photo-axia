@@ -92,8 +92,9 @@ grupo inteligente `W`. Este roadmap não adiciona formas vetoriais ao seletor de
 Antes de alterar código relacionado a este roadmap:
 
 1. Ler este arquivo por completo.
-2. Ler `roadmap-ferramentas-cor-preenchimento.md`, especialmente a auditoria da
-   Varinha e o contrato de regiões compartilhado com o Balde.
+2. Revisar a seção **Baseline confirmado** deste documento e inspecionar
+   `colorRegion.ts` e seus workers, preservando o contrato de regiões
+   compartilhado pela Varinha e pelo Balde.
 3. Conferir `git status --short` e preservar mudanças existentes.
 4. Inspecionar novamente os arquivos citados na fase em execução. Os caminhos deste
    documento são guias e podem ter mudado.
