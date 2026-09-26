@@ -14,9 +14,9 @@ test('somente a atualização mais recente pode publicar a lista', () => {
 
 test('miniaturas do mesmo caminho são serializadas e a antiga fica obsoleta', async () => {
   const queue = new LatestPathTaskQueue()
-  const events = []
-  let releaseFirst
-  const firstBlocked = new Promise((resolve) => { releaseFirst = resolve })
+  const events: string[] = []
+  let releaseFirst!: () => void
+  const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve })
 
   const first = queue.enqueue('C:/Projeto.axia', async (isLatest) => {
     events.push('first:start')

@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { layerCanExportPNG, quickLayerExportName } from '../src/editor/layerExport.ts'
 import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import type { LayerItem } from '../src/types/editor.ts'
 
-const base = {
+const base: LayerItem = {
   id: 'layer', name: 'Camada', visible: false, opacity: 50, blendMode: 'multiply',
+  kind: 'pixel',
   styles: createLayerStyleConfig()
 }
 

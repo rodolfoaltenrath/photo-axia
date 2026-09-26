@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { QuickSelectionAssetCache, quickSelectionAssetKey } from '../src/editor/quickSelectionAssetCache.ts'
+import type { ImageAsset } from '../src/types/editor.ts'
 
-const asset = (sourceUrl, editToken = 'v1') => ({
+const asset = (sourceUrl: string, editToken = 'v1'): ImageAsset => ({
   sourceUrl, editToken, width: 10, height: 8, mimeType: 'image/png', byteSize: 320
 })
 
@@ -26,8 +27,8 @@ test('reutiliza o blob enquanto a identidade do raster não muda', async () => {
 
 test('não publica carregamento antigo depois que a camada muda', async () => {
   const cache = new QuickSelectionAssetCache()
-  let releaseOld
-  const old = cache.get(quickSelectionAssetKey(asset('blob:a')), () => new Promise((resolve) => { releaseOld = resolve }))
+  let releaseOld!: (value: Blob | PromiseLike<Blob>) => void
+  const old = cache.get(quickSelectionAssetKey(asset('blob:a')), () => new Promise<Blob>((resolve) => { releaseOld = resolve }))
   const newest = await cache.get(quickSelectionAssetKey(asset('blob:b')), async () => new Blob(['novo']))
   releaseOld(new Blob(['antigo']))
   await old

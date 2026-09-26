@@ -6,6 +6,7 @@ import {
   presetStyles
 } from '../src/editor/layerStylePresets.ts'
 import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import type { LayerEffect } from '../src/types/editor.ts'
 
 test('oferece estilos iniciais completos sem compartilhar efeitos entre leituras', () => {
   const first = defaultLayerStylePresets()
@@ -33,7 +34,7 @@ test('normaliza a biblioteca, remove IDs duplicados e ordena por nome', () => {
 })
 
 test('aplicar um estilo devolve snapshot profundo e preserva textura incorporada', () => {
-  const pattern = createDefaultLayerEffect('pattern-overlay', 'pattern')
+  const pattern = createDefaultLayerEffect('pattern-overlay', 'pattern') as Extract<LayerEffect, { type: 'pattern-overlay' }>
   pattern.pattern = {
     id: 'asset', name: 'Textura', width: 1, height: 1,
     mimeType: 'image/png', sourceUrl: 'data:image/png;base64,AA=='
@@ -44,7 +45,14 @@ test('aplicar um estilo devolve snapshot profundo e preserva textura incorporada
   }])[0]
   const copied = presetStyles(preset)
 
-  assert.equal(copied.effects[0].pattern.sourceUrl, 'data:image/png;base64,AA==')
-  copied.effects[0].pattern.name = 'Alterada'
-  assert.equal(preset.styles.effects[0].pattern.name, 'Textura')
+  const copiedPattern = copied.effects[0]
+  const presetPattern = preset.styles.effects[0]
+  assert.equal(copiedPattern.type, 'pattern-overlay')
+  assert.equal(presetPattern.type, 'pattern-overlay')
+  if (copiedPattern.type !== 'pattern-overlay' || presetPattern.type !== 'pattern-overlay') {
+    assert.fail('O preset normalizado deve preservar a sobreposição de padrão.')
+  }
+  assert.equal(copiedPattern.pattern?.sourceUrl, 'data:image/png;base64,AA==')
+  copiedPattern.pattern!.name = 'Alterada'
+  assert.equal(presetPattern.pattern?.name, 'Textura')
 })
