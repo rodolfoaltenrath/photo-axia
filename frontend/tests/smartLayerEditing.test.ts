@@ -6,8 +6,11 @@ import {
   smartLayerEditHasChanges
 } from '../src/editor/smartLayerEditing.ts'
 import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import type { LayerItem, SmartLayerContent } from '../src/types/editor.ts'
 
-function smartLayer() {
+type EditableSmartLayer = LayerItem & { kind: 'smart', smart: SmartLayerContent }
+
+function smartLayer(): EditableSmartLayer {
   return {
     id: 'wrapper',
     name: 'Símbolo',
@@ -52,17 +55,21 @@ test('abre o conteúdo inteligente como documento isolado', () => {
 test('confirma uma cópia independente e incrementa a revisão', () => {
   const layer = smartLayer()
   const document = createSmartLayerEditDocument(layer)
-  const editedLayers = layer.smart.layers.map((item) => ({
-    ...item,
-    text: { ...item.text, content: 'Axia Studio' }
-  }))
+  const editedLayers = layer.smart.layers.map((item): LayerItem => {
+    assert.ok(item.text)
+    return { ...item, text: { ...item.text, content: 'Axia Studio' } }
+  })
   const edited = createEditedSmartLayerContent(layer.smart, document, editedLayers)
 
   assert.equal(edited.revision, 4)
-  assert.equal(edited.layers[0].text.content, 'Axia Studio')
+  const editedText = edited.layers[0]?.text
+  assert.ok(editedText)
+  assert.equal(editedText.content, 'Axia Studio')
   assert.equal(smartLayerEditHasChanges(layer.smart, edited), true)
-  edited.layers[0].text.content = 'Independente'
-  assert.equal(layer.smart.layers[0].text.content, 'Axia')
+  editedText.content = 'Independente'
+  const sourceText = layer.smart.layers[0]?.text
+  assert.ok(sourceText)
+  assert.equal(sourceText.content, 'Axia')
 })
 
 test('ignora a revisão ao detectar uma sessão sem alterações', () => {

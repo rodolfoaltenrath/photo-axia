@@ -8,7 +8,7 @@ import {
   renderGradientPreviewPixels
 } from '../src/editor/gradientPreview.ts'
 import { applyGradientRaster } from '../src/editor/gradientRaster.ts'
-import { threeStopTransparentGradientFixture } from './gradientStops.fixtures.mjs'
+import { threeStopTransparentGradientFixture } from './gradientStops.fixtures.ts'
 
 const geometry = {
   start: { x: 0.5, y: 0.5 },

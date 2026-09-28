@@ -1,11 +1,13 @@
-const colorForIndex = (index, count) => {
+import type { GradientStopsConfig } from '../src/editor/gradient.ts'
+
+const colorForIndex = (index: number, count: number) => {
   const channel = Math.round(index * 255 / Math.max(1, count - 1))
     .toString(16)
     .padStart(2, '0')
   return `#${channel}${channel}${channel}`
 }
 
-export function gradientStopsFixture(count) {
+export function gradientStopsFixture(count: number): GradientStopsConfig {
   return {
     type: 'linear',
     colorStops: Array.from({ length: count }, (_, index) => ({
@@ -26,7 +28,7 @@ export const twoStopGradientFixture = gradientStopsFixture(2)
 export const eightStopGradientFixture = gradientStopsFixture(8)
 export const thirtyTwoStopGradientFixture = gradientStopsFixture(32)
 
-export const threeStopTransparentGradientFixture = {
+export const threeStopTransparentGradientFixture: GradientStopsConfig = {
   type: 'linear',
   colorStops: [
     { id: 'red', position: 0, color: '#ff0000' },

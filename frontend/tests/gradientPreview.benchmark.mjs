@@ -3,7 +3,7 @@ import {
   createGradientPreviewLookup,
   renderGradientPreviewPixels
 } from '../src/editor/gradientPreview.ts'
-import { gradientStopsFixture } from './gradientStops.fixtures.mjs'
+import { gradientStopsFixture } from './gradientStops.fixtures.ts'
 
 for (const [width, height] of [[512, 512], [724, 724], [1024, 1024]]) {
   for (const stopCount of [2, 8, 32]) {

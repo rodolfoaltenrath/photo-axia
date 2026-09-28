@@ -20,7 +20,7 @@ import {
   thirtyTwoStopGradientFixture,
   threeStopTransparentGradientFixture,
   twoStopGradientFixture
-} from './gradientStops.fixtures.mjs'
+} from './gradientStops.fixtures.ts'
 
 test('define duas cores e opacidade total como contrato canônico inicial', () => {
   assert.deepEqual(DEFAULT_GRADIENT_STOPS_CONFIG, {

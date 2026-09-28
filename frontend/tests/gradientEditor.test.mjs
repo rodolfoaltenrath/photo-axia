@@ -16,8 +16,8 @@ import {
   updateGradientColorPointOpacity,
   visualGradientStopPosition
 } from '../src/editor/gradientEditor.ts'
-import { threeStopTransparentGradientFixture } from './gradientStops.fixtures.mjs'
-import { thirtyTwoStopGradientFixture } from './gradientStops.fixtures.mjs'
+import { threeStopTransparentGradientFixture } from './gradientStops.fixtures.ts'
+import { thirtyTwoStopGradientFixture } from './gradientStops.fixtures.ts'
 
 test('adiciona cor e opacidade usando o valor interpolado no ponto clicado', () => {
   const color = addGradientStop(threeStopTransparentGradientFixture, 'color', 0.25)

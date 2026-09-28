@@ -5,11 +5,13 @@ import {
   combineSelectionsAsync,
   disposeSelectionCombineEngine
 } from '../src/services/selectionCombineEngine.ts'
+import type { SelectionRegion } from '../src/editor/selection.ts'
+import type { SelectionDocumentSize } from '../src/editor/selectionCombine.ts'
 
-const documentSize = { width: 12, height: 8 }
+const documentSize: SelectionDocumentSize = { width: 12, height: 8 }
 
 test('combinação assíncrona evita Worker e cópias desnecessárias nos casos triviais', async () => {
-  const incoming = { kind: 'rectangle', bounds: { x: 1, y: 2, width: 4, height: 3 } }
+  const incoming: SelectionRegion = { kind: 'rectangle', bounds: { x: 1, y: 2, width: 4, height: 3 } }
   const cloned = await combineSelectionsAsync(null, incoming, 'replace', documentSize)
   const owned = await combineSelectionsAsync(null, incoming, 'replace', documentSize, undefined, true)
   assert.deepEqual(cloned, incoming)
@@ -18,7 +20,7 @@ test('combinação assíncrona evita Worker e cópias desnecessárias nos casos 
 })
 
 test('fallback assíncrono preserva a máscara do núcleo síncrono', async () => {
-  const previous = {
+  const previous: SelectionRegion = {
     kind: 'pixels',
     sourceWidth: 3,
     sourceHeight: 2,
@@ -27,7 +29,7 @@ test('fallback assíncrono preserva a máscara do núcleo síncrono', async () =
     bounds: { x: 0, y: 0, width: 3, height: 2 },
     pixelCount: 5
   }
-  const incoming = { kind: 'rectangle', bounds: { x: 3, y: 1, width: 3, height: 3 } }
+  const incoming: SelectionRegion = { kind: 'rectangle', bounds: { x: 3, y: 1, width: 3, height: 3 } }
   const expected = combineSelections(previous, incoming, 'intersect', documentSize)
   const actual = await combineSelectionsAsync(previous, incoming, 'intersect', documentSize)
   assert.deepEqual(actual, expected)
@@ -35,7 +37,7 @@ test('fallback assíncrono preserva a máscara do núcleo síncrono', async () =
 
 test('combinação assíncrona rejeita sinal já cancelado sem alterar entradas', async () => {
   const controller = new AbortController()
-  const incoming = { kind: 'rectangle', bounds: { x: 1, y: 1, width: 2, height: 2 } }
+  const incoming: SelectionRegion = { kind: 'rectangle', bounds: { x: 1, y: 1, width: 2, height: 2 } }
   controller.abort()
   await assert.rejects(
     combineSelectionsAsync(null, incoming, 'replace', documentSize, controller.signal, true),

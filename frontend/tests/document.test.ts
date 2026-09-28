@@ -10,8 +10,9 @@ import {
   proportionalDocumentDimension,
   validateDocumentSettings
 } from '../src/editor/document.ts'
+import type { NewDocumentSettings } from '../src/types/editor.ts'
 
-const settings = (overrides = {}) => ({
+const settings = (overrides: Partial<NewDocumentSettings> = {}): NewDocumentSettings => ({
   name: 'Documento',
   unit: 'px',
   width: 1920,
@@ -108,14 +109,15 @@ test('descarta predefinições locais adulteradas e normaliza as válidas', () =
     category: 'saved',
     label: '  Meu preset  '
   }
-  const presets = parseCustomDocumentPresets([
+  const candidates: unknown[] = [
     valid,
     { ...valid, label: 'ID duplicado' },
     { ...valid, id: 'invalid-unit', unit: 'meters' },
     { ...valid, id: 'invalid-background', background: 'purple' },
     { ...valid, id: 'invalid-size', width: 100_000 },
     null
-  ])
+  ]
+  const presets = parseCustomDocumentPresets(candidates)
   assert.equal(presets.length, 1)
   assert.equal(presets[0].id, 'preset-1')
   assert.equal(presets[0].label, 'Meu preset')

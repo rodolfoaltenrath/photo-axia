@@ -67,8 +67,8 @@ test('reutiliza imagens decodificadas e descarta entradas liberadas ou acima do 
     naturalWidth = imageWidth
     naturalHeight = imageHeight
     decoding = 'auto'
-    onerror = null
-    onload = null
+    onerror: (() => void) | null = null
+    onload: (() => void) | null = null
 
     constructor() {
       instances++
@@ -78,12 +78,12 @@ test('reutiliza imagens decodificadas e descarta entradas liberadas ou acima do 
       return Promise.resolve()
     }
 
-    set src(_source) {
+    set src(_source: string) {
       queueMicrotask(() => this.onload?.())
     }
   }
 
-  globalThis.Image = FakeImage
+  globalThis.Image = FakeImage as unknown as typeof Image
   clearPreparedImageCache()
   try {
     const [first, second] = await Promise.all([

@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks'
 import { applyGradientRaster } from '../src/editor/gradientRaster.ts'
-import { gradientStopsFixture } from './gradientStops.fixtures.mjs'
+import { gradientStopsFixture } from './gradientStops.fixtures.ts'
 
 const width = 3840
 const height = 2160
