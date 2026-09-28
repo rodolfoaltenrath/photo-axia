@@ -65,7 +65,7 @@ test('preview linear coincide com o raster definitivo nos pontos de controle', (
 })
 
 test('preview radial usa centros de pixel no mesmo espaço do documento', () => {
-  const config = { ...threeStopTransparentGradientFixture, type: 'radial' }
+  const config = { ...threeStopTransparentGradientFixture, type: 'radial' as const }
   const pixels = renderGradientPreviewPixels({
     width: 5,
     height: 5,
@@ -74,7 +74,7 @@ test('preview radial usa centros de pixel no mesmo espaço do documento', () => 
     geometry: { start: { x: 2.5, y: 2.5 }, end: { x: 4.5, y: 2.5 } },
     config
   })
-  const pixel = (x, y) => [...pixels.slice((y * 5 + x) * 4, (y * 5 + x + 1) * 4)]
+  const pixel = (x: number, y: number) => [...pixels.slice((y * 5 + x) * 4, (y * 5 + x + 1) * 4)]
   assert.deepEqual(pixel(2, 2), [255, 0, 0, 255])
   assert.deepEqual(pixel(4, 2), [0, 0, 255, 255])
   assert.deepEqual(pixel(0, 0), [0, 0, 255, 255])

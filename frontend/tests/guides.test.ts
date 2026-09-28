@@ -14,6 +14,8 @@ import {
   snapGuidePositionToTicks,
   snapLayerTranslation
 } from '../src/editor/guides.ts'
+import type { EditorGuide, RulerOrigin } from '../src/editor/guides.ts'
+import type { LayerTransform } from '../src/types/editor.ts'
 
 test('converte unidades usando a resolução do documento', () => {
   assert.equal(pixelsPerRulerUnit('px', 300), 1)
@@ -30,9 +32,9 @@ test('converte documento e tela sem introduzir erro em zoom fracionário', () =>
 })
 
 test('a posição exibida da guia respeita unidade e origem da régua', () => {
-  const vertical = { orientation: 'vertical', position: 354 }
-  const horizontal = { orientation: 'horizontal', position: 254 }
-  const origin = { x: 100, y: 0 }
+  const vertical: Pick<EditorGuide, 'orientation' | 'position'> = { orientation: 'vertical', position: 354 }
+  const horizontal: Pick<EditorGuide, 'orientation' | 'position'> = { orientation: 'horizontal', position: 254 }
+  const origin: RulerOrigin = { x: 100, y: 0 }
 
   assert.equal(formatGuideValue(vertical, 'px', 254, origin), '254 px')
   assert.equal(formatGuideValue(vertical, 'px', 254, { x: 100.25, y: 0 }), '253,75 px')
@@ -59,7 +61,7 @@ test('Shift encaixa a guia na subdivisão visível da régua', () => {
 })
 
 test('guia encaixa nas bordas e no centro da camada selecionada', () => {
-  const transform = { x: 100, y: 50, width: 200, height: 100, rotation: 0 }
+  const transform: LayerTransform = { x: 100, y: 50, width: 200, height: 100, rotation: 0 }
 
   const left = snapGuidePositionToLayer(106, 'vertical', transform, 1)
   assert.equal(left.value, 100)
@@ -74,13 +76,13 @@ test('guia encaixa nas bordas e no centro da camada selecionada', () => {
 })
 
 test('snapping da guia mantém a tolerância em pixels de tela', () => {
-  const transform = { x: 100, y: 50, width: 200, height: 100, rotation: 0 }
+  const transform: LayerTransform = { x: 100, y: 50, width: 200, height: 100, rotation: 0 }
   assert.equal(snapGuidePositionToLayer(106, 'vertical', transform, 1).value, 100)
   assert.equal(snapGuidePositionToLayer(106, 'vertical', transform, 2).value, 106)
 })
 
 test('snapping de camada mantém tolerância constante em pixels de tela', () => {
-  const guides = [{ id: 'v', orientation: 'vertical', position: 100 }]
+  const guides: EditorGuide[] = [{ id: 'v', orientation: 'vertical', position: 100 }]
   const near = snapLayerTranslation({ x: 42, y: 0, width: 50, height: 50 }, guides, 1)
   assert.equal(near.value.x, 50)
   assert.equal(near.snappedX, 100)
@@ -89,7 +91,7 @@ test('snapping de camada mantém tolerância constante em pixels de tela', () =>
 })
 
 test('snapping reconhece ponto e limites de uma seleção', () => {
-  const guides = [
+  const guides: EditorGuide[] = [
     { id: 'v', orientation: 'vertical', position: 100 },
     { id: 'h', orientation: 'horizontal', position: 80 }
   ]

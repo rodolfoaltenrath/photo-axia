@@ -4,14 +4,19 @@ import {
   createAlignmentTargets,
   snapTransformToAlignmentTargets
 } from '../src/editor/smartGuides.ts'
+import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import type { EditorGuide } from '../src/editor/guides.ts'
+import type { LayerItem, LayerTransform } from '../src/types/editor.ts'
 
 const document = { width: 1000, height: 800 }
-const layer = (id, transform, visible = true) => ({
+const layer = (id: string, transform: LayerTransform, visible = true): LayerItem => ({
   id,
   name: id,
   visible,
   opacity: 100,
+  blendMode: 'normal',
   kind: 'pixel',
+  styles: createLayerStyleConfig(),
   transform
 })
 
@@ -60,7 +65,7 @@ test('ignora as camadas pertencentes ao grupo que está sendo movido', () => {
 test('guia manual tem prioridade sobre documento e camada dentro da tolerância', () => {
   const targets = createAlignmentTargets({
     document,
-    guides: [{ id: 'manual', orientation: 'vertical', position: 496 }],
+    guides: [{ id: 'manual', orientation: 'vertical', position: 496 }] satisfies EditorGuide[],
     layers: [layer('reference', { x: 500, y: 0, width: 50, height: 50, rotation: 0 })]
   })
   const result = snapTransformToAlignmentTargets(

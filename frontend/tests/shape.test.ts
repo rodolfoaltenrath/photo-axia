@@ -12,6 +12,7 @@ import {
   traceShapePath,
   triangleVertices
 } from '../src/editor/shape.ts'
+import type { ShapeToolConfig } from '../src/editor/shape.ts'
 
 test('normaliza a caixa nos quatro sentidos e combina Shift com Alt', () => {
   assert.deepEqual(shapeGeometryFromDrag({ x: 20, y: 30 }, { x: 5, y: 10 }), {
@@ -55,15 +56,16 @@ test('alternar Alt durante o arraste preserva a geometria antes de continuar pel
 })
 
 test('normaliza configurações adulteradas sem perder defaults acessíveis', () => {
-  assert.deepEqual(normalizeShapeConfig({
+  const tamperedConfig = {
     ...DEFAULT_SHAPE_CONFIG,
-    kind: /** @type {never} */ ('hexagon'),
+    kind: 'hexagon',
     color: 'red',
     cornerRadius: -10,
     squareness: 200,
     starPoints: 90,
     starInnerRatio: 0
-  }), {
+  }
+  assert.deepEqual(normalizeShapeConfig(tamperedConfig as unknown as ShapeToolConfig), {
     kind: 'rectangle', color: '#000000', cornerRadius: 0, squareness: 100, starPoints: 32, starInnerRatio: 5
   })
 })
@@ -100,13 +102,13 @@ test('recusa gestos subpixel ou inválidos', () => {
 })
 
 test('traça todas as formas com comandos finitos e limita raios exagerados', () => {
-  for (const kind of ['rectangle', 'ellipse', 'triangle', 'star']) {
-    const coordinates = []
+  for (const kind of ['rectangle', 'ellipse', 'triangle', 'star'] as const) {
+    const coordinates: number[] = []
     const context = {
       beginPath() {}, closePath() {},
-      lineTo(...values) { coordinates.push(...values) },
-      moveTo(...values) { coordinates.push(...values) },
-      quadraticCurveTo(...values) { coordinates.push(...values) }
+      lineTo(...values: number[]) { coordinates.push(...values) },
+      moveTo(...values: number[]) { coordinates.push(...values) },
+      quadraticCurveTo(...values: number[]) { coordinates.push(...values) }
     }
     traceShapePath(context, { x: 10, y: 20, width: 8, height: 6 }, {
       ...DEFAULT_SHAPE_CONFIG, kind, cornerRadius: 10_000, squareness: 100, starPoints: 32

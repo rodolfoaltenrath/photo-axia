@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { quickSelectionSpans } from '../src/editor/quickSelection.ts'
+import { quickSelectionSpans, type QuickSelectionOptions } from '../src/editor/quickSelection.ts'
 import { selectionMaskFromSpans, selectionQualityMetrics } from '../src/editor/selectionMetrics.ts'
 
-function rgba(width, height, pixelAt) {
+function rgba(width: number, height: number, pixelAt: (x: number, y: number) => ArrayLike<number>) {
   const pixels = new Uint8ClampedArray(width * height * 4)
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     pixels.set(pixelAt(x, y), (y * width + x) * 4)
@@ -11,7 +11,7 @@ function rgba(width, height, pixelAt) {
   return pixels
 }
 
-function expectedMask(width, height, includes) {
+function expectedMask(width: number, height: number, includes: (x: number, y: number) => boolean) {
   const mask = new Uint8Array(width * height)
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     if (includes(x, y)) mask[y * width + x] = 1
@@ -19,7 +19,15 @@ function expectedMask(width, height, includes) {
   return mask
 }
 
-function assertFixture(name, width, height, pixels, options, expected, minimumIou = 1) {
+function assertFixture(
+  name: string,
+  width: number,
+  height: number,
+  pixels: Uint8ClampedArray,
+  options: QuickSelectionOptions,
+  expected: Uint8Array,
+  minimumIou = 1
+) {
   const actual = quickSelectionSpans(pixels, width, height, options)
   const metrics = selectionQualityMetrics(selectionMaskFromSpans(actual.spans, width, height), expected)
   assert.ok(metrics.iou >= minimumIou, `${name}: IoU ${metrics.iou.toFixed(3)}, extras ${metrics.extraPixels}, ausentes ${metrics.missingPixels}`)
@@ -58,9 +66,9 @@ test('fixtures de qualidade mantêm borda, cor próxima, transparência e regiõ
 test('fixture com detalhes finos e ruído determinístico preserva o objeto', () => {
   const width = 12
   const height = 9
-  const objectPixel = (x, y) => x >= 2 && x <= 7 && y >= 2 && y <= 6 ||
+  const objectPixel = (x: number, y: number) => x >= 2 && x <= 7 && y >= 2 && y <= 6 ||
     (x === 8 && y >= 1 && y <= 3) || (x === 9 && y === 1)
-  const noise = (x, y) => ((x * 73 + y * 31 + 17) % 17) - 8
+  const noise = (x: number, y: number) => ((x * 73 + y * 31 + 17) % 17) - 8
   const pixels = rgba(width, height, (x, y) => {
     const n = noise(x, y)
     return objectPixel(x, y) ? [35 + n, 105 + n, 195 + n, 255] : [170 + n, 90 + n, 55 + n, 255]
