@@ -9,8 +9,9 @@ import {
   smartLayerRenderCacheStats
 } from '../src/services/smartLayerRenderer.ts'
 import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import type { ImageAsset, LayerItem, SmartLayerContent } from '../src/types/editor.ts'
 
-function content(patch = {}) {
+function content(patch: Partial<SmartLayerContent> = {}): SmartLayerContent {
   return {
     id: 'content-1',
     width: 64,
@@ -33,14 +34,20 @@ function content(patch = {}) {
   }
 }
 
+function layerImage(layer: LayerItem): ImageAsset {
+  assert.ok(layer.image)
+  return layer.image
+}
+
 test('hash ignora previews derivados e reage ao conteúdo editável', () => {
   const first = content()
   const second = structuredClone(first)
-  second.layers[0].image.previewUrl = 'blob:preview-b'
-  second.layers[0].image.previewWidth = 16
+  const secondImage = layerImage(second.layers[0]!)
+  secondImage.previewUrl = 'blob:preview-b'
+  secondImage.previewWidth = 16
   assert.equal(smartLayerContentHash(first), smartLayerContentHash(second))
 
-  second.layers[0].opacity = 55
+  second.layers[0]!.opacity = 55
   assert.notEqual(smartLayerContentHash(first), smartLayerContentHash(second))
 })
 
@@ -77,15 +84,16 @@ test('solicitações idênticas compartilham o trabalho em andamento', async () 
   clearSmartLayerRenderCache()
   const source = content()
   let calls = 0
-  let resolveRender
+  let resolveRender: ((blob: Blob) => void) | undefined
   const renderer = () => {
     calls++
-    return new Promise((resolve) => { resolveRender = resolve })
+    return new Promise<Blob>((resolve) => { resolveRender = resolve })
   }
   const first = renderSmartLayer({ consumerId: 'canvas', content: source, renderer })
   const second = renderSmartLayer({ consumerId: 'thumbnail', content: source, renderer })
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(calls, 1)
+  assert.ok(resolveRender)
   resolveRender(new Blob(['rendered'], { type: 'image/png' }))
   const results = await Promise.all([first, second])
   assert.equal(results[0].cacheKey, results[1].cacheKey)
@@ -96,14 +104,15 @@ test('solicitações idênticas compartilham o trabalho em andamento', async () 
 test('invalidação impede resultado antigo de entrar no cache ou ser publicado', async () => {
   clearSmartLayerRenderCache()
   const source = content()
-  let resolveRender
+  let resolveRender: ((blob: Blob) => void) | undefined
   const pending = renderSmartLayer({
     consumerId: 'canvas',
     content: source,
-    renderer: () => new Promise((resolve) => { resolveRender = resolve })
+    renderer: () => new Promise<Blob>((resolve) => { resolveRender = resolve })
   })
   await new Promise((resolve) => setTimeout(resolve, 0))
   invalidateSmartLayerContent(source.id)
+  assert.ok(resolveRender)
   resolveRender(new Blob(['stale'], { type: 'image/png' }))
   await assert.rejects(pending, /obsoleta/)
   assert.equal(smartLayerRenderCacheStats().entries, 0)
@@ -114,7 +123,7 @@ test('falha aninhada libera fontes temporárias criadas pelo mesmo lote', async 
   const validNested = content({ id: 'nested-valid', width: 8, height: 8 })
   const oversizedNested = content({ id: 'nested-oversized', width: 10_000, height: 10_000 })
   seedSmartLayerRender(validNested, new Blob(['nested'], { type: 'image/png' }), 8, 8)
-  const smartLayer = (id, smart) => ({
+  const smartLayer = (id: string, smart: SmartLayerContent): LayerItem => ({
     id, name: id, visible: true, opacity: 100, blendMode: 'normal', kind: 'smart', smart,
     styles: createLayerStyleConfig(),
     transform: { x: 0, y: 0, width: smart.width, height: smart.height, rotation: 0 }
@@ -125,14 +134,14 @@ test('falha aninhada libera fontes temporárias criadas pelo mesmo lote', async 
   })
   const originalCreateObjectURL = URL.createObjectURL
   const originalRevokeObjectURL = URL.revokeObjectURL
-  const created = []
-  const revoked = []
-  URL.createObjectURL = () => {
+  const created: string[] = []
+  const revoked: string[] = []
+  URL.createObjectURL = (_blob: Blob) => {
     const url = `blob:temporary-${created.length}`
     created.push(url)
     return url
   }
-  URL.revokeObjectURL = (url) => revoked.push(url)
+  URL.revokeObjectURL = (url: string) => revoked.push(url)
   try {
     await assert.rejects(
       renderSmartLayer({ consumerId: 'parent', content: source, renderer: async () => new Blob(['unused']) }),

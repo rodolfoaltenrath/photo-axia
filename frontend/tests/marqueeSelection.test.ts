@@ -7,8 +7,10 @@ import {
   nextMarqueeSelectionMode
 } from '../src/editor/marqueeSelection.ts'
 import { combineSelections } from '../src/editor/selectionCombine.ts'
+import type { MarqueeDocumentSize } from '../src/editor/marqueeSelection.ts'
+import type { SelectionRegion } from '../src/editor/selection.ts'
 
-const documentSize = { width: 8, height: 6 }
+const documentSize: MarqueeDocumentSize = { width: 8, height: 6 }
 
 test('preserva os quatro modos internos e alterna somente os dois expostos na interface', () => {
   assert.deepEqual(MARQUEE_SELECTION_MODES, [
@@ -25,7 +27,7 @@ test('preserva os quatro modos internos e alterna somente os dois expostos na in
 })
 
 test('retângulo e elipse preservam os quatro sentidos de arraste', () => {
-  for (const mode of ['rectangle', 'ellipse']) {
+  for (const mode of ['rectangle', 'ellipse'] as const) {
     const expected = { kind: mode, bounds: { x: 2, y: 1, width: 4, height: 3 } }
     assert.deepEqual(createMarqueeSelection(mode, { x: 2, y: 1 }, { x: 6, y: 4 }, documentSize), expected)
     assert.deepEqual(createMarqueeSelection(mode, { x: 6, y: 1 }, { x: 2, y: 4 }, documentSize), expected)
@@ -35,7 +37,7 @@ test('retângulo e elipse preservam os quatro sentidos de arraste', () => {
 })
 
 test('Shift mantém quadrado e círculo em arrastes positivos e negativos', () => {
-  for (const mode of ['rectangle', 'ellipse']) {
+  for (const mode of ['rectangle', 'ellipse'] as const) {
     assert.deepEqual(
       createMarqueeSelection(mode, { x: 1, y: 1 }, { x: 4, y: 3 }, documentSize, true),
       { kind: mode, bounds: { x: 1, y: 1, width: 3, height: 3 } }
@@ -96,12 +98,12 @@ test('formas são recortadas aos limites do documento', () => {
 test('Linha e Coluna combinam de forma exata com seleções vetoriais e por pixels', () => {
   const row = createMarqueeSelection('single-row', { x: 1, y: 2 }, { x: 1, y: 2 }, documentSize)
   const column = createMarqueeSelection('single-column', { x: 3, y: 1 }, { x: 3, y: 1 }, documentSize)
-  const lasso = {
+  const lasso: SelectionRegion = {
     kind: 'lasso',
     points: [{ x: 0, y: 1 }, { x: 6, y: 1 }, { x: 6, y: 4 }, { x: 0, y: 4 }],
     bounds: { x: 0, y: 1, width: 6, height: 3 }
   }
-  const pixels = {
+  const pixels: SelectionRegion = {
     kind: 'pixels',
     sourceWidth: 8,
     sourceHeight: 6,
@@ -114,6 +116,10 @@ test('Linha e Coluna combinam de forma exata com seleções vetoriais e por pixe
   assert.deepEqual(combineSelections(row, column, 'intersect', documentSize)?.bounds, {
     x: 3, y: 2, width: 1, height: 1
   })
-  assert.equal(combineSelections(row, lasso, 'intersect', documentSize)?.pixelCount, 6)
-  assert.equal(combineSelections(column, pixels, 'intersect', documentSize)?.pixelCount, 1)
+  const rowLasso = combineSelections(row, lasso, 'intersect', documentSize)
+  const columnPixels = combineSelections(column, pixels, 'intersect', documentSize)
+  assert.ok(rowLasso?.kind === 'pixels')
+  assert.ok(columnPixels?.kind === 'pixels')
+  assert.equal(rowLasso.pixelCount, 6)
+  assert.equal(columnPixels.pixelCount, 1)
 })

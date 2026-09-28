@@ -3,7 +3,9 @@ import test from 'node:test'
 import { colorRegionSpans, colorRegionSpansCooperatively } from '../src/editor/colorRegion.ts'
 import { magicWandSpans } from '../src/editor/selection.ts'
 
-function pixels(colors) {
+type Rgba = readonly [red: number, green: number, blue: number, alpha: number]
+
+function pixels(colors: readonly Rgba[]) {
   return new Uint8ClampedArray(colors.flat())
 }
 
@@ -72,10 +74,12 @@ test('compacta automaticamente seleções globais muito fragmentadas', () => {
   const result = colorRegionSpans(image, width, 1, {
     startX: 0, startY: 0, tolerance: 0, contiguous: false
   })
-  assert.equal(result.spans.kind, 'packed-spans')
-  assert.equal(result.spans.length, 20_001)
-  assert.equal(result.spans.data.byteLength, 20_001 * 3 * Int32Array.BYTES_PER_ELEMENT)
-  assert.deepEqual([...result.spans.data.slice(0, 6)], [0, 0, 1, 0, 2, 3])
+  const spans = result.spans
+  assert.ok(!Array.isArray(spans))
+  assert.equal(spans.kind, 'packed-spans')
+  assert.equal(spans.length, 20_001)
+  assert.equal(spans.data.byteLength, 20_001 * 3 * Int32Array.BYTES_PER_ELEMENT)
+  assert.deepEqual([...spans.data.slice(0, 6)], [0, 0, 1, 0, 2, 3])
 })
 
 test('fallback cooperativo da Varinha preserva exatamente os spans do núcleo síncrono', async () => {
@@ -101,6 +105,7 @@ test('fallback contíguo ordena os spans como o Worker mesmo com semente central
     yieldControl: async () => {}
   })
   assert.deepEqual(actual, expected)
+  assert.ok(Array.isArray(actual.spans))
   assert.deepEqual(actual.spans.map((span) => span.y), [0, 1, 2, 3, 4])
 })
 

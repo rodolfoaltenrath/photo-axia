@@ -6,7 +6,9 @@ import {
   quickSelectionSpansCooperatively
 } from '../src/editor/quickSelection.ts'
 
-function rgba(width, rows) {
+type Rgba = readonly [red: number, green: number, blue: number, alpha: number]
+
+function rgba(width: number, rows: readonly (readonly Rgba[])[]) {
   const pixels = new Uint8ClampedArray(width * rows.length * 4)
   rows.flat().forEach(([red, green, blue, alpha], index) => pixels.set([red, green, blue, alpha], index * 4))
   return pixels
