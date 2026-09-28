@@ -13,6 +13,7 @@ import {
   radialGradientProgress,
   snapGradientEndpoint
 } from '../src/editor/gradient.ts'
+import type { GradientConfig } from '../src/editor/gradient.ts'
 import {
   applyGradientRaster,
   createGradientRasterState,
@@ -20,8 +21,10 @@ import {
   gradientResultTransform,
   renderGradientRasterRows
 } from '../src/editor/gradientRaster.ts'
+import type { GradientRasterRequest } from '../src/editor/gradientRaster.ts'
+import type { LayerTransform } from '../src/types/editor.ts'
 
-const closeTo = (actual, expected, tolerance = 1e-9) => {
+const closeTo = (actual: number, expected: number, tolerance = 1e-9) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} deveria se aproximar de ${expected}`)
 }
 
@@ -118,18 +121,18 @@ test('confirma somente pointerup válido e cancela os demais encerramentos', () 
   }), 'cancel')
 })
 
-const transparentPixels = (width, height) => new Uint8ClampedArray(width * height * 4)
-const identityTransform = (width, height, x = 0, y = 0) => ({ x, y, width, height, rotation: 0 })
-const linearConfig = {
+const transparentPixels = (width: number, height: number) => new Uint8ClampedArray(width * height * 4)
+const identityTransform = (width: number, height: number, x = 0, y = 0): LayerTransform => ({ x, y, width, height, rotation: 0 })
+const linearConfig: GradientConfig = {
   type: 'linear',
   foregroundColor: '#000000',
   backgroundColor: '#ffffff',
   reversed: false
 }
-const radialConfig = { ...linearConfig, type: 'radial' }
+const radialConfig: GradientConfig = { ...linearConfig, type: 'radial' }
 
-function redChannels(pixels) {
-  const channels = []
+function redChannels(pixels: Uint8ClampedArray) {
+  const channels: number[] = []
   for (let index = 0; index < pixels.length; index += 4) channels.push(pixels[index])
   return channels
 }
@@ -162,7 +165,7 @@ test('aplica degradê radial circular do centro até o exterior do raio', () => 
     documentWidth: 5,
     documentHeight: 5
   })
-  const redAt = (x, y) => result.pixels[(y * 5 + x) * 4]
+  const redAt = (x: number, y: number) => result.pixels[(y * 5 + x) * 4]
   assert.equal(redAt(2, 2), 0)
   assert.equal(redAt(3, 2), 128)
   assert.equal(redAt(2, 3), 128)
@@ -194,7 +197,7 @@ test('expande raster compacto até os limites do documento e preserva sua origem
 })
 
 test('seleções vetoriais e por pixels limitam a composição sem expandir o raster', () => {
-  const baseRequest = {
+  const baseRequest: Omit<GradientRasterRequest, 'selection'> = {
     sourcePixels: transparentPixels(4, 1),
     sourceWidth: 4,
     sourceHeight: 1,
@@ -215,7 +218,6 @@ test('seleções vetoriais e por pixels limitam a composição sem expandir o ra
     ...baseRequest,
     selection: {
       kind: 'pixels',
-      layerId: 'layer-1',
       sourceWidth: 4,
       sourceHeight: 1,
       sourceToDocument: [1, 0, 0, 1, 0, 0],
@@ -228,7 +230,7 @@ test('seleções vetoriais e por pixels limitam a composição sem expandir o ra
 })
 
 test('elipse e laço usam a mesma máscara no núcleo compartilhado', () => {
-  const baseRequest = {
+  const baseRequest: Omit<GradientRasterRequest, 'selection'> = {
     sourcePixels: transparentPixels(4, 4),
     sourceWidth: 4,
     sourceHeight: 4,
@@ -274,7 +276,7 @@ test('calcula as cores em espaço do documento para camada rotacionada', () => {
 })
 
 test('processamento integral e processamento em lotes produzem pixels idênticos', () => {
-  const request = {
+  const request: GradientRasterRequest = {
     sourcePixels: transparentPixels(5, 4),
     sourceWidth: 5,
     sourceHeight: 4,

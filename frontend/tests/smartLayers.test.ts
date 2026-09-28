@@ -6,22 +6,28 @@ import {
   layersCanConvertToSmart,
   smartLayerDepth
 } from '../src/editor/smartLayers.ts'
+import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import type { DocumentSpec, LayerItem, SmartLayerContent } from '../src/types/editor.ts'
 
-const document = {
+const document: Pick<DocumentSpec, 'resolutionDpi' | 'colorSpace' | 'background' | 'layerStyleGlobalLight'> = {
   resolutionDpi: 144,
   colorSpace: 'sRGB',
   background: 'transparent',
   layerStyleGlobalLight: { angle: 120, altitude: 30 }
 }
 
-const defaultStyles = () => ({ enabled: true, fillOpacity: 100, effects: [] })
-const imageLayer = (overrides = {}) => ({
+const imageLayer = (overrides: Partial<LayerItem> = {}): LayerItem => ({
   id: 'image', name: 'Imagem', visible: true, opacity: 70, blendMode: 'multiply', kind: 'pixel',
-  styles: defaultStyles(),
+  styles: createLayerStyleConfig(),
   image: { width: 100, height: 80, mimeType: 'image/png', sourceUrl: 'blob:image' },
   transform: { x: 40, y: 25, width: 100, height: 80, rotation: 15 },
   ...overrides
 })
+
+function smartContent(layer: LayerItem): SmartLayerContent {
+  assert.ok(layer.smart)
+  return layer.smart
+}
 
 test('conversão individual mantém composição externa somente no invólucro', () => {
   const source = imageLayer()
@@ -32,16 +38,17 @@ test('conversão individual mantém composição externa somente no invólucro',
     { width: 125, height: 110, mimeType: 'image/png', sourceUrl: 'blob:cache' },
     'smart'
   )
+  const content = smartContent(smart)
 
   assert.equal(smart.kind, 'smart')
   assert.equal(smart.opacity, 70)
   assert.equal(smart.blendMode, 'multiply')
   assert.equal(smart.styles.effects.length, 0)
   assert.deepEqual(smart.transform, { x: 30, y: 10, width: 125, height: 110, rotation: 0 })
-  assert.equal(smart.smart.layers[0].opacity, 100)
-  assert.equal(smart.smart.layers[0].blendMode, 'normal')
-  assert.deepEqual(smart.smart.layers[0].transform, { x: 10, y: 15, width: 100, height: 80, rotation: 15 })
-  assert.equal(source.transform.x, 40)
+  assert.equal(content.layers[0]?.opacity, 100)
+  assert.equal(content.layers[0]?.blendMode, 'normal')
+  assert.deepEqual(content.layers[0]?.transform, { x: 10, y: 15, width: 100, height: 80, rotation: 15 })
+  assert.equal(source.transform?.x, 40)
 })
 
 test('conversão múltipla preserva ordem, estados internos e normaliza coordenadas', () => {
@@ -54,12 +61,13 @@ test('conversão múltipla preserva ordem, estados internos e normaliza coordena
     { width: 150, height: 120, mimeType: 'image/png', sourceUrl: 'blob:cache' },
     'smart'
   )
+  const content = smartContent(smart)
 
-  assert.deepEqual(smart.smart.layers.map((layer) => layer.id), ['top', 'bottom'])
-  assert.equal(smart.smart.layers[0].visible, false)
-  assert.equal(smart.smart.layers[0].opacity, 45)
-  assert.equal(smart.smart.layers[1].transform.x, 5)
-  assert.equal(smart.smart.layers[1].transform.y, 2)
+  assert.deepEqual(content.layers.map((layer) => layer.id), ['top', 'bottom'])
+  assert.equal(content.layers[0]?.visible, false)
+  assert.equal(content.layers[0]?.opacity, 45)
+  assert.equal(content.layers[1]?.transform?.x, 5)
+  assert.equal(content.layers[1]?.transform?.y, 2)
   assert.equal(smart.opacity, 100)
   assert.equal(smart.blendMode, 'normal')
 })
@@ -79,9 +87,10 @@ test('clonagem de conteúdo inteligente é recursiva e respeita o limite de prof
   assert.equal(smartLayerDepth(layer), 8)
   assert.equal(layersCanConvertToSmart([{ index: 0, layer }]), false)
 
-  const cloned = cloneSmartLayerContent(layer.smart)
-  cloned.layers[0].name = 'Alterado'
-  assert.notEqual(layer.smart.layers[0].name, 'Alterado')
+  const cloned = cloneSmartLayerContent(smartContent(layer))
+  assert.ok(cloned)
+  cloned.layers[0]!.name = 'Alterado'
+  assert.notEqual(smartContent(layer).layers[0]?.name, 'Alterado')
 })
 
 test('rejeita seleção vazia, ajuste e conjunto oculto sem aparência, mas aceita camada oculta individual', () => {

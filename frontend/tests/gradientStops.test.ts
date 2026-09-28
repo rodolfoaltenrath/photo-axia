@@ -14,6 +14,8 @@ import {
   createGradientRasterState,
   renderGradientRasterRows
 } from '../src/editor/gradientRaster.ts'
+import type { GradientRasterRequest } from '../src/editor/gradientRaster.ts'
+import type { LayerTransform } from '../src/types/editor.ts'
 import {
   eightStopGradientFixture,
   gradientStopsFixture,
@@ -183,8 +185,8 @@ test('pontos coincidentes formam uma transição determinística', () => {
   assert.deepEqual(interpolateGradientStops(config, 0.75), [128, 128, 255, 255])
 })
 
-const transparentPixels = (width, height) => new Uint8ClampedArray(width * height * 4)
-const identityTransform = (width, height) => ({ x: 0, y: 0, width, height, rotation: 0 })
+const transparentPixels = (width: number, height: number) => new Uint8ClampedArray(width * height * 4)
+const identityTransform = (width: number, height: number): LayerTransform => ({ x: 0, y: 0, width, height, rotation: 0 })
 
 test('raster aplica múltiplas cores e transparência real no alfa', () => {
   const result = applyGradientRaster({
@@ -208,7 +210,7 @@ test('raster aplica múltiplas cores e transparência real no alfa', () => {
 })
 
 test('processamento integral e em lotes permanecem idênticos com 32 pontos', () => {
-  const request = {
+  const request: GradientRasterRequest = {
     sourcePixels: transparentPixels(17, 9),
     sourceWidth: 17,
     sourceHeight: 9,

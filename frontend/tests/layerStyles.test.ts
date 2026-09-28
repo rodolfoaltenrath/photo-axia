@@ -14,11 +14,12 @@ import {
   normalizeLayerStyleConfig,
   normalizeLayerStyleGlobalLight
 } from '../src/editor/layerStyles.ts'
+import type { LayerEffectType } from '../src/types/editor.ts'
 
 const effectTypes = [
   'drop-shadow', 'inner-shadow', 'outer-glow', 'inner-glow', 'stroke',
   'color-overlay', 'gradient-overlay', 'pattern-overlay', 'satin', 'bevel-emboss'
-]
+] as const satisfies readonly LayerEffectType[]
 
 test('fornece defaults completos e IDs independentes para todos os efeitos', () => {
   for (const type of effectTypes) {
@@ -70,9 +71,9 @@ test('expõe a opacidade de preenchimento normalizada como fator de alfa', () =>
   assert.equal(normalizeLayerStyleFillOpacity(125), 100)
   assert.equal(normalizeLayerStyleFillOpacity('35'), 100)
   assert.equal(layerStyleFillOpacity(undefined), 1)
-  assert.equal(layerStyleFillOpacity({ enabled: true, fillOpacity: 35, effects: [] }), 0.35)
-  assert.equal(layerStyleFillOpacity({ enabled: false, fillOpacity: -20, effects: [] }), 0)
-  assert.equal(layerStyleFillOpacity({ enabled: true, fillOpacity: Number.NaN, effects: [] }), 1)
+  assert.equal(layerStyleFillOpacity({ ...createLayerStyleConfig(), enabled: true, fillOpacity: 35 }), 0.35)
+  assert.equal(layerStyleFillOpacity({ ...createLayerStyleConfig(), enabled: false, fillOpacity: -20 }), 0)
+  assert.equal(layerStyleFillOpacity({ ...createLayerStyleConfig(), enabled: true, fillOpacity: Number.NaN }), 1)
 })
 
 test('normaliza limites, cores, IDs duplicados e descarta efeitos desconhecidos', () => {
@@ -88,13 +89,17 @@ test('normaliza limites, cores, IDs duplicados e descarta efeitos desconhecidos'
   assert.equal(styles.enabled, true)
   assert.equal(styles.fillOpacity, 100)
   assert.equal(styles.effects.length, 2)
-  assert.equal(styles.effects[0].opacity, 0)
-  assert.equal(styles.effects[0].size, 250)
-  assert.equal(styles.effects[0].distance, 0)
-  assert.equal(styles.effects[0].color, '#000000')
-  assert.notEqual(styles.effects[0].id, styles.effects[1].id)
-  assert.equal(styles.effects[1].opacity, 100)
-  assert.equal(styles.effects[1].angle, 1)
+  const shadow = styles.effects[0]
+  const innerShadow = styles.effects[1]
+  assert.ok(shadow?.type === 'drop-shadow')
+  assert.ok(innerShadow?.type === 'inner-shadow')
+  assert.equal(shadow.opacity, 0)
+  assert.equal(shadow.size, 250)
+  assert.equal(shadow.distance, 0)
+  assert.equal(shadow.color, '#000000')
+  assert.notEqual(shadow.id, innerShadow.id)
+  assert.equal(innerShadow.opacity, 100)
+  assert.equal(innerShadow.angle, 1)
 })
 
 test('clona todas as estruturas mutáveis sem compartilhar efeitos, gradientes ou contornos', () => {
@@ -113,12 +118,20 @@ test('clona todas as estruturas mutáveis sem compartilhar efeitos, gradientes o
     }]
   })
   const cloned = cloneLayerStyleConfig(styles)
-  cloned.effects[0].opacity = 12
-  cloned.effects[0].gradient.colorStops[0].color = '#abcdef'
-  cloned.effects[1].contour.points[0].y = 0.5
-  assert.equal(styles.effects[0].opacity, 100)
-  assert.equal(styles.effects[0].gradient.colorStops[0].color, '#112233')
-  assert.equal(styles.effects[1].contour.points[0].y, 0)
+  const clonedGradient = cloned.effects[0]
+  const clonedSatin = cloned.effects[1]
+  const gradient = styles.effects[0]
+  const satin = styles.effects[1]
+  assert.ok(clonedGradient?.type === 'gradient-overlay')
+  assert.ok(clonedSatin?.type === 'satin')
+  assert.ok(gradient?.type === 'gradient-overlay')
+  assert.ok(satin?.type === 'satin')
+  clonedGradient.opacity = 12
+  clonedGradient.gradient.colorStops[0]!.color = '#abcdef'
+  clonedSatin.contour.points[0]!.y = 0.5
+  assert.equal(gradient.opacity, 100)
+  assert.equal(gradient.gradient.colorStops[0]!.color, '#112233')
+  assert.equal(satin.contour.points[0]!.y, 0)
 })
 
 test('valida padrões e expõe somente assets realmente referenciados', () => {
@@ -132,7 +145,9 @@ test('valida padrões e expõe somente assets realmente referenciados', () => {
     { type: 'stroke', id: 'stroke-effect', paint: { type: 'pattern', pattern: { ...pattern, width: 99_999, height: 99_999 } } }
   ] })
   assert.deepEqual(layerStylePatternAssets(styles).map((asset) => asset.id), ['pattern-1', 'pattern-2'])
-  assert.equal(styles.effects[2].paint.pattern, undefined)
+  const stroke = styles.effects[2]
+  assert.ok(stroke?.type === 'stroke')
+  assert.equal(stroke.paint.type === 'pattern' ? stroke.paint.pattern : undefined, undefined)
 })
 
 test('normaliza a luz global do documento', () => {
@@ -148,9 +163,12 @@ test('normaliza origem e limites do brilho interno', () => {
   const effect = normalizeLayerEffect({
     type: 'inner-glow', id: 'inner', source: 'center', choke: 140, size: -10, range: 0
   })
+  assert.ok(effect?.type === 'inner-glow')
   assert.equal(effect.source, 'center')
   assert.equal(effect.choke, 100)
   assert.equal(effect.size, 0)
   assert.equal(effect.range, 1)
-  assert.equal(normalizeLayerEffect({ type: 'inner-glow', source: 'invalid' }).source, 'edge')
+  const invalidSource = normalizeLayerEffect({ type: 'inner-glow', source: 'invalid' })
+  assert.ok(invalidSource?.type === 'inner-glow')
+  assert.equal(invalidSource.source, 'edge')
 })

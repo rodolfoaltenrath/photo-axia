@@ -13,7 +13,7 @@ import {
   shouldSelectClickedLayer
 } from '../src/components/canvas/composables/useFreeTransform.ts'
 
-function approxEqual(actual, expected, tolerance = 0.01) {
+function approxEqual(actual: number, expected: number, tolerance = 0.01) {
   assert.ok(
     Math.abs(actual - expected) <= tolerance,
     `esperado ${actual} próximo de ${expected}`

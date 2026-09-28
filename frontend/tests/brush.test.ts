@@ -13,6 +13,7 @@ import {
   stableEraserPreviewSize
 } from '../src/editor/brush.ts'
 import { clipContextToSelection } from '../src/editor/selection.ts'
+import type { Matrix2D, SelectionPoint, SelectionRegion } from '../src/editor/selection.ts'
 
 test('normaliza o tamanho informado pela barra contextual', () => {
   assert.equal(normalizeBrushSize(Number.NaN), 1)
@@ -22,7 +23,7 @@ test('normaliza o tamanho informado pela barra contextual', () => {
 })
 
 test('filtra amostras redundantes sem perder o ponto final', () => {
-  const points = [{ x: 0, y: 0 }]
+  const points: SelectionPoint[] = [{ x: 0, y: 0 }]
   assert.equal(appendBrushPoint(points, { x: 0.2, y: 0 }, 0.5), false)
   assert.equal(appendBrushPoint(points, { x: 0.75, y: 0 }, 0.5), true)
   assert.equal(appendBrushPoint(points, { x: 0.8, y: 0 }, 0.5, true), true)
@@ -30,7 +31,7 @@ test('filtra amostras redundantes sem perder o ponto final', () => {
 })
 
 test('ignora pontos inválidos e duplicados', () => {
-  const points = [{ x: 10, y: 20 }]
+  const points: SelectionPoint[] = [{ x: 10, y: 20 }]
   assert.equal(appendBrushPoint(points, { x: 10, y: 20 }, 0, true), false)
   assert.equal(appendBrushPoint(points, { x: Number.NaN, y: 20 }, 0, true), false)
   assert.equal(points.length, 1)
@@ -97,7 +98,7 @@ test('a borracha remove alfa usando o mesmo traçado incremental do pincel', () 
     arc() {},
     fill() {}
   }
-  const rendered = drawBrushPoints(context, [{ x: 10, y: 20 }], 0, 24, '#000000', 'erase')
+  const rendered = drawBrushPoints(context as unknown as CanvasRenderingContext2D, [{ x: 10, y: 20 }], 0, 24, '#000000', 'erase')
   assert.equal(rendered, 1)
   assert.equal(context.globalCompositeOperation, 'destination-out')
 })
@@ -135,17 +136,17 @@ test('pincel com seleção mantém exatamente os limites atuais da camada', () =
 })
 
 test('a máscara vetorial é aplicada no mesmo espaço do documento', () => {
-  const calls = []
+  const calls: unknown[][] = []
   const context = {
     beginPath: () => calls.push(['beginPath']),
-    rect: (...values) => calls.push(['rect', ...values]),
+    rect: (...values: number[]) => calls.push(['rect', ...values]),
     clip: () => calls.push(['clip']),
-    setTransform: (...values) => calls.push(['setTransform', ...values])
+    setTransform: (...values: number[]) => calls.push(['setTransform', ...values])
   }
   clipContextToSelection(
-    context,
-    { kind: 'rectangle', bounds: { x: 10, y: 20, width: 30, height: 40 } },
-    [2, 0, 0, 2, -4, -6]
+    context as unknown as CanvasRenderingContext2D,
+    { kind: 'rectangle', bounds: { x: 10, y: 20, width: 30, height: 40 } } as SelectionRegion,
+    [2, 0, 0, 2, -4, -6] as Matrix2D
   )
   assert.deepEqual(calls, [
     ['setTransform', 2, 0, 0, 2, -4, -6],
@@ -157,18 +158,17 @@ test('a máscara vetorial é aplicada no mesmo espaço do documento', () => {
 })
 
 test('a máscara da varinha preserva a transformação da camada selecionada', () => {
-  const transforms = []
+  const transforms: number[][] = []
   const context = {
     beginPath() {},
     rect() {},
     clip() {},
-    setTransform: (...values) => transforms.push(values)
+    setTransform: (...values: number[]) => transforms.push(values)
   }
   clipContextToSelection(
-    context,
+    context as unknown as CanvasRenderingContext2D,
     {
       kind: 'pixels',
-      layerId: 'origem',
       sourceWidth: 100,
       sourceHeight: 100,
       sourceToDocument: [0.5, 0, 0, 0.5, 10, 20],
@@ -176,7 +176,7 @@ test('a máscara da varinha preserva a transformação da camada selecionada', (
       bounds: { x: 10, y: 20, width: 0.5, height: 0.5 },
       pixelCount: 1
     },
-    [2, 0, 0, 2, -10, -20]
+    [2, 0, 0, 2, -10, -20] as Matrix2D
   )
   assert.deepEqual(transforms, [
     [1, 0, 0, 1, 10, 20],

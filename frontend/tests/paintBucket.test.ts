@@ -7,9 +7,18 @@ import {
   applyPaintBucketRaster,
   applySolidFillRaster
 } from '../src/editor/paintBucket.ts'
+import type { Matrix2D, SelectionRegion } from '../src/editor/selection.ts'
+import type { PaintBucketRasterResult } from '../src/editor/paintBucket.ts'
 
-const rgba = (...pixels) => new Uint8ClampedArray(pixels.flat())
-const identity = [1, 0, 0, 1, 0, 0]
+type Rgba = readonly [red: number, green: number, blue: number, alpha: number]
+
+const rgba = (...pixels: Rgba[]) => new Uint8ClampedArray(pixels.flat())
+const identity: Matrix2D = [1, 0, 0, 1, 0, 0]
+
+function resultPixels(result: PaintBucketRasterResult) {
+  assert.ok(result.pixels)
+  return result.pixels
+}
 
 test('preenche exatamente os spans encontrados pelo motor compartilhado', () => {
   const source = rgba([10, 10, 10, 255], [10, 10, 10, 255], [200, 200, 200, 255])
@@ -18,20 +27,20 @@ test('preenche exatamente os spans encontrados pelo motor compartilhado', () => 
     pixels: source, width: 3, height: 1, region, color: '#ff0000', selection: null, sourceToDocument: identity
   })
   assert.equal(result.changedPixelCount, 2)
-  assert.deepEqual([...result.pixels], [255, 0, 0, 255, 255, 0, 0, 255, 200, 200, 200, 255])
+  assert.deepEqual([...resultPixels(result)], [255, 0, 0, 255, 255, 0, 0, 255, 200, 200, 200, 255])
   assert.deepEqual([...source], [10, 10, 10, 255, 10, 10, 10, 255, 200, 200, 200, 255])
 })
 
 test('intersecta a região com a seleção sem alterar a seleção', () => {
   const source = rgba([0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0])
   const region = colorRegionSpans(source, 3, 1, { startX: 0, startY: 0, tolerance: 0, contiguous: true })
-  const selection = { kind: 'rectangle', bounds: { x: 1, y: 0, width: 1, height: 1 } }
+  const selection: SelectionRegion = { kind: 'rectangle', bounds: { x: 1, y: 0, width: 1, height: 1 } }
   const snapshot = structuredClone(selection)
   const result = applyPaintBucketRaster({
     pixels: source, width: 3, height: 1, region, color: '#00ff00', selection, sourceToDocument: identity
   })
   assert.equal(result.changedPixelCount, 1)
-  assert.deepEqual([...result.pixels], [0, 0, 0, 0, 0, 255, 0, 255, 0, 0, 0, 0])
+  assert.deepEqual([...resultPixels(result)], [0, 0, 0, 0, 0, 255, 0, 255, 0, 0, 0, 0])
   assert.deepEqual(selection, snapshot)
 })
 
@@ -56,7 +65,7 @@ test('preenche região fragmentada sem materializar objetos de span', () => {
     regionOptions: { startX: 0, startY: 0, tolerance: 0, contiguous: false }
   })
   assert.equal(result.changedPixelCount, 2)
-  assert.deepEqual([...result.pixels], [255, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255])
+  assert.deepEqual([...resultPixels(result)], [255, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255])
 })
 
 test('preenchimento integral ignora as cores existentes quando não há seleção', () => {
@@ -65,7 +74,7 @@ test('preenchimento integral ignora as cores existentes quando não há seleçã
     pixels: source, width: 3, height: 1, color: '#336699', selection: null, sourceToDocument: identity
   })
   assert.equal(result.changedPixelCount, 3)
-  assert.deepEqual([...result.pixels], [51, 102, 153, 255, 51, 102, 153, 255, 51, 102, 153, 255])
+  assert.deepEqual([...resultPixels(result)], [51, 102, 153, 255, 51, 102, 153, 255, 51, 102, 153, 255])
 })
 
 test('preenchimento integral usa a seleção somente como máscara', () => {
@@ -76,7 +85,7 @@ test('preenchimento integral usa a seleção somente como máscara', () => {
     sourceToDocument: identity
   })
   assert.equal(result.changedPixelCount, 2)
-  assert.deepEqual([...result.pixels], [10, 10, 10, 255, 255, 0, 0, 255, 255, 0, 0, 255])
+  assert.deepEqual([...resultPixels(result)], [10, 10, 10, 255, 255, 0, 0, 255, 255, 0, 0, 255])
 })
 
 test('fallback cooperativo cede controle e observa cancelamento entre lotes', async () => {
