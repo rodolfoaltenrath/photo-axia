@@ -16,24 +16,66 @@ import {
   toggledLayerStyleVisibilityChange
 } from '../src/editor/layerStyleOperations.ts'
 import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { image, layer as testLayer } from './editorTestFixtures.ts'
+import type { LayerEffect, LayerEffectType, LayerItem, LayerKind } from '../src/types/editor.ts'
 
-function layer(kind = 'pixel') {
-  return {
+function layer(kind: LayerKind = 'pixel'): LayerItem {
+  return testLayer({
     id: kind,
     name: kind,
-    visible: true,
-    opacity: 100,
-    blendMode: 'normal',
     kind,
-    styles: createLayerStyleConfig(),
-    image: kind === 'pixel'
-      ? { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' }
-      : undefined
-  }
+    image: kind === 'pixel' ? image() : undefined
+  })
+}
+
+function effectOfType<Type extends LayerEffectType>(
+  effects: LayerEffect[],
+  index: number,
+  type: Type
+): Extract<LayerEffect, { type: Type }> {
+  const effect = effects[index]
+  assert.ok(hasEffectType(effect, type))
+  return effect
+}
+
+function hasEffectType<Type extends LayerEffectType>(
+  effect: LayerEffect | undefined,
+  type: Type
+): effect is Extract<LayerEffect, { type: Type }> {
+  return effect?.type === type
+}
+
+function requireChange<Value>(value: Value | null): Value {
+  assert.ok(value)
+  return value
+}
+
+function patternOverlay(id: string) {
+  const effect = createDefaultLayerEffect('pattern-overlay', id)
+  assert.ok(effect.type === 'pattern-overlay')
+  return effect
+}
+
+function dropShadow(id: string) {
+  const effect = createDefaultLayerEffect('drop-shadow', id)
+  assert.ok(effect.type === 'drop-shadow')
+  return effect
+}
+
+function stroke(id: string) {
+  const effect = createDefaultLayerEffect('stroke', id)
+  assert.ok(effect.type === 'stroke')
+  return effect
+}
+
+function bevelEmboss(id: string) {
+  const effect = createDefaultLayerEffect('bevel-emboss', id)
+  assert.ok(effect.type === 'bevel-emboss')
+  return effect
 }
 
 test('cópia de estilo é profunda e preserva padrões sem compartilhar estado', () => {
-  const effect = createDefaultLayerEffect('pattern-overlay', 'pattern-copy')
+  const effect = patternOverlay('pattern-copy')
   effect.pattern = {
     id: 'pattern', name: 'Padrão', width: 2, height: 2,
     mimeType: 'image/png', sourceUrl: 'blob:pattern'
@@ -41,37 +83,41 @@ test('cópia de estilo é profunda e preserva padrões sem compartilhar estado',
   const source = { ...createLayerStyleConfig(), effects: [effect] }
   const copied = copyLayerStyleConfig(source)
 
-  copied.effects[0].opacity = 25
-  copied.effects[0].pattern.name = 'Alterado'
-  assert.equal(source.effects[0].opacity, 100)
-  assert.equal(source.effects[0].pattern.name, 'Padrão')
+  effectOfType(copied.effects, 0, 'pattern-overlay').opacity = 25
+  effectOfType(copied.effects, 0, 'pattern-overlay').pattern!.name = 'Alterado'
+  assert.equal(effectOfType(source.effects, 0, 'pattern-overlay').opacity, 100)
+  assert.equal(effectOfType(source.effects, 0, 'pattern-overlay').pattern!.name, 'Padrão')
 })
 
 test('efeitos podem ser colados em raster, mas não ficam invisíveis em camada vetorial', () => {
   const styled = { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('color-overlay')] }
   const blendIf = {
     ...createLayerStyleConfig(),
-    blendIf: { channel: 'gray', thisLayer: { shadows: [18, 64], highlights: [255, 255] } }
+    blendIf: {
+      ...createLayerStyleConfig().blendIf,
+      channel: 'gray' as const,
+      thisLayer: { shadows: [18, 64] as [number, number], highlights: [255, 255] as [number, number] }
+    }
   }
   assert.equal(layerCanPasteStyle(layer('pixel'), styled), true)
   assert.equal(layerCanPasteStyle(layer('shape'), styled), false)
   assert.equal(layerCanPasteStyle(layer('shape'), { ...createLayerStyleConfig(), fillOpacity: 45 }), true)
   assert.equal(layerCanPasteStyle(layer('pixel'), blendIf), true)
   assert.equal(layerCanPasteStyle(layer('shape'), blendIf), false)
-  assert.equal(layerCanPasteStyle(layer('image')), false)
+  assert.equal(layerCanPasteStyle(layer('background')), false)
 })
 
 test('colar e limpar geram snapshots independentes e ignoram operações sem mudança', () => {
   const target = layer()
   const styled = { ...createLayerStyleConfig(), fillOpacity: 60 }
-  const pasted = pastedLayerStyleChange(target, styled)
+  const pasted = requireChange(pastedLayerStyleChange(target, styled))
   assert.equal(pasted.after.fillOpacity, 60)
   styled.fillOpacity = 10
   assert.equal(pasted.after.fillOpacity, 60)
 
   target.styles = pasted.after
   assert.equal(pastedLayerStyleChange(target, pasted.after), null)
-  const cleared = clearedLayerStyleChange(target)
+  const cleared = requireChange(clearedLayerStyleChange(target))
   assert.equal(cleared.after.fillOpacity, 100)
   target.styles = cleared.after
   assert.equal(clearedLayerStyleChange(target), null)
@@ -79,38 +125,40 @@ test('colar e limpar geram snapshots independentes e ignoram operações sem mud
 
 test('escala somente medidas em pixels e preserva percentuais, cores e fonte', () => {
   const target = layer()
-  const shadow = createDefaultLayerEffect('drop-shadow', 'shadow')
+  const shadow = dropShadow('shadow')
   shadow.distance = 7
   shadow.size = 9
   shadow.spread = 35
   shadow.opacity = 62
-  const stroke = createDefaultLayerEffect('stroke', 'stroke')
-  stroke.size = 3
-  stroke.paint = {
+  const strokeEffect = stroke('stroke')
+  strokeEffect.size = 3
+  strokeEffect.paint = {
     type: 'pattern',
     angle: 0,
     scale: 80,
     linkWithLayer: true,
     pattern: { id: 'pattern', name: 'Padrão', width: 2, height: 2, mimeType: 'image/png', sourceUrl: 'blob:pattern' }
   }
-  const bevel = createDefaultLayerEffect('bevel-emboss', 'bevel')
+  const bevel = bevelEmboss('bevel')
   bevel.size = 5
   bevel.soften = 2
   bevel.depth = 140
-  target.styles = { ...createLayerStyleConfig(), fillOpacity: 75, effects: [shadow, stroke, bevel] }
+  target.styles = { ...createLayerStyleConfig(), fillOpacity: 75, effects: [shadow, strokeEffect, bevel] }
 
-  const change = scaledLayerStyleChange(target, 200)
-  assert.equal(change.after.effects[0].distance, 14)
-  assert.equal(change.after.effects[0].size, 18)
-  assert.equal(change.after.effects[0].spread, 35)
-  assert.equal(change.after.effects[0].opacity, 62)
-  assert.equal(change.after.effects[1].size, 6)
-  assert.equal(change.after.effects[1].paint.scale, 80)
-  assert.equal(change.after.effects[2].size, 10)
-  assert.equal(change.after.effects[2].soften, 4)
-  assert.equal(change.after.effects[2].depth, 140)
+  const change = requireChange(scaledLayerStyleChange(target, 200))
+  assert.equal(effectOfType(change.after.effects, 0, 'drop-shadow').distance, 14)
+  assert.equal(effectOfType(change.after.effects, 0, 'drop-shadow').size, 18)
+  assert.equal(effectOfType(change.after.effects, 0, 'drop-shadow').spread, 35)
+  assert.equal(effectOfType(change.after.effects, 0, 'drop-shadow').opacity, 62)
+  assert.equal(effectOfType(change.after.effects, 1, 'stroke').size, 6)
+  const scaledStroke = effectOfType(change.after.effects, 1, 'stroke')
+  assert.ok(scaledStroke.paint.type === 'pattern')
+  assert.equal(scaledStroke.paint.scale, 80)
+  assert.equal(effectOfType(change.after.effects, 2, 'bevel-emboss').size, 10)
+  assert.equal(effectOfType(change.after.effects, 2, 'bevel-emboss').soften, 4)
+  assert.equal(effectOfType(change.after.effects, 2, 'bevel-emboss').depth, 140)
   assert.equal(change.after.fillOpacity, 75)
-  assert.equal(target.styles.effects[0].distance, 7)
+  assert.equal(effectOfType(target.styles.effects, 0, 'drop-shadow').distance, 7)
 })
 
 test('normaliza a porcentagem, respeita limites e ignora estilos sem dimensões', () => {
@@ -124,15 +172,15 @@ test('normaliza a porcentagem, respeita limites e ignora estilos sem dimensões'
   assert.equal(layerStylesCanScale(target.styles), false)
   assert.equal(scaledLayerStyleChange(target, 200), null)
 
-  const shadow = createDefaultLayerEffect('drop-shadow', 'limited')
+  const shadow = dropShadow('limited')
   shadow.distance = 900
   shadow.size = 200
   target.styles = { ...createLayerStyleConfig(), effects: [shadow] }
   assert.equal(layerStylesCanScale(target.styles), true)
   assert.equal(scaledLayerStyleChange(target, 100), null)
-  const scaled = scaledLayerStyleChange(target, 200)
-  assert.equal(scaled.after.effects[0].distance, 1_000)
-  assert.equal(scaled.after.effects[0].size, 250)
+  const scaled = requireChange(scaledLayerStyleChange(target, 200))
+  assert.equal(effectOfType(scaled.after.effects, 0, 'drop-shadow').distance, 1_000)
+  assert.equal(effectOfType(scaled.after.effects, 0, 'drop-shadow').size, 250)
 })
 
 test('operações em lote retornam somente mudanças e preservam cada snapshot', () => {
@@ -151,7 +199,7 @@ test('operações em lote retornam somente mudanças e preservam cada snapshot',
   const cleared = clearedLayerStyleChanges([first, second])
   assert.deepEqual(cleared.map((change) => change.layerId), ['first'])
 
-  const shadow = createDefaultLayerEffect('drop-shadow', 'batch-shadow')
+  const shadow = dropShadow('batch-shadow')
   first.styles = { ...createLayerStyleConfig(), effects: [shadow] }
   second.styles = { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('color-overlay', 'overlay')] }
   const scaled = scaledLayerStyleChanges([first, second], 200)
@@ -164,24 +212,28 @@ test('detecta estilos removíveis sem depender de efeitos ativos', () => {
   assert.equal(layerStyleCanClear({ ...createLayerStyleConfig(), fillOpacity: 99 }), true)
   assert.equal(layerStyleCanClear({
     ...createLayerStyleConfig(),
-    blendIf: { channel: 'gray', thisLayer: { shadows: [0, 32], highlights: [255, 255] } }
+    blendIf: {
+      ...createLayerStyleConfig().blendIf,
+      channel: 'gray' as const,
+      thisLayer: { shadows: [0, 32], highlights: [255, 255] }
+    }
   }), true)
   assert.equal(layerStyleCanClear({ ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('color-overlay')] }), true)
 })
 
 test('olhos geral e individual ocultam efeitos sem apagar configurações', () => {
   const target = layer()
-  const shadow = createDefaultLayerEffect('drop-shadow', 'eye-shadow')
+  const shadow = dropShadow('eye-shadow')
   shadow.distance = 18
   target.styles = { ...createLayerStyleConfig(), effects: [shadow] }
 
-  const master = toggledLayerStyleVisibilityChange(target)
+  const master = requireChange(toggledLayerStyleVisibilityChange(target))
   assert.equal(master.after.enabled, false)
-  assert.equal(master.after.effects[0].distance, 18)
+  assert.equal(effectOfType(master.after.effects, 0, 'drop-shadow').distance, 18)
   assert.equal(target.styles.enabled, true)
 
-  const effect = toggledLayerEffectVisibilityChange(target, 'eye-shadow')
+  const effect = requireChange(toggledLayerEffectVisibilityChange(target, 'eye-shadow'))
   assert.equal(effect.after.effects[0].enabled, false)
-  assert.equal(effect.after.effects[0].distance, 18)
+  assert.equal(effectOfType(effect.after.effects, 0, 'drop-shadow').distance, 18)
   assert.equal(toggledLayerEffectVisibilityChange(target, 'ausente'), null)
 })

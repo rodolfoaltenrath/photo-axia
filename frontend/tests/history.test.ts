@@ -9,16 +9,46 @@ import {
   isEditorHistoryDeltaNoop,
   mergeEditorHistoryDelta
 } from '../src/editor/editorHistory.ts'
+import type {
+  AddLayersDelta,
+  ChangeGuidesDelta,
+  ChangeLayersStylesDelta,
+  ChangeLayerStyleGlobalLightDelta,
+  ChangeLayerStylesDelta,
+  EditorHistoryDelta,
+  PatchLayerDelta,
+  ReplaceLayersDelta,
+  TransformLayersDelta
+} from '../src/editor/editorHistory.ts'
 import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
 import { useHistory } from '../src/editor/history.ts'
+import type { LayerEffect, LayerEffectType, LayerItem, LayerStyleConfig } from '../src/types/editor.ts'
+import {
+  image as testImage,
+  layer as testLayer,
+  styles as testStyles,
+  text as testText,
+  transform as testTransform
+} from './editorTestFixtures.ts'
+
+interface ValueDelta {
+  before: unknown
+  after: unknown
+}
 
 const deltaOptions = {
-  estimateBytes: (delta) => JSON.stringify(delta).length * 2,
-  merge: (previous, next) => ({ before: previous.before, after: next.after })
+  estimateBytes: (delta: ValueDelta) => JSON.stringify(delta).length * 2,
+  merge: (previous: ValueDelta, next: ValueDelta): ValueDelta => ({ before: previous.before, after: next.after })
+}
+
+function effectOfType<Type extends LayerEffectType>(effects: LayerEffect[], type: Type) {
+  const effect = effects.find((candidate) => candidate.type === type)
+  assert.ok(effect, `Efeito ${type} deveria existir`)
+  return effect as Extract<LayerEffect, { type: Type }>
 }
 
 test('mantém assets raster do antes e depois disponíveis para desfazer', () => {
-  const delta = {
+  const delta: PatchLayerDelta = {
     type: 'layer:patch',
     layerId: 'image',
     before: { image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:before', byteSize: 120 } },
@@ -119,13 +149,13 @@ test('limita o histórico pelo orçamento de memória estimado', () => {
 })
 
 test('funde patches sem perder o estado anterior ao início da transação', () => {
-  const first = {
+  const first: PatchLayerDelta = {
     type: 'layer:patch',
     layerId: 'layer-1',
     before: { opacity: 100 },
     after: { opacity: 80 }
   }
-  const second = {
+  const second: PatchLayerDelta = {
     type: 'layer:patch',
     layerId: 'layer-1',
     before: { opacity: 80 },
@@ -133,13 +163,14 @@ test('funde patches sem perder o estado anterior ao início da transação', () 
   }
   const merged = mergeEditorHistoryDelta(first, second)
 
+  assert.equal(merged.type, 'layer:patch')
   assert.deepEqual(merged.before, { opacity: 100 })
   assert.deepEqual(merged.after, { opacity: 35 })
   assert.ok(estimateEditorHistoryBytes(merged) < 512)
 })
 
 test('remove uma transação agrupada quando ela retorna ao estado inicial', () => {
-  const history = useHistory({
+  const history = useHistory<ValueDelta>({
     ...deltaOptions,
     isNoop: (delta) => delta.before === delta.after
   })
@@ -151,18 +182,19 @@ test('remove uma transação agrupada quando ela retorna ao estado inicial', () 
 })
 
 test('agrupa movimentos de guia preservando a posição original', () => {
-  const first = {
+  const first: ChangeGuidesDelta = {
     type: 'guides:change',
     before: [{ id: 'guide-1', orientation: 'vertical', position: 100 }],
     after: [{ id: 'guide-1', orientation: 'vertical', position: 120 }]
   }
-  const second = {
+  const second: ChangeGuidesDelta = {
     type: 'guides:change',
     before: [{ id: 'guide-1', orientation: 'vertical', position: 120 }],
     after: [{ id: 'guide-1', orientation: 'horizontal', position: 240 }]
   }
   const merged = mergeEditorHistoryDelta(first, second)
 
+  assert.equal(merged.type, 'guides:change')
   assert.deepEqual(merged.before, first.before)
   assert.deepEqual(merged.after, second.after)
   assert.equal(isEditorHistoryDeltaNoop(merged), false)
@@ -170,7 +202,7 @@ test('agrupa movimentos de guia preservando a posição original', () => {
 })
 
 test('um delta de transformação permanece pequeno em documentos com muitas camadas', () => {
-  const delta = {
+  const delta: PatchLayerDelta = {
     type: 'layer:patch',
     layerId: 'layer-999',
     before: { transform: { x: 0, y: 0, width: 3840, height: 2160, rotation: 0 } },
@@ -194,23 +226,20 @@ test('um delta de transformação permanece pequeno em documentos com muitas cam
 })
 
 test('aplica inserção, patch, reordenação e remoção de forma reversível', () => {
-  const background = { id: 'background', name: 'Fundo', visible: true, opacity: 100, kind: 'background' }
-  const image = {
+  const background = testLayer({ id: 'background', name: 'Fundo', kind: 'background' })
+  const image = testLayer({
     id: 'image',
     name: 'Imagem',
-    visible: true,
-    opacity: 100,
-    kind: 'pixel',
-    image: {
+    image: testImage({
       width: 3840,
       height: 2160,
       mimeType: 'image/jpeg',
       sourceUrl: '/__axia_asset/image'
-    },
-    transform: { x: 0, y: 0, width: 100, height: 100 }
-  }
-  const layers = [background]
-  const add = {
+    }),
+    transform: testTransform({ width: 100, height: 100 })
+  })
+  const layers: LayerItem[] = [background]
+  const add: AddLayersDelta = {
     type: 'layers:add',
     items: [{ index: 0, layer: image }],
     activeBefore: 'background',
@@ -220,7 +249,7 @@ test('aplica inserção, patch, reordenação e remoção de forma reversível',
   assert.deepEqual(layers.map((layer) => layer.id), ['image', 'background'])
   assert.equal(result.activeLayerId, 'image')
 
-  const patch = {
+  const patch: PatchLayerDelta = {
     type: 'layer:patch',
     layerId: 'image',
     before: { opacity: 100 },
@@ -228,12 +257,13 @@ test('aplica inserção, patch, reordenação e remoção de forma reversível',
   }
   applyEditorHistoryDelta(layers, 'image', patch, 'redo')
   assert.equal(layers[0].opacity, 35)
+  assert.ok(layers[0]?.image)
   assert.equal(layers[0].image.sourceUrl, '/__axia_asset/image')
   applyEditorHistoryDelta(layers, 'image', patch, 'undo')
   assert.equal(layers[0].opacity, 100)
   assert.equal(layers[0].image.sourceUrl, '/__axia_asset/image')
 
-  const reorder = { type: 'layer:reorder', layerId: 'image', beforeIndex: 0, afterIndex: 1 }
+  const reorder: EditorHistoryDelta = { type: 'layer:reorder', layerId: 'image', beforeIndex: 0, afterIndex: 1 }
   applyEditorHistoryDelta(layers, 'image', reorder, 'redo')
   assert.deepEqual(layers.map((layer) => layer.id), ['background', 'image'])
   applyEditorHistoryDelta(layers, 'image', reorder, 'undo')
@@ -245,11 +275,12 @@ test('aplica inserção, patch, reordenação e remoção de forma reversível',
 })
 
 test('desfazer uma transformação preserva o asset visual da camada', () => {
-  const layers = [{
+  const layers: LayerItem[] = [{
     id: 'image',
     name: 'Imagem 4K',
     visible: true,
     opacity: 100,
+    blendMode: 'normal',
     kind: 'pixel',
     image: {
       width: 3840,
@@ -260,9 +291,10 @@ test('desfazer uma transformação preserva o asset visual da camada', () => {
       previewWidth: 1920,
       previewHeight: 1080
     },
-    transform: { x: 0, y: 0, width: 1920, height: 1080, rotation: 0 }
+    transform: { x: 0, y: 0, width: 1920, height: 1080, rotation: 0 },
+    styles: createLayerStyleConfig()
   }]
-  const transform = {
+  const transform: PatchLayerDelta = {
     type: 'layer:patch',
     layerId: 'image',
     before: { transform: { x: 0, y: 0, width: 1920, height: 1080, rotation: 0 } },
@@ -272,19 +304,20 @@ test('desfazer uma transformação preserva o asset visual da camada', () => {
   applyEditorHistoryDelta(layers, 'image', transform, 'redo')
   applyEditorHistoryDelta(layers, 'image', transform, 'undo')
 
+  assert.ok(layers[0]?.image)
   assert.equal(layers[0].image.sourceUrl, '/__axia_asset/image-4k')
   assert.equal(layers[0].image.previewWidth, 1920)
   assert.deepEqual(layers[0].transform, transform.before.transform)
 })
 
 test('desfaz e refaz a movimentação de várias camadas como uma ação atômica', () => {
-  const first = { x: 10, y: 20, width: 100, height: 80, rotation: 0 }
-  const second = { x: 220, y: 40, width: 60, height: 90, rotation: 15 }
-  const layers = [
-    { id: 'first', name: 'Primeira', visible: true, opacity: 100, kind: 'pixel', transform: { ...first } },
-    { id: 'second', name: 'Segunda', visible: true, opacity: 100, kind: 'text', transform: { ...second } }
+  const first = testTransform({ x: 10, y: 20, width: 100, height: 80 })
+  const second = testTransform({ x: 220, y: 40, width: 60, height: 90, rotation: 15 })
+  const layers: LayerItem[] = [
+    testLayer({ id: 'first', name: 'Primeira', transform: { ...first } }),
+    testLayer({ id: 'second', name: 'Segunda', kind: 'text', transform: { ...second } })
   ]
-  const delta = {
+  const delta: TransformLayersDelta = {
     type: 'layers:transform',
     items: [
       { layerId: 'first', before: first, after: { ...first, x: 35, y: 5 } },
@@ -292,7 +325,7 @@ test('desfaz e refaz a movimentação de várias camadas como uma ação atômic
     ]
   }
 
-  const history = useHistory({
+  const history = useHistory<EditorHistoryDelta>({
     estimateBytes: estimateEditorHistoryBytes,
     isNoop: isEditorHistoryDeltaNoop,
     merge: mergeEditorHistoryDelta
@@ -302,7 +335,9 @@ test('desfaz e refaz a movimentação de várias camadas como uma ação atômic
   assert.deepEqual(layers.map((layer) => layer.transform), delta.items.map((item) => item.after))
 
   const transition = history.undo()
+  assert.ok(transition)
   assert.equal(transition.steps.length, 1)
+  assert.equal(transition.steps[0].delta.type, 'layers:transform')
   assert.equal(transition.steps[0].delta.items.length, 2)
   applyEditorHistoryDelta(layers, 'second', transition.steps[0].delta, transition.steps[0].direction, ['first', 'second'])
   assert.deepEqual(layers.map((layer) => layer.transform), [first, second])
@@ -310,11 +345,11 @@ test('desfaz e refaz a movimentação de várias camadas como uma ação atômic
 })
 
 test('desfaz e refaz o modo de mesclagem sem tocar no raster', () => {
-  const image = { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:blend' }
-  const layers = [{
-    id: 'blend', name: 'Mesclagem', visible: true, opacity: 100, blendMode: 'multiply', kind: 'pixel', image
-  }]
-  const delta = {
+  const image = testImage({ sourceUrl: 'blob:blend' })
+  const layers: LayerItem[] = [testLayer({
+    id: 'blend', name: 'Mesclagem', blendMode: 'multiply', image
+  })]
+  const delta: PatchLayerDelta = {
     type: 'layer:patch',
     layerId: 'blend',
     before: { blendMode: 'normal' },
@@ -330,17 +365,18 @@ test('desfaz e refaz o modo de mesclagem sem tocar no raster', () => {
 })
 
 test('agrupa e reverte alterações da luz global do documento', () => {
-  const first = {
+  const first: ChangeLayerStyleGlobalLightDelta = {
     type: 'document:global-light',
     before: { angle: 120, altitude: 30 },
     after: { angle: 100, altitude: 30 }
   }
-  const second = {
+  const second: ChangeLayerStyleGlobalLightDelta = {
     type: 'document:global-light',
     before: { angle: 100, altitude: 30 },
     after: { angle: 80, altitude: 45 }
   }
   const merged = mergeEditorHistoryDelta(first, second)
+  assert.equal(merged.type, 'document:global-light')
   assert.deepEqual(merged.before, first.before)
   assert.deepEqual(merged.after, second.after)
   assert.equal(isEditorHistoryDeltaNoop(merged), false)
@@ -348,9 +384,9 @@ test('agrupa e reverte alterações da luz global do documento', () => {
 })
 
 test('clona estilos no histórico e retém URLs de padrões sem compartilhar estado', () => {
-  const layer = {
+  const layer: LayerItem = {
     id: 'styled', name: 'Com estilo', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
-    styles: {
+    styles: testStyles({
       enabled: true,
       fillOpacity: 75,
       effects: [{
@@ -361,20 +397,24 @@ test('clona estilos no histórico e retém URLs de padrões sem compartilhar est
         },
         angle: 0, scale: 100, linkWithLayer: true
       }]
-    }
+    })
   }
   const cloned = cloneLayerState(layer)
-  cloned.styles.effects[0].pattern.name = 'Alterado'
-  assert.equal(layer.styles.effects[0].pattern.name, 'Grade')
+  const clonedPattern = effectOfType(cloned.styles.effects, 'pattern-overlay')
+  const originalPattern = effectOfType(layer.styles.effects, 'pattern-overlay')
+  assert.ok(clonedPattern.pattern)
+  assert.ok(originalPattern.pattern)
+  clonedPattern.pattern.name = 'Alterado'
+  assert.equal(originalPattern.pattern.name, 'Grade')
 
-  const delta = { type: 'layers:add', items: [{ index: 0, layer }] }
+  const delta: AddLayersDelta = { type: 'layers:add', items: [{ index: 0, layer }] }
   assert.deepEqual(historyDeltaObjectUrls(delta), ['blob:pattern'])
   assert.ok(estimateEditorHistoryBytes(delta) >= 256)
 })
 
 test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização visual', () => {
   const initialStyles = createLayerStyleConfig()
-  const styled = {
+  const styled: LayerStyleConfig = {
     ...createLayerStyleConfig(),
     fillOpacity: 45,
     effects: [{
@@ -382,13 +422,13 @@ test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização v
       blendMode: 'normal', color: '#112233'
     }]
   }
-  const layers = [{
+  const layers: LayerItem[] = [{
     id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
     image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
     transform: { x: 0, y: 0, width: 10, height: 10 },
     styles: initialStyles
   }]
-  const delta = {
+  const delta: PatchLayerDelta = {
     type: 'layer:patch', layerId: 'image',
     before: { styles: initialStyles }, after: { styles: styled }
   }
@@ -396,8 +436,8 @@ test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização v
   let result = applyEditorHistoryDelta(layers, 'image', delta, 'redo')
   assert.equal(layers[0].styles.fillOpacity, 45)
   assert.deepEqual(result.refreshLayerIds, ['image'])
-  layers[0].styles.effects[0].color = '#abcdef'
-  assert.equal(delta.after.styles.effects[0].color, '#112233')
+  effectOfType(layers[0].styles.effects, 'color-overlay').color = '#abcdef'
+  assert.equal(effectOfType(delta.after.styles!.effects, 'color-overlay').color, '#112233')
 
   result = applyEditorHistoryDelta(layers, 'image', delta, 'undo')
   assert.deepEqual(layers[0].styles, initialStyles)
@@ -406,7 +446,7 @@ test('desfaz e refaz estilos sem compartilhar o patch e solicita atualização v
 
 test('estilos e luz global formam uma única alteração reversível', () => {
   const before = createLayerStyleConfig()
-  const after = {
+  const after: LayerStyleConfig = {
     ...createLayerStyleConfig(),
     fillOpacity: 100,
     effects: [{
@@ -416,12 +456,12 @@ test('estilos e luz global formam uma única alteração reversível', () => {
       layerKnocksOutShadow: true
     }]
   }
-  const layers = [{
+  const layers: LayerItem[] = [{
     id: 'image', name: 'Imagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
     image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:image' },
     transform: { x: 0, y: 0, width: 10, height: 10 }, styles: before
   }]
-  const delta = {
+  const delta: ChangeLayerStylesDelta = {
     type: 'layer-styles:change', layerId: 'image', before, after,
     globalLightBefore: { angle: 120, altitude: 30 },
     globalLightAfter: { angle: 45, altitude: 30 }
@@ -430,8 +470,8 @@ test('estilos e luz global formam uma única alteração reversível', () => {
   let result = applyEditorHistoryDelta(layers, 'image', delta, 'redo')
   assert.equal(layers[0].styles.effects[0].type, 'drop-shadow')
   assert.deepEqual(result.refreshLayerIds, ['image'])
-  layers[0].styles.effects[0].color = '#ffffff'
-  assert.equal(delta.after.effects[0].color, '#000000')
+  effectOfType(layers[0].styles.effects, 'drop-shadow').color = '#ffffff'
+  assert.equal(effectOfType(delta.after.effects, 'drop-shadow').color, '#000000')
 
   result = applyEditorHistoryDelta(layers, 'image', delta, 'undo')
   assert.deepEqual(layers[0].styles, before)
@@ -440,14 +480,14 @@ test('estilos e luz global formam uma única alteração reversível', () => {
 })
 
 test('desfaz e refaz estilos de várias camadas como uma ação atômica e leve', () => {
-  const empty = { enabled: true, fillOpacity: 100, effects: [] }
-  const firstStyle = { enabled: true, fillOpacity: 60, effects: [] }
-  const secondStyle = { enabled: true, fillOpacity: 35, effects: [] }
-  const layers = [
+  const empty = testStyles({ fillOpacity: 100 })
+  const firstStyle = testStyles({ fillOpacity: 60 })
+  const secondStyle = testStyles({ fillOpacity: 35 })
+  const layers: LayerItem[] = [
     { id: 'first', name: 'Primeira', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel', image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:first', byteSize: 1_000_000 }, styles: empty },
     { id: 'second', name: 'Segunda', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel', image: { width: 10, height: 10, mimeType: 'image/png', sourceUrl: 'blob:second', byteSize: 1_000_000 }, styles: empty }
   ]
-  const delta = {
+  const delta: ChangeLayersStylesDelta = {
     type: 'layers:styles',
     items: [
       { layerId: 'first', before: empty, after: firstStyle },
@@ -472,8 +512,8 @@ test('desfaz e refaz estilos de várias camadas como uma ação atômica e leve'
 })
 
 test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada', () => {
-  const text = { content: 'Axia', fontFamily: 'Inter', fontSize: 48, color: '#ffffff' }
-  const styles = {
+  const text = testText({ fontSize: 48, color: '#ffffff' })
+  const styles: LayerStyleConfig = {
     ...createLayerStyleConfig(),
     fillOpacity: 80,
     effects: [{
@@ -481,16 +521,14 @@ test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada'
       blendMode: 'normal', color: '#ff0000'
     }]
   }
-  const originalTransform = { x: 20, y: 30, width: 180, height: 60, rotation: 12 }
-  const rasterTransform = { x: 8, y: 14, width: 204, height: 94, rotation: 0 }
-  const rasterImage = {
-    width: 204, height: 94, mimeType: 'image/png', sourceUrl: 'blob:rasterized', byteSize: 4096
-  }
-  const layers = [{
+  const originalTransform = testTransform({ x: 20, y: 30, width: 180, height: 60, rotation: 12 })
+  const rasterTransform = testTransform({ x: 8, y: 14, width: 204, height: 94 })
+  const rasterImage = testImage({ width: 204, height: 94, sourceUrl: 'blob:rasterized', byteSize: 4096 })
+  const layers: LayerItem[] = [{
     id: 'text', name: 'Axia', visible: true, opacity: 65, blendMode: 'multiply', kind: 'text',
     text, transform: originalTransform, styles
   }]
-  const delta = {
+  const delta: PatchLayerDelta = {
     type: 'layer:patch',
     layerId: 'text',
     before: { kind: 'text', image: undefined, text, transform: originalTransform, styles },
@@ -502,6 +540,7 @@ test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada'
 
   let result = applyEditorHistoryDelta(layers, 'text', delta, 'redo')
   assert.equal(layers[0].kind, 'pixel')
+  assert.ok(layers[0]?.image)
   assert.equal(layers[0].image.sourceUrl, 'blob:rasterized')
   assert.equal(layers[0].text, undefined)
   assert.equal(layers[0].opacity, 65)
@@ -518,12 +557,12 @@ test('desfaz e refaz a rasterização restaurando conteúdo e efeitos da camada'
 })
 
 test('desfaz e refaz a substituição de várias camadas por uma mesclagem', () => {
-  const base = { id: 'base', name: 'Base', visible: true, opacity: 100, blendMode: 'normal', kind: 'background' }
-  const first = { id: 'first', name: 'Primeira', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel' }
-  const second = { id: 'second', name: 'Segunda', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel' }
-  const merged = { id: 'merged', name: 'Mesclagem', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel' }
-  const layers = [first, second, base]
-  const delta = {
+  const base = testLayer({ id: 'base', name: 'Base', kind: 'background' })
+  const first = testLayer({ id: 'first', name: 'Primeira' })
+  const second = testLayer({ id: 'second', name: 'Segunda' })
+  const merged = testLayer({ id: 'merged', name: 'Mesclagem' })
+  const layers: LayerItem[] = [first, second, base]
+  const delta: ReplaceLayersDelta = {
     type: 'layers:replace',
     before: [{ index: 0, layer: first }, { index: 1, layer: second }],
     after: [{ index: 0, layer: merged }],
@@ -545,15 +584,15 @@ test('desfaz e refaz a substituição de várias camadas por uma mesclagem', () 
 })
 
 test('histórico de camada inteligente clona e retém assets internos recursivamente', () => {
-  const inner = {
+  const inner: LayerItem = {
     id: 'inner', name: 'Interna', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel',
-    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    styles: testStyles({ enabled: true, fillOpacity: 100 }),
     image: { width: 20, height: 20, mimeType: 'image/png', sourceUrl: 'blob:inner', byteSize: 256 },
     transform: { x: 0, y: 0, width: 20, height: 20, rotation: 0 }
   }
-  const smart = {
+  const smart: LayerItem = {
     id: 'smart', name: 'Inteligente', visible: true, opacity: 100, blendMode: 'normal', kind: 'smart',
-    styles: { enabled: true, fillOpacity: 100, effects: [] },
+    styles: testStyles({ enabled: true, fillOpacity: 100 }),
     image: { width: 20, height: 20, mimeType: 'image/png', sourceUrl: 'blob:cache', byteSize: 128 },
     transform: { x: 10, y: 10, width: 20, height: 20, rotation: 0 },
     smart: {
@@ -561,7 +600,7 @@ test('histórico de camada inteligente clona e retém assets internos recursivam
       layerStyleGlobalLight: { angle: 120, altitude: 30 }, layers: [inner], revision: 1
     }
   }
-  const delta = {
+  const delta: ReplaceLayersDelta = {
     type: 'layers:replace',
     before: [{ index: 0, layer: inner }],
     after: [{ index: 0, layer: cloneLayerHistoryState(smart) }],
@@ -573,10 +612,12 @@ test('histórico de camada inteligente clona e retém assets internos recursivam
   assert.ok(estimateEditorHistoryBytes(delta) >= 256)
   assert.equal(delta.after[0].layer.image, undefined)
   const cloned = cloneLayerState(smart)
+  assert.ok(cloned.smart)
+  assert.ok(smart.smart)
   cloned.smart.layers[0].name = 'Alterada'
   assert.equal(smart.smart.layers[0].name, 'Interna')
 
-  const layers = [inner]
+  const layers: LayerItem[] = [inner]
   let result = applyEditorHistoryDelta(layers, 'inner', delta, 'redo')
   assert.equal(layers[0].kind, 'smart')
   assert.equal(layers[0].image, undefined)

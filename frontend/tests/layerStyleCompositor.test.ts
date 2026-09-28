@@ -12,13 +12,15 @@ import {
   layerStyleNeedsCompositing,
   LAYER_STYLE_COMPOSITION_ORDER
 } from '../src/editor/layerStyleCompositor.ts'
+import type { LayerStyleCacheIdentity, LayerStyleRaster } from '../src/editor/layerStyleCompositor.ts'
 import { createDefaultLayerEffect, normalizeLayerStyleConfig } from '../src/editor/layerStyles.ts'
 import { applyLayerStyleBlendIfUnderlying, composeLayerStyleRaster } from '../src/editor/layerStyleRaster.ts'
 import { ByteBudgetLruCache, LatestGenerationByKey } from '../src/editor/renderCache.ts'
+import type { LayerEffectType, LayerStyleGlobalLight, LayerStylePatternAsset } from '../src/types/editor.ts'
 
-const globalLight = { angle: 0, altitude: 30 }
+const globalLight: LayerStyleGlobalLight = { angle: 0, altitude: 30 }
 
-function testPatternAsset(id) {
+function testPatternAsset(id: string): LayerStylePatternAsset {
   return {
     id,
     name: 'Padrão de teste',
@@ -29,22 +31,23 @@ function testPatternAsset(id) {
   }
 }
 
-function styles(effects = [], fillOpacity = 100) {
+function styles(effects: unknown[] = [], fillOpacity = 100) {
   return normalizeLayerStyleConfig({ enabled: true, fillOpacity, effects })
 }
 
 test('mantém uma única regra de efeitos aceitos pelo compositor raster', () => {
-  for (const type of [
+  const rasterSupportedEffects: LayerEffectType[] = [
     'drop-shadow', 'inner-shadow', 'outer-glow', 'inner-glow', 'satin',
     'color-overlay', 'gradient-overlay', 'pattern-overlay', 'bevel-emboss'
-  ]) {
+  ]
+  for (const type of rasterSupportedEffects) {
     assert.equal(layerStyleEffectIsRasterSupported(createDefaultLayerEffect(type, `supported-${type}`)), true)
   }
   const colorStroke = createDefaultLayerEffect('stroke', 'supported-stroke')
   assert.equal(layerStyleEffectIsRasterSupported(colorStroke), true)
   const patternStroke = {
     ...colorStroke,
-    paint: { type: 'pattern', pattern: undefined, angle: 0, scale: 100, linkWithLayer: true }
+    paint: { type: 'pattern' as const, pattern: undefined, angle: 0, scale: 100, linkWithLayer: true }
   }
   assert.equal(layerStyleEffectIsRasterSupported(patternStroke), true)
   const texturedBevel = createDefaultLayerEffect('bevel-emboss', 'textured-bevel')
@@ -176,7 +179,7 @@ test('hash é determinístico para objetos equivalentes e muda com configuraçã
 })
 
 test('chave de cache inclui raster, resolução, qualidade e configuração normalizada', () => {
-  const base = {
+  const base: LayerStyleCacheIdentity = {
     layerId: 'layer-1', sourceIdentity: 'raster-7', sourceWidth: 100, sourceHeight: 50,
     styles: styles(), globalLight, resolutionScale: 1, quality: 'final'
   }
@@ -188,12 +191,14 @@ test('chave de cache inclui raster, resolução, qualidade e configuração norm
 })
 
 test('LRU respeita orçamento, atualiza recência e libera somente entradas removidas', () => {
-  const disposed = []
+  const disposed: string[] = []
   const cache = new ByteBudgetLruCache(20, 2)
-  const value = (id, byteSize) => ({ byteSize, dispose: () => disposed.push(id) })
+  const value = (id: string, byteSize: number) => ({ byteSize, dispose: () => disposed.push(id) })
   assert.equal(cache.set('a', value('a', 8)), true)
   assert.equal(cache.set('b', value('b', 8)), true)
-  assert.equal(cache.get('a').byteSize, 8)
+  const cachedA = cache.get('a')
+  assert.ok(cachedA)
+  assert.equal(cachedA.byteSize, 8)
   assert.equal(cache.set('c', value('c', 8)), true)
   assert.equal(cache.get('b'), undefined)
   assert.deepEqual(disposed, ['b'])
@@ -344,7 +349,7 @@ test('origem do brilho interno alterna entre borda e centro', () => {
   const center = { ...edge, source: 'center' }
   const edgeResult = composeLayerStyleRaster(source, styles([edge], 0), globalLight)
   const centerResult = composeLayerStyleRaster(source, styles([center], 0), globalLight)
-  const middleAlpha = (result) => result.data[(2 * 5 + 2) * 4 + 3]
+  const middleAlpha = (result: LayerStyleRaster) => result.data[(2 * 5 + 2) * 4 + 3]
 
   assert.equal(middleAlpha(edgeResult), 0)
   assert.ok(middleAlpha(centerResult) > 0)

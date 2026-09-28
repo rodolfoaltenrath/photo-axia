@@ -286,8 +286,11 @@ function base(value: Record<string, unknown>, type: LayerEffectType, opacity = 1
   }
 }
 
-export function createDefaultLayerEffect(type: LayerEffectType, id?: string): LayerEffect {
-  return normalizeLayerEffect({ type, id })!
+export function createDefaultLayerEffect<Type extends LayerEffectType>(
+  type: Type,
+  id?: string
+): Extract<LayerEffect, { type: Type }> {
+  return normalizeLayerEffect({ type, id })! as Extract<LayerEffect, { type: Type }>
 }
 
 export function normalizeLayerEffect(value: unknown): LayerEffect | undefined {

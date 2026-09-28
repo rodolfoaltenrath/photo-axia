@@ -9,9 +9,11 @@ import {
 } from '../src/editor/renderBounds.ts'
 import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
 import { layerAppearanceRenderPlan, layerRasterDrawRect } from '../src/services/renderDocument.ts'
+import { image, layer as testLayer, text, transform } from './editorTestFixtures.ts'
+import type { DocumentSpec, LayerTransform } from '../src/types/editor.ts'
 
-const document = { width: 1000, height: 800 }
-const layer = (transform) => ({ transform })
+const document: Pick<DocumentSpec, 'width' | 'height'> = { width: 1000, height: 800 }
+const layer = (layerTransform: LayerTransform) => testLayer({ transform: layerTransform })
 
 test('miniatura ignora camadas completamente fora do documento', () => {
   assert.equal(layerIntersectsDocument(layer({ x: 10, y: 20, width: 100, height: 80 }), document), true)
@@ -57,11 +59,12 @@ test('geometria do raster composto preserva escala e offsets do conteúdo origin
 
 test('bounds estilizados incluem o brilho que alcança uma viewport externa à camada', () => {
   const glow = createDefaultLayerEffect('outer-glow', 'bounds-glow')
+  assert.ok(glow.type === 'outer-glow')
   glow.size = 20
-  const styledLayer = {
-    transform: { x: 100, y: 100, width: 50, height: 40, rotation: 0 },
+  const styledLayer = testLayer({
+    transform: transform({ x: 100, y: 100, width: 50, height: 40 }),
     styles: { ...createLayerStyleConfig(), effects: [glow] }
-  }
+  })
   const light = { angle: 120, altitude: 30 }
   assert.deepEqual(layerStyledDocumentBounds(styledLayer, light), { x: 80, y: 80, width: 90, height: 80 })
   assert.equal(layerIntersectsBounds(styledLayer, { x: 75, y: 100, width: 10, height: 10 }), false)
@@ -69,7 +72,7 @@ test('bounds estilizados incluem o brilho que alcança uma viewport externa à c
 })
 
 test('aparência local força visibilidade e isola opacidade e mesclagem externas', () => {
-  const source = {
+  const source = testLayer({
     id: 'layer-appearance',
     name: 'Camada',
     visible: false,
@@ -77,9 +80,9 @@ test('aparência local força visibilidade e isola opacidade e mesclagem externa
     blendMode: 'multiply',
     kind: 'pixel',
     styles: createLayerStyleConfig(),
-    image: { width: 20, height: 10, mimeType: 'image/png', sourceUrl: 'blob:source' },
-    transform: { x: -3.4, y: 7.2, width: 20, height: 10, rotation: 0 }
-  }
+    image: image({ width: 20, height: 10, sourceUrl: 'blob:source' }),
+    transform: transform({ x: -3.4, y: 7.2, width: 20, height: 10 })
+  })
   const plan = layerAppearanceRenderPlan({ ...document, background: 'transparent', layerStyleGlobalLight: { angle: 120, altitude: 30 } }, source, 'local')
   assert.deepEqual(plan?.viewport, { x: -4, y: 7, width: 21, height: 11 })
   assert.equal(plan?.layer.visible, true)
@@ -91,7 +94,7 @@ test('aparência local força visibilidade e isola opacidade e mesclagem externa
 })
 
 test('exportação isolada incorpora opacidade mas nunca o blend externo', () => {
-  const source = {
+  const source = testLayer({
     id: 'layer-export',
     name: 'Camada',
     visible: true,
@@ -99,35 +102,38 @@ test('exportação isolada incorpora opacidade mas nunca o blend externo', () =>
     blendMode: 'screen',
     kind: 'text',
     styles: createLayerStyleConfig(),
-    text: { content: 'Axia', fontFamily: 'Arial', fontSize: 20, fontWeight: 400, color: '#fff', alignment: 'left', lineHeight: 1.2, baseWidth: 50, baseHeight: 24 },
-    transform: { x: 10, y: 20, width: 50, height: 24, rotation: 0 }
-  }
+    text: text({ fontFamily: 'Arial', fontSize: 20, color: '#fff', baseWidth: 50, baseHeight: 24 }),
+    transform: transform({ x: 10, y: 20, width: 50, height: 24 })
+  })
   const plan = layerAppearanceRenderPlan({ ...document, background: 'transparent', layerStyleGlobalLight: { angle: 120, altitude: 30 } }, source, 'isolated-export')
   assert.equal(plan?.layer.opacity, 42)
   assert.equal(plan?.layer.blendMode, 'normal')
 })
 
 test('aparência isolada reconhece camada vetorial sem exigir imagem', () => {
-  const source = {
+  const source = testLayer({
     id: 'shape-layer', name: 'Estrela', visible: true, opacity: 100, blendMode: 'normal', kind: 'shape',
     styles: createLayerStyleConfig(),
     shape: {
       kind: 'star', color: '#ffcc00', cornerRadius: 4, squareness: 0,
       starPoints: 5, starInnerRatio: 50, baseWidth: 200, baseHeight: 200
     },
-    transform: { x: 80, y: 90, width: 300, height: 220, rotation: 0 }
-  }
+    transform: transform({ x: 80, y: 90, width: 300, height: 220 })
+  })
   const plan = layerAppearanceRenderPlan({ ...document, background: 'transparent', layerStyleGlobalLight: { angle: 120, altitude: 30 } }, source, 'local')
   assert.deepEqual(plan?.viewport, { x: 80, y: 90, width: 300, height: 220 })
   assert.equal(plan?.layer.shape, source.shape)
 })
 
 test('aparência isolada recusa camada vazia e materializa fundo sintético', () => {
-  const spec = { ...document, background: 'white', layerStyleGlobalLight: { angle: 120, altitude: 30 } }
-  assert.equal(layerAppearanceRenderPlan(spec, {
-    id: 'empty', name: 'Vazia', visible: true, opacity: 100, blendMode: 'normal', kind: 'pixel', styles: createLayerStyleConfig()
-  }, 'local'), null)
-  assert.deepEqual(layerAppearanceRenderPlan(spec, {
-    id: 'legacy-background', name: 'Fundo', visible: false, opacity: 75, blendMode: 'multiply', kind: 'background', styles: createLayerStyleConfig()
-  }, 'local')?.viewport, { x: 0, y: 0, width: 1000, height: 800 })
+  const spec: Pick<DocumentSpec, 'background' | 'width' | 'height' | 'layerStyleGlobalLight'> = {
+    ...document,
+    background: 'white',
+    layerStyleGlobalLight: { angle: 120, altitude: 30 }
+  }
+  assert.equal(layerAppearanceRenderPlan(spec, testLayer({ id: 'empty', name: 'Vazia' }), 'local'), null)
+  assert.deepEqual(
+    layerAppearanceRenderPlan(spec, testLayer({ id: 'legacy-background', name: 'Fundo', visible: false, opacity: 75, blendMode: 'multiply', kind: 'background' }), 'local')?.viewport,
+    { x: 0, y: 0, width: 1000, height: 800 }
+  )
 })

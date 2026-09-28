@@ -21,8 +21,26 @@ import {
   snapShapeSelectionToBounds,
   sourceScaleFactor,
   transformSelectionPoint,
-  translateSelection
+  translateSelection,
+  type Matrix2D,
+  type PackedPixelSpans,
+  type PixelSelection,
+  type PixelSpan,
+  type SelectionBounds,
+  type SelectionPoint
 } from '../src/editor/selection.ts'
+
+function rectangle(x: number, y: number, width: number, height: number) {
+  return { kind: 'rectangle' as const, bounds: { x, y, width, height } }
+}
+
+function lasso(points: SelectionPoint[], bounds: SelectionBounds) {
+  return { kind: 'lasso' as const, points, bounds }
+}
+
+function pixelSelection(input: Omit<PixelSelection, 'kind'>): PixelSelection {
+  return { kind: 'pixels', ...input }
+}
 
 test('setas deslocam a seleção em um pixel ou dez com Shift', () => {
   assert.deepEqual(selectionNudgeDelta('ArrowUp'), { x: 0, y: -1 })
@@ -31,7 +49,7 @@ test('setas deslocam a seleção em um pixel ou dez com Shift', () => {
 })
 
 test('seleção compacta usa busca ordenada e simplifica somente o contorno extremo', () => {
-  const spans = {
+  const spans: PackedPixelSpans = {
     kind: 'packed-spans',
     data: new Int32Array([0, 0, 1, 0, 2, 3, 1, 4, 6]),
     length: 3
@@ -61,7 +79,7 @@ test('extração limita a seleção aos pixels da camada sem adicionar sangria',
   )
 })
 
-function pixels(width, rows) {
+function pixels(width: number, rows: number[][]): Uint8ClampedArray {
   const data = new Uint8ClampedArray(width * rows.length * 4)
   rows.flat().forEach((value, index) => {
     const offset = index * 4
@@ -154,7 +172,7 @@ test('varinha global seleciona todas as cores dentro da tolerância', () => {
 })
 
 test('clampSelectionToBounds recorta um retângulo que passa da camada', () => {
-  const selection = { kind: 'rectangle', bounds: { x: -50, y: -50, width: 200, height: 200 } }
+  const selection = rectangle(-50, -50, 200, 200)
   const layerBounds = { x: 0, y: 0, width: 100, height: 100 }
   assert.deepEqual(clampSelectionToBounds(selection, layerBounds), {
     kind: 'rectangle',
@@ -163,17 +181,13 @@ test('clampSelectionToBounds recorta um retângulo que passa da camada', () => {
 })
 
 test('clampSelectionToBounds recorta um laço que passa da camada', () => {
-  const selection = {
-    kind: 'lasso',
-    points: [
-      { x: -20, y: 10 },
-      { x: 50, y: -20 },
-      { x: 50, y: 50 }
-    ],
-    bounds: { x: -20, y: -20, width: 70, height: 70 }
-  }
+  const selection = lasso(
+    [{ x: -20, y: 10 }, { x: 50, y: -20 }, { x: 50, y: 50 }],
+    { x: -20, y: -20, width: 70, height: 70 }
+  )
   const layerBounds = { x: 0, y: 0, width: 100, height: 100 }
   const clamped = clampSelectionToBounds(selection, layerBounds)
+  assert.ok(clamped.kind === 'lasso')
   assert.deepEqual(clamped.points, [
     { x: 0, y: 10 },
     { x: 50, y: 0 },
@@ -186,7 +200,7 @@ test('opaquePixelBounds recorta para os pixels não transparentes restantes', ()
   const height = 4
   const data = new Uint8ClampedArray(width * height * 4)
   // apenas o pixel (1,1) e (2,2) têm alfa > 0
-  const setAlpha = (x, y, alpha) => {
+  const setAlpha = (x: number, y: number, alpha: number) => {
     data[(y * width + x) * 4 + 3] = alpha
   }
   setAlpha(1, 1, 255)
@@ -239,27 +253,27 @@ test('translada seleção vetorial sem alterar suas dimensões', () => {
 })
 
 test('translada seleção de pixels pela matriz sem alterar os spans', () => {
-  const selection = {
-    kind: 'pixels',
-    layerId: 'layer',
+  const selection = pixelSelection({
+    sourceLayerId: 'layer',
     sourceWidth: 10,
     sourceHeight: 10,
     sourceToDocument: [2, 0, 0, 2, 5, 6],
     spans: [{ y: 2, x0: 1, x1: 4 }],
     bounds: { x: 1, y: 2, width: 3, height: 1 },
     pixelCount: 3
-  }
+  })
   const moved = translateSelection(selection, 8, 9)
+  assert.ok(moved.kind === 'pixels')
   assert.deepEqual(moved.sourceToDocument, [2, 0, 0, 2, 13, 15])
   assert.equal(moved.spans, selection.spans)
   assert.deepEqual(selectionDocumentBounds(moved), { x: 15, y: 19, width: 6, height: 2 })
 })
 
 test('hit-test respeita retângulo, elipse, laço e spans da varinha', () => {
-  assert.equal(selectionContainsPoint({ kind: 'rectangle', bounds: { x: 0, y: 0, width: 10, height: 10 } }, { x: 5, y: 5 }), true)
+  assert.equal(selectionContainsPoint(rectangle(0, 0, 10, 10), { x: 5, y: 5 }), true)
   assert.equal(selectionContainsPoint({ kind: 'ellipse', bounds: { x: 0, y: 0, width: 10, height: 10 } }, { x: 0, y: 0 }), false)
-  assert.equal(selectionContainsPoint({ kind: 'lasso', points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 10 }], bounds: { x: 0, y: 0, width: 10, height: 10 } }, { x: 5, y: 4 }), true)
-  assert.equal(selectionContainsPoint({ kind: 'pixels', layerId: 'layer', sourceWidth: 5, sourceHeight: 5, sourceToDocument: [2, 0, 0, 2, 10, 20], spans: [{ y: 1, x0: 1, x1: 3 }], bounds: { x: 1, y: 1, width: 2, height: 1 }, pixelCount: 2 }, { x: 13, y: 23 }), true)
+  assert.equal(selectionContainsPoint(lasso([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 10 }], { x: 0, y: 0, width: 10, height: 10 }), { x: 5, y: 4 }), true)
+  assert.equal(selectionContainsPoint(pixelSelection({ sourceLayerId: 'layer', sourceWidth: 5, sourceHeight: 5, sourceToDocument: [2, 0, 0, 2, 10, 20], spans: [{ y: 1, x0: 1, x1: 3 }], bounds: { x: 1, y: 1, width: 2, height: 1 }, pixelCount: 2 }), { x: 13, y: 23 }), true)
 })
 
 test('movimento expande o raster quando os pixels ultrapassam os limites da camada', () => {
@@ -267,7 +281,7 @@ test('movimento expande o raster quando os pixels ultrapassam os limites da cama
     100,
     80,
     { x: 0, y: 0, width: 100, height: 80, rotation: 0 },
-    { kind: 'rectangle', bounds: { x: 70, y: 20, width: 20, height: 30 } },
+    rectangle(70, 20, 20, 30),
     25,
     -30
   )
@@ -279,7 +293,7 @@ test('movimento expande o raster quando os pixels ultrapassam os limites da cama
 })
 
 test('máscara retangular só é rígida quando permanece alinhada ao raster', () => {
-  const selection = { kind: 'rectangle', bounds: { x: 10.25, y: 20.75, width: 30.5, height: 15.5 } }
+  const selection = rectangle(10.25, 20.75, 30.5, 15.5)
   const aligned = selectionMoveGeometry(
     100,
     80,
