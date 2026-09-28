@@ -31,7 +31,7 @@ export function copyLayerStyleConfig(styles: LayerStyleConfig) {
 
 export function layerCanPasteStyle(layer: LayerItem, styles?: LayerStyleConfig) {
   if (!styles) return false
-  return Boolean(layer.image) || (activeLayerStyleEffects(styles).length === 0 && layerStyleBlendIfIsDefault(styles.blendIf))
+  return Boolean(layer.image || layer.kind === 'text') || (activeLayerStyleEffects(styles).length === 0 && layerStyleBlendIfIsDefault(styles.blendIf))
 }
 
 export function pastedLayerStyleChange(layer: LayerItem, styles: LayerStyleConfig) {

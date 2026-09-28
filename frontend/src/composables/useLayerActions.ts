@@ -2,7 +2,13 @@ import type { ComputedRef, Ref } from 'vue'
 import { cloneLayerHistoryState, cloneLayerPatch, cloneLayerState, type EditorHistoryDelta } from '../editor/editorHistory'
 import { moveLayerBy, moveLayerRelativeTo } from '../editor/layerOrder'
 import { createLayerStyleConfig } from '../editor/layerStyles'
-import { DEFAULT_TEXT_LAYER, measureTextLayer } from '../editor/text'
+import {
+  DEFAULT_TEXT_LAYER,
+  MAX_TEXT_FONT_FAMILY_LENGTH,
+  measureTextLayer,
+  resizeParagraphText,
+  textContentIsWithinLimits
+} from '../editor/text'
 import type { HistoryRecordOptions } from '../editor/history'
 import type {
   DocumentSpec,
@@ -98,6 +104,10 @@ export function useLayerActions(options: LayerActionsOptions) {
   function updateTextLayer(layerId: string, patch: Partial<TextLayerContent>) {
     const layer = options.layers.value.find((item) => item.id === layerId)
     if (!layer?.text || !layer.transform) return
+    if (patch.content !== undefined && !textContentIsWithinLimits(patch.content)) {
+      options.errorText.value = 'O texto excede o limite de 20.000 caracteres ou 4.000 linhas.'
+      return
+    }
     const entries = Object.entries(patch) as Array<[keyof TextLayerContent, TextLayerContent[keyof TextLayerContent]]>
     if (!entries.some(([key, value]) => layer.text?.[key] !== value)) return
 
@@ -108,6 +118,9 @@ export function useLayerActions(options: LayerActionsOptions) {
     const scaleX = transform.width / previous.baseWidth
     const scaleY = transform.height / previous.baseHeight
     const text: TextLayerContent = { ...previous, ...patch }
+    text.fontFamily = typeof text.fontFamily === 'string' && text.fontFamily.trim()
+      ? text.fontFamily.trim().slice(0, MAX_TEXT_FONT_FAMILY_LENGTH)
+      : previous.fontFamily
     text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
     text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
     text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
@@ -119,7 +132,7 @@ export function useLayerActions(options: LayerActionsOptions) {
     ))
     text.decoration = text.decoration === 'underline' || text.decoration === 'line-through' ? text.decoration : 'none'
     text.textTransform = text.textTransform === 'uppercase' ? 'uppercase' : 'none'
-    text.alignment = text.alignment === 'center' || text.alignment === 'right' || text.alignment === 'justify'
+    text.alignment = text.alignment === 'center' || text.alignment === 'right'
       ? text.alignment
       : 'left'
     const size = measureTextLayer(text)
@@ -144,6 +157,37 @@ export function useLayerActions(options: LayerActionsOptions) {
       },
       { mergeKey: `text:${layerId}:${property}`, mergeWindowMs: 800 }
     )
+  }
+
+  function resizeTextParagraph(layerId: string, value: { baseWidth: number; x: number; y: number }) {
+    const layer = options.layers.value.find((item) => item.id === layerId)
+    if (!layer?.text || !layer.transform || layer.text.layoutMode !== 'paragraph') return
+    const previous = layer.text
+    const transform = layer.transform
+    const text = resizeParagraphText(previous, value.baseWidth)
+    const nextTransform = {
+      ...transform,
+      x: Number.isFinite(value.x) ? Math.round(value.x * 100) / 100 : transform.x,
+      y: Number.isFinite(value.y) ? Math.round(value.y * 100) / 100 : transform.y,
+      width: text.baseWidth,
+      height: text.baseHeight
+    }
+    if (
+      previous.baseWidth === text.baseWidth &&
+      transform.x === nextTransform.x &&
+      transform.y === nextTransform.y &&
+      transform.width === nextTransform.width &&
+      transform.height === nextTransform.height
+    ) return
+    const before = cloneLayerPatch({ text: previous, transform })
+    layer.text = text
+    layer.transform = nextTransform
+    options.recordHistory('Redimensionar parágrafo', {
+      type: 'layer:patch',
+      layerId,
+      before,
+      after: cloneLayerPatch({ text, transform: nextTransform })
+    })
   }
 
   function toggleLayer(layerId: string) {
@@ -275,6 +319,7 @@ export function useLayerActions(options: LayerActionsOptions) {
     moveLayer,
     renameLayer,
     reorderLayer,
+    resizeTextParagraph,
     toggleLayer,
     updateLayerBlendMode,
     updateLayerOpacity,

@@ -100,6 +100,7 @@ test('efeitos podem ser colados em raster, mas não ficam invisíveis em camada 
     }
   }
   assert.equal(layerCanPasteStyle(layer('pixel'), styled), true)
+  assert.equal(layerCanPasteStyle(layer('text'), styled), true)
   assert.equal(layerCanPasteStyle(layer('shape'), styled), false)
   assert.equal(layerCanPasteStyle(layer('shape'), { ...createLayerStyleConfig(), fillOpacity: 45 }), true)
   assert.equal(layerCanPasteStyle(layer('pixel'), blendIf), true)

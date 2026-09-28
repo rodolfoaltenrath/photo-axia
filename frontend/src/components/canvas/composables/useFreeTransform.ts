@@ -5,14 +5,16 @@ import {
   layerTransformStyle,
   layerTransformsMatch,
   moveLayerTransform,
+  rotateVector,
   resizeLayerTransform,
   rotateLayerTransform,
   transformCenter,
   type DocumentPoint,
   type TransformHandle
 } from '../../../editor/freeTransform.ts'
+import { resizeParagraphText } from '../../../editor/text.ts'
 import { applyGroupMove, applyGroupResize, applyGroupRotate, groupBoundsFromRects } from '../../../editor/groupTransform.ts'
-import type { LayerItem, LayerTransform } from '../../../types/editor.ts'
+import type { LayerItem, LayerTransform, TextLayerContent } from '../../../types/editor.ts'
 import type {
   KeyboardLayerMoveSession,
   LayerDragSession,
@@ -45,6 +47,9 @@ interface FreeTransformOptions {
   discardInteractionFrame: () => void
   selectLayer: (layerId: string) => void
   moveLayers: (updates: Array<{ layerId: string; transform: LayerTransform }>) => void
+  previewParagraphResize: (layerId: string, text: TextLayerContent, transform: LayerTransform) => void
+  clearParagraphResizePreview: () => void
+  resizeTextParagraph: (layerId: string, value: { baseWidth: number; x: number; y: number }) => void
   updateTransform: (layerId: string, transform: LayerTransform) => void
   onTransformCancelled?: () => void
   onTransformCommitted?: () => void
@@ -80,6 +85,7 @@ export function useFreeTransform(options: FreeTransformOptions) {
   // a caixa anterior e podiam reaplicá-la ao iniciar o gesto seguinte.
   const transformSession = createTransformSessionRef()
   const transformInteraction = ref<TransformInteraction | null>(null)
+  let paragraphResizeDraft: { layerId: string; text: TextLayerContent; transform: LayerTransform } | undefined
   let keyboardLayerCommitTimeout: ReturnType<typeof setTimeout> | undefined
 
   const isTransforming = computed(() => Boolean(transformSession.value))
@@ -101,6 +107,13 @@ export function useFreeTransform(options: FreeTransformOptions) {
     const session = transformSession.value
     if (!session) return undefined
     return layerTransformStyle(session.groupDraft)
+  })
+
+  const freeTransformParagraphOnly = computed(() => {
+    const session = transformSession.value
+    if (!session || session.members.length !== 1) return false
+    const layer = options.layers().find((item) => item.id === session.members[0]?.layerId)
+    return layer?.kind === 'text' && layer.text?.layoutMode === 'paragraph'
   })
 
   function findLayerElement(layerId: string) {
@@ -229,6 +242,8 @@ export function useFreeTransform(options: FreeTransformOptions) {
 
   function commitFreeTransform() {
     options.flushInteractionFrame()
+    options.clearParagraphResizePreview()
+    paragraphResizeDraft = undefined
     const session = transformSession.value
     if (session) {
       const changed = session.members.flatMap((member) => {
@@ -262,6 +277,8 @@ export function useFreeTransform(options: FreeTransformOptions) {
 
   function cancelFreeTransform() {
     options.discardInteractionFrame()
+    options.clearParagraphResizePreview()
+    paragraphResizeDraft = undefined
     const session = transformSession.value
     if (session) {
       for (const member of session.members) {
@@ -317,6 +334,23 @@ export function useFreeTransform(options: FreeTransformOptions) {
     const { groupStart, memberStarts } = transformInteractionStart()
     if (!groupStart) return
     captureTransformPointer(event)
+    const session = transformSession.value
+    const member = session?.members.length === 1 ? session.members[0] : undefined
+    const layer = member && options.layers().find((item) => item.id === member.layerId)
+    if (handle.x !== 0 && handle.y === 0 && layer?.kind === 'text' && layer.text?.layoutMode === 'paragraph') {
+      paragraphResizeDraft = undefined
+      transformInteraction.value = {
+        type: 'paragraph-resize',
+        pointerId: event.pointerId,
+        handle,
+        layerId: layer.id,
+        text: { ...layer.text },
+        initial: { ...transform },
+        groupStart,
+        memberStarts
+      }
+      return
+    }
     transformInteraction.value = {
       type: 'resize',
       pointerId: event.pointerId,
@@ -370,6 +404,28 @@ export function useFreeTransform(options: FreeTransformOptions) {
           event,
           session.members.map((member) => member.layerId)
         )
+      } else if (interaction.type === 'paragraph-resize') {
+        const resized = resizeLayerTransform(
+          interaction.initial,
+          interaction.handle,
+          options.snapPoint(pointer, event),
+          false,
+          false
+        )
+        const text = resizeParagraphText(interaction.text, resized.width)
+        const heightDelta = text.baseHeight - resized.height
+        const heightShift = rotateVector(
+          { x: 0, y: heightDelta / 2 },
+          ((resized.rotation ?? 0) * Math.PI) / 180
+        )
+        transform = {
+          ...resized,
+          x: Math.round((resized.x + heightShift.x) * 100) / 100,
+          y: Math.round((resized.y + heightShift.y - heightDelta / 2) * 100) / 100,
+          width: text.baseWidth,
+          height: text.baseHeight
+        }
+        paragraphResizeDraft = { layerId: interaction.layerId, text, transform }
       } else if (interaction.type === 'resize') {
         const modifiers = options.modifierKeys()
         const isCorner = interaction.handle.x !== 0 && interaction.handle.y !== 0
@@ -397,7 +453,9 @@ export function useFreeTransform(options: FreeTransformOptions) {
           ? applyGroupMove(ids, interaction.memberStarts, interaction.groupStart, transform)
           : interactionType === 'resize'
             ? applyGroupResize(ids, interaction.memberStarts, interaction.groupStart, transform)
-            : applyGroupRotate(ids, interaction.memberStarts, interaction.groupStart, transform)
+            : interactionType === 'paragraph-resize'
+              ? { [interaction.layerId]: transform }
+              : applyGroupRotate(ids, interaction.memberStarts, interaction.groupStart, transform)
         current.drafts = drafts
         for (const member of current.members) {
           const draft = drafts[member.layerId]
@@ -406,6 +464,13 @@ export function useFreeTransform(options: FreeTransformOptions) {
         if (freeTransformBox.value) applyElementTransform(freeTransformBox.value, transform)
         if (transformRotationOutput.value) {
           transformRotationOutput.value.textContent = `${transform.rotation ?? 0}°`
+        }
+        if (interactionType === 'paragraph-resize' && paragraphResizeDraft) {
+          options.previewParagraphResize(
+            paragraphResizeDraft.layerId,
+            paragraphResizeDraft.text,
+            paragraphResizeDraft.transform
+          )
         }
       })
       return true
@@ -443,9 +508,40 @@ export function useFreeTransform(options: FreeTransformOptions) {
     return true
   }
 
-  function stopTransformPointer(pointerId: number) {
+  function stopTransformPointer(pointerId: number, cancelParagraphResize = false) {
     let stopped = false
-    if (transformInteraction.value?.pointerId === pointerId) {
+    const interaction = transformInteraction.value
+    if (interaction?.pointerId === pointerId && interaction.type === 'paragraph-resize') {
+      const draft = paragraphResizeDraft
+      transformInteraction.value = null
+      paragraphResizeDraft = undefined
+      options.clearParagraphResizePreview()
+      const session = transformSession.value
+      if (cancelParagraphResize && session) {
+        for (const member of session.members) {
+          applyElementTransform(member.target, member.original)
+          member.target.classList.remove('document-layer--transforming')
+          member.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: member.original }))
+        }
+        transformSession.value = null
+        options.onTransformCancelled?.()
+      } else if (draft && session) {
+        options.resizeTextParagraph(draft.layerId, {
+          baseWidth: draft.text.baseWidth,
+          x: draft.transform.x,
+          y: draft.transform.y
+        })
+      }
+      if (session && !cancelParagraphResize) {
+        for (const member of session.members) {
+          member.target.classList.remove('document-layer--transforming')
+          member.target.dispatchEvent(new CustomEvent('axia-interaction-end', { detail: draft?.transform ?? member.original }))
+        }
+        transformSession.value = null
+        options.onTransformCommitted?.()
+      }
+      stopped = true
+    } else if (interaction?.pointerId === pointerId) {
       transformInteraction.value = null
       stopped = true
     }
@@ -555,6 +651,7 @@ export function useFreeTransform(options: FreeTransformOptions) {
     commitKeyboardLayerMove,
     displayTransform,
     freeTransformBox,
+    freeTransformParagraphOnly,
     freeTransformStyle,
     isTransforming,
     nudgeActiveLayer,

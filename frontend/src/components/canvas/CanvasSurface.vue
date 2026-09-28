@@ -82,6 +82,7 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
             grouped
             :layer="layer"
             :layer-style-global-light="view.layerStyleGlobalLight"
+            :render-scale="view.scale"
             :text-editor="view.textEditor?.layerId === layer.id ? view.textEditor : undefined"
             :transform="actions.displayTransform(layer) ?? view.defaultLayerTransform"
             @image-error="actions.handleLayerImageError"
@@ -276,11 +277,14 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
       <button
         v-for="handle in TRANSFORM_HANDLES"
         :key="handle.id"
+        v-show="!view.freeTransformParagraphOnly || (handle.x !== 0 && handle.y === 0)"
         class="free-transform-handle"
         :style="{ left: `${handle.left}%`, top: `${handle.top}%`, cursor: handle.cursor }"
         type="button"
         :aria-label="`Redimensionar forma por ${handle.id}`"
-        title="Arraste para redimensionar; Alt usa o centro; Shift libera a proporção"
+        :title="view.freeTransformParagraphOnly
+          ? 'Arraste para ajustar a largura e refluir o parágrafo sem escalar o texto'
+          : 'Arraste para redimensionar; Alt usa o centro; Shift libera a proporção'"
         @pointerdown="actions.startShapeTransformResize($event, handle)"
       ></button>
     </div>

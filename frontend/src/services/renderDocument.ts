@@ -1,4 +1,4 @@
-import type { DocumentSpec, LayerItem, LayerTransform, SmartLayerContent } from '../types/editor.ts'
+import type { DocumentSpec, LayerItem, LayerTransform, SmartLayerContent, TextLayerContent } from '../types/editor.ts'
 import { canvasBlendOperation } from '../editor/blendModes.ts'
 import { sampledDocumentPixel, sampledPixelToHex } from '../editor/colorSampler.ts'
 import {
@@ -17,7 +17,7 @@ import {
   layerStyleBlendIfUsesUnderlying,
   layerStyleFillOpacity
 } from '../editor/layerStyles.ts'
-import { layoutTextLines, textFont } from '../editor/text.ts'
+import { drawTextLayerContent, textLayerSourceIdentity, textStyleRasterPlan } from '../editor/textCanvas.ts'
 import { traceShapePath } from '../editor/shape.ts'
 import { sourceScaleFactor } from '../editor/selection.ts'
 import { applyLayerStyleBlendIfUnderlying } from '../editor/layerStyleRaster.ts'
@@ -114,10 +114,10 @@ export function layerAppearanceRenderPlan(
 
 function assertSupportedLayerStyles(layers: LayerItem[]) {
   const unsupported: string[] = layers.flatMap((layer) => activeLayerStyleEffects(layer.styles)
-    .filter((effect) => !layer.image || !layerStyleEffectIsRasterSupported(effect))
+    .filter((effect) => (!layer.image && !layer.text) || !layerStyleEffectIsRasterSupported(effect))
     .map((effect) => effect.type))
   for (const layer of layers) {
-    if (!layer.image && !layerStyleBlendIfIsDefault(layer.styles.blendIf)) unsupported.push('blend-if')
+    if (!layer.image && !layer.text && !layerStyleBlendIfIsDefault(layer.styles.blendIf)) unsupported.push('blend-if')
   }
   if (unsupported.length) {
     throw new Error(`Efeitos ainda nao suportados pelo compositor: ${[...new Set(unsupported)].join(', ')}.`)
@@ -170,6 +170,29 @@ async function fetchImageBlob(source: string) {
   return response.blob()
 }
 
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality))
+}
+
+async function textStyleSource(text: TextLayerContent, transform: LayerTransform) {
+  const plan = textStyleRasterPlan(text, transform)
+  const canvas = createCanvas(plan.width, plan.height)
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
+  drawTextLayerContent(context, text, { x: plan.drawScaleX, y: plan.drawScaleY })
+  const blob = await canvasBlob(canvas, 'image/png')
+  canvas.width = 1
+  canvas.height = 1
+  if (!blob) throw new Error('Não foi possível preparar o texto para composição.')
+  return {
+    blob,
+    width: plan.width,
+    height: plan.height,
+    effectScale: plan.effectScale,
+    identity: `${textLayerSourceIdentity(text)}|${transform.width}x${transform.height}|${plan.effectScale}`
+  }
+}
+
 async function prepareLayerRaster(
   document: DocumentSpec,
   layer: LayerItem,
@@ -178,16 +201,17 @@ async function prepareLayerRaster(
   quality: LayerStyleRenderQuality
 ): Promise<PreparedLayerRaster> {
   const asset = layer.image
-  if (!asset) throw new Error('A camada não possui raster para composição.')
-  const preview = usePreviewSource && Boolean(asset.previewUrl)
-  const source = preview ? asset.previewUrl! : asset.sourceUrl
-  const sourceWidth = preview ? asset.previewWidth ?? asset.width : asset.width
-  const sourceHeight = preview ? asset.previewHeight ?? asset.height : asset.height
+  const textSource = !asset && layer.text && layer.transform ? await textStyleSource(layer.text, layer.transform) : undefined
+  if (!asset && !textSource) throw new Error('A camada não possui conteúdo para composição.')
+  const preview = Boolean(asset && usePreviewSource && asset.previewUrl)
+  const source = asset ? (preview ? asset.previewUrl! : asset.sourceUrl) : undefined
+  const sourceWidth = asset ? (preview ? asset.previewWidth ?? asset.width : asset.width) : textSource!.width
+  const sourceHeight = asset ? (preview ? asset.previewHeight ?? asset.height : asset.height) : textSource!.height
 
   if (!layerStyleNeedsCompositing(layer.styles)) {
     return {
-      image: await prepareImageSource(source),
-      dispose: () => releasePreparedImage(source),
+      image: await prepareImageSource(source!),
+      dispose: () => releasePreparedImage(source!),
       sourceWidth,
       sourceHeight,
       renderedWidth: sourceWidth,
@@ -200,15 +224,15 @@ async function prepareLayerRaster(
   const result = await renderLayerStyle({
     consumerId,
     layerId: layer.id,
-    sourceIdentity: `${source}|${asset.editToken ?? ''}`,
-    source: () => fetchImageBlob(source),
+    sourceIdentity: asset ? `${source}|${asset.editToken ?? ''}` : textSource!.identity,
+    source: asset ? () => fetchImageBlob(source!) : textSource!.blob,
     sourceWidth,
     sourceHeight,
     styles: layer.styles,
     globalLight: document.layerStyleGlobalLight,
-    resolutionScale: layer.transform
+    resolutionScale: asset && layer.transform
       ? 1 / sourceScaleFactor(layer.transform, sourceWidth, sourceHeight)
-      : 1,
+      : textSource!.effectScale,
     quality
   })
   const decoded = await acquireDecodedLayerStyle(result)
@@ -247,25 +271,13 @@ function drawPreparedLayer(
       const text = layer.text
       const scaleX = layer.transform.width / text.baseWidth
       const scaleY = layer.transform.height / text.baseHeight
-      const lineHeight = text.fontSize * text.lineHeight
-      const textX = text.alignment === 'center' ? text.baseWidth / 2 : text.alignment === 'right' ? text.baseWidth : 0
-
       context.globalAlpha *= layerStyleFillOpacity(layer.styles)
       context.scale(scaleX, scaleY)
       context.translate(-text.baseWidth / 2, -text.baseHeight / 2)
       context.beginPath()
       context.rect(0, 0, text.baseWidth, text.baseHeight)
       context.clip()
-      context.fillStyle = text.color
-      context.font = textFont(text)
-      ;(context as unknown as { letterSpacing?: string }).letterSpacing = `${text.letterSpacing ?? 0}px`
-      // Canvas 2D não possui `justify`; o DOM justifica o preview e o núcleo
-      // conservará a linha final alinhada à esquerda até a fase de distribuição.
-      context.textAlign = text.alignment === 'justify' ? 'left' : text.alignment
-      context.textBaseline = 'top'
-      for (const [index, line] of layoutTextLines(text, context).entries()) {
-        context.fillText(line, textX, index * lineHeight + (lineHeight - text.fontSize) / 2)
-      }
+      drawTextLayerContent(context, text)
     } else if (layer.shape) {
       const shape = layer.shape
       context.globalAlpha *= layerStyleFillOpacity(layer.styles)
@@ -373,7 +385,7 @@ async function renderDocumentCanvas(
       if (!layer.transform) continue
       let raster: PreparedLayerRaster | undefined
       try {
-        if (layer.image) {
+        if (layer.image || (layer.text && layerStyleNeedsCompositing(layer.styles))) {
           const consumerId = `${session}:${layer.id}`
           consumers.push(consumerId)
           raster = await prepareLayerRaster(
@@ -507,10 +519,6 @@ export async function sampleDocumentColor(document: DocumentSpec, layers: LayerI
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('O sistema não disponibilizou a leitura de cores.')
   return sampledPixelToHex(context.getImageData(0, 0, 1, 1).data)
-}
-
-function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
-  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality))
 }
 
 export async function renderLayerAppearance(

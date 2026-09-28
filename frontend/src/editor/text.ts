@@ -1,5 +1,10 @@
 import type { TextLayerContent } from '../types/editor'
 
+/** Texto Ã© renderizado no DOM e no Canvas; estes limites evitam layouts abusivos. */
+export const MAX_TEXT_CONTENT_LENGTH = 20_000
+export const MAX_TEXT_LINE_COUNT = 4_000
+export const MAX_TEXT_FONT_FAMILY_LENGTH = 512
+
 export const DEFAULT_TEXT_LAYER: TextLayerContent = {
   content: 'Texto',
   fontFamily: 'Arial, sans-serif',
@@ -19,8 +24,26 @@ export const DEFAULT_TEXT_LAYER: TextLayerContent = {
 
 let measurementContext: CanvasRenderingContext2D | null | undefined
 
+export interface TextLayoutLine {
+  content: string
+  width: number
+  x: number
+  y: number
+}
+
+export interface TextLayout {
+  height: number
+  lineHeight: number
+  lines: TextLayoutLine[]
+  width: number
+}
+
 export function textLines(content: string) {
   return content.replace(/\r/g, '').split('\n')
+}
+
+export function textContentIsWithinLimits(content: string) {
+  return content.length <= MAX_TEXT_CONTENT_LENGTH && textLines(content).length <= MAX_TEXT_LINE_COUNT
 }
 
 /** Projetos antigos não gravavam o modo; seu comportamento era sempre pontual. */
@@ -42,8 +65,17 @@ function textWidth(context: CanvasRenderingContext2D | null | undefined, line: s
   return glyphWidth + tracking
 }
 
-/** Quebra previsível usada pelo Canvas; o DOM recebe as mesmas largura e regras de palavra. */
-export function layoutTextLines(text: TextLayerContent, context = measurementContext) {
+/** Quebra previsível compartilhada entre preview, Canvas e exportação. */
+function textMeasurementContext() {
+  if (measurementContext === undefined) {
+    measurementContext = typeof document === 'undefined'
+      ? null
+      : document.createElement('canvas').getContext('2d')
+  }
+  return measurementContext
+}
+
+function wrappedTextLines(text: TextLayerContent, context: CanvasRenderingContext2D | null) {
   const sourceLines = textLines(textDisplayContent(text))
   if (textLayoutMode(text) !== 'paragraph') return sourceLines
   const maxWidth = Math.max(1, text.baseWidth)
@@ -66,23 +98,51 @@ export function layoutTextLines(text: TextLayerContent, context = measurementCon
   return lines.length ? lines : ['']
 }
 
-export function measureTextLayer(text: TextLayerContent) {
-  if (measurementContext === undefined) {
-    measurementContext = typeof document === 'undefined'
-      ? null
-      : document.createElement('canvas').getContext('2d')
-  }
-
-  const context = measurementContext
+export function layoutText(text: TextLayerContent, suppliedContext?: CanvasRenderingContext2D | null): TextLayout {
+  const context = suppliedContext === undefined ? textMeasurementContext() : suppliedContext
   if (context) context.font = textFont(text)
-  const lines = layoutTextLines(text, context)
+  const contentLines = wrappedTextLines(text, context)
   const lineHeight = text.fontSize * text.lineHeight
-  const measuredWidth = Math.max(...lines.map((line) => textWidth(context, line, text)))
-
+  const measuredWidth = Math.max(...contentLines.map((line) => textWidth(context, line, text)))
+  const width = textLayoutMode(text) === 'paragraph'
+    ? Math.max(1, Math.ceil(text.baseWidth))
+    : Math.max(1, Math.ceil(measuredWidth + 2))
+  const availableWidth = textLayoutMode(text) === 'paragraph' ? width : Math.max(width, text.baseWidth)
+  const lines = contentLines.map((content, index) => {
+    const lineWidth = textWidth(context, content, text)
+    const x = text.alignment === 'center'
+      ? (availableWidth - lineWidth) / 2
+      : text.alignment === 'right'
+        ? availableWidth - lineWidth
+        : 0
+    return { content, width: lineWidth, x, y: index * lineHeight }
+  })
   return {
-    width: textLayoutMode(text) === 'paragraph'
-      ? Math.max(1, Math.ceil(text.baseWidth))
-      : Math.max(1, Math.ceil(measuredWidth + 2)),
+    lines,
+    lineHeight,
+    width,
     height: Math.max(1, Math.ceil(lines.length * lineHeight))
   }
+}
+
+export function layoutTextLines(text: TextLayerContent, context?: CanvasRenderingContext2D | null) {
+  return layoutText(text, context).lines.map((line) => line.content)
+}
+
+export function measureTextLayer(text: TextLayerContent) {
+  const layout = layoutText(text)
+  return { width: layout.width, height: layout.height }
+}
+
+/** Produz a caixa de parágrafo refluída sem aplicar escala à tipografia. */
+export function resizeParagraphText(text: TextLayerContent, baseWidth: number) {
+  const next: TextLayerContent = {
+    ...text,
+    layoutMode: 'paragraph',
+    baseWidth: Math.min(16_384, Math.max(1, Math.round(baseWidth)))
+  }
+  const size = measureTextLayer(next)
+  next.baseWidth = size.width
+  next.baseHeight = size.height
+  return next
 }

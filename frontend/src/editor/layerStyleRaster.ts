@@ -198,6 +198,61 @@ function spreadAlpha(source: Uint8ClampedArray, width: number, height: number, r
     : new Uint8ClampedArray(source)
 }
 
+/**
+ * Transformada de distância quadrada em uma dimensão (Felzenszwalb/Huttenlocher).
+ * Mantém o custo linear, diferentemente de testar um disco inteiro para cada pixel.
+ */
+function squaredDistanceTransform1d(input: Int32Array, output: Int32Array, length: number) {
+  const sites = new Int32Array(length)
+  const boundaries = new Float64Array(length + 1)
+  let active = 0
+  sites[0] = 0
+  boundaries[0] = Number.NEGATIVE_INFINITY
+  boundaries[1] = Number.POSITIVE_INFINITY
+  for (let point = 1; point < length; point++) {
+    let boundary = ((input[point]! + point * point) - (input[sites[active]!]! + sites[active]! * sites[active]!)) /
+      (2 * point - 2 * sites[active]!)
+    while (boundary <= boundaries[active]!) {
+      active--
+      boundary = ((input[point]! + point * point) - (input[sites[active]!]! + sites[active]! * sites[active]!)) /
+        (2 * point - 2 * sites[active]!)
+    }
+    active++
+    sites[active] = point
+    boundaries[active] = boundary
+    boundaries[active + 1] = Number.POSITIVE_INFINITY
+  }
+  active = 0
+  for (let point = 0; point < length; point++) {
+    while (boundaries[active + 1]! < point) active++
+    const site = sites[active]!
+    output[point] = (point - site) * (point - site) + input[site]!
+  }
+}
+
+/** Expande alfa por um disco real, preservando cantos arredondados do traçado. */
+function circularSpreadAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number) {
+  if (radius <= 0) return new Uint8ClampedArray(source)
+  const maximumDistance = width * width + height * height + 1
+  const distances = new Int32Array(width * height)
+  const input = new Int32Array(Math.max(width, height))
+  const output = new Int32Array(Math.max(width, height))
+
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) input[y] = source[y * width + x]! > 0 ? 0 : maximumDistance
+    squaredDistanceTransform1d(input, output, height)
+    for (let y = 0; y < height; y++) distances[y * width + x] = output[y]!
+  }
+  const expanded = new Uint8ClampedArray(source.length)
+  const radiusSquared = radius * radius
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) input[x] = distances[y * width + x]!
+    squaredDistanceTransform1d(input, output, width)
+    for (let x = 0; x < width; x++) expanded[y * width + x] = output[x]! <= radiusSquared ? 255 : 0
+  }
+  return expanded
+}
+
 function erodeAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number) {
   return radius > 0
     ? minFilterVertical(minFilterHorizontal(source, width, height, radius), width, height, radius)
@@ -669,7 +724,7 @@ function renderStroke(
     ? thickness
     : effect.position === 'center' ? Math.floor(thickness / 2) : 0
   const expanded = outsideRadius > 0
-    ? spreadAlpha(sourceAlpha, width, height, outsideRadius)
+    ? circularSpreadAlpha(sourceAlpha, width, height, outsideRadius)
     : sourceAlpha
   const eroded = insideRadius > 0
     ? erodeAlpha(sourceAlpha, width, height, insideRadius)

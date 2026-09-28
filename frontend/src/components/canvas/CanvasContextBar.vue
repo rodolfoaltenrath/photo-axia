@@ -9,7 +9,7 @@ import type { SelectionCombineMode } from '../../editor/selectionCombine'
 import type { GradientStopsConfig } from '../../editor/gradient'
 import { normalizeShapeConfig, type ShapeToolConfig } from '../../editor/shape'
 import { gradientStripBackground } from '../../editor/gradientEditor'
-import type { DocumentSpec, EditorTool } from '../../types/editor'
+import type { DocumentSpec, EditorTool, TextLayerContent } from '../../types/editor'
 
 const props = defineProps<{
   activeTool: EditorTool
@@ -39,6 +39,7 @@ const props = defineProps<{
   rulersVisible: boolean
   selectionMode: SelectionMode
   selectionCombineMode: SelectionCombineMode
+  text?: TextLayerContent
   visualZoom: number
   captureRotationOutput: (element: unknown) => void
 }>()
@@ -71,6 +72,7 @@ const emit = defineEmits<{
   (event: 'updateRulersVisible', enabled: boolean): void
   (event: 'updateSelectionMode', mode: SelectionMode): void
   (event: 'updateSelectionCombineMode', mode: SelectionCombineMode): void
+  (event: 'updateText', patch: Partial<TextLayerContent>): void
   (event: 'zoomIn'): void
   (event: 'zoomOut'): void
 }>()
@@ -81,6 +83,11 @@ function updateBrushSize(value: number) {
 
 function updateShapeConfig(patch: Partial<ShapeToolConfig>) {
   emit('updateShapeConfig', normalizeShapeConfig({ ...props.shapeConfig, ...patch }))
+}
+
+function toggleTextWeight() {
+  if (!props.text) return
+  emit('updateText', { fontWeight: props.text.fontWeight >= 600 ? 400 : 700 })
 }
 
 const gradientEditorOpen = ref(false)
@@ -221,6 +228,91 @@ watch(() => props.activeTool, (tool) => {
       />
       <span>Seleção automática</span>
     </label>
+    <div v-if="activeTool === 'text' && text" class="text-context-options" aria-label="Controles de texto">
+      <label>
+        <span>Fonte</span>
+        <select
+          :value="text.fontFamily"
+          aria-label="Fonte"
+          @change="emit('updateText', { fontFamily: ($event.target as HTMLSelectElement).value })"
+        >
+          <option value="Arial, sans-serif">Arial</option>
+          <option value="Helvetica, Arial, sans-serif">Helvetica</option>
+          <option value="Georgia, serif">Georgia</option>
+          <option value="'Courier New', monospace">Courier New</option>
+          <option value="system-ui, sans-serif">Sistema</option>
+        </select>
+      </label>
+      <label>
+        <span>Tamanho</span>
+        <input
+          :value="text.fontSize"
+          aria-label="Tamanho do texto em pixels"
+          max="1000"
+          min="1"
+          type="number"
+          @input="emit('updateText', { fontSize: Number(($event.target as HTMLInputElement).value) })"
+        />
+      </label>
+      <label>
+        <span>Entrelinha</span>
+        <input
+          :value="text.lineHeight"
+          aria-label="Entrelinha"
+          max="3"
+          min="0.6"
+          step="0.05"
+          type="number"
+          @input="emit('updateText', { lineHeight: Number(($event.target as HTMLInputElement).value) })"
+        />
+      </label>
+      <label class="text-context-color">
+        <span>Cor</span>
+        <input
+          :value="text.color"
+          aria-label="Cor do texto"
+          type="color"
+          @input="emit('updateText', { color: ($event.target as HTMLInputElement).value })"
+        />
+      </label>
+      <div class="text-context-toggle-group" role="group" aria-label="Estilo do texto">
+        <button
+          :aria-pressed="text.fontWeight >= 600"
+          type="button"
+          title="Negrito"
+          @click="toggleTextWeight"
+        ><strong>B</strong></button>
+        <button
+          :aria-pressed="text.fontStyle === 'italic'"
+          type="button"
+          title="Itálico"
+          @click="emit('updateText', { fontStyle: text.fontStyle === 'italic' ? 'normal' : 'italic' })"
+        ><em>I</em></button>
+      </div>
+      <div class="text-context-toggle-group" role="group" aria-label="Alinhamento do texto">
+        <button
+          class="text-align-left"
+          :aria-pressed="text.alignment === 'left'"
+          type="button"
+          title="Alinhar à esquerda"
+          @click="emit('updateText', { alignment: 'left' })"
+        >≡</button>
+        <button
+          class="text-align-center"
+          :aria-pressed="text.alignment === 'center'"
+          type="button"
+          title="Centralizar"
+          @click="emit('updateText', { alignment: 'center' })"
+        >≡</button>
+        <button
+          class="text-align-right"
+          :aria-pressed="text.alignment === 'right'"
+          type="button"
+          title="Alinhar à direita"
+          @click="emit('updateText', { alignment: 'right' })"
+        >≡</button>
+      </div>
+    </div>
     <div v-if="activeTool === 'brush' || activeTool === 'eraser'" class="brush-context-options">
       <label class="brush-size-control">
         <span>Tamanho</span>

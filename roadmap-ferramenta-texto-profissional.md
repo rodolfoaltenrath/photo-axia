@@ -76,11 +76,11 @@ Estado: `EM ANDAMENTO`
 - [x] Formalizar `TextLayerContent` com modo `point`/`paragraph` e defaults
   compatíveis com projetos existentes. Bounds de parágrafo entram junto da caixa
   de texto na Fase 1.
-- [ ] Extrair layout de linhas e medição para um núcleo puro, compartilhado por
+- [x] Extrair layout de linhas e medição para um núcleo puro, compartilhado por
   Canvas, DOM, preview, exportação e miniaturas.
 - [ ] Cobrir alinhamento, linhas vazias, Unicode, quebras CRLF, largura máxima,
   transformações e migração de projetos antigos.
-- [ ] Definir limites seguros de tamanho, linhas, caracteres e área para evitar
+- [x] Definir limites seguros de tamanho, linhas, caracteres e área para evitar
   travamentos por conteúdo malformado.
 
 ### Fase 1 — Edição direta no canvas
@@ -93,21 +93,21 @@ Estado: `NÃO INICIADO`
   selecionar outra camada acidentalmente.
 - [x] `Esc` cancela a sessão e restaura o conteúdo anterior; `Ctrl+Enter` confirma.
   Troca de ferramenta e camada será consolidada junto da caixa de parágrafo.
-- [ ] Seleção de caracteres, cursor, copiar/colar, IME e atalhos comuns funcionam
+- [x] Seleção de caracteres, cursor, copiar/colar, IME e atalhos comuns funcionam
   sem capturar atalhos globais do editor enquanto o campo estiver ativo.
-- [ ] O overlay de edição não entra no preview, exportação, histórico ou `.axia`.
+- [x] O overlay de edição não entra no preview, exportação, histórico ou `.axia`.
 
 ### Fase 2 — Controles tipográficos essenciais
 
 Estado: `EM ANDAMENTO`
 
-- [ ] Barra contextual para família, estilo normal/itálico, peso, tamanho, cor,
+- [x] Barra contextual para família, estilo normal/itálico, peso, tamanho, cor,
   alinhamento e entrelinha.
 - [x] Adicionar espaçamento entre letras, caixa alta opcional, sublinhado e
   tachado, com representação persistida e renderização equivalente.
-- [ ] Biblioteca curada de fontes e campo manual de família com fallback CSS
+- [x] Biblioteca curada de fontes e campo manual de família com fallback CSS
   visível; fontes indisponíveis precisam resultar em fallback previsível.
-- [ ] Painel lateral acompanha a seleção ativa sem roubar foco da edição no canvas.
+- [x] Painel lateral acompanha a seleção ativa sem roubar foco da edição no canvas.
 - [ ] Alterações em controles, Undo/Redo, duplicação e conversão em camada
   inteligente preservam todas as propriedades.
 
@@ -117,9 +117,11 @@ Estado: `EM ANDAMENTO`
 
 - [x] Quebra automática respeita a largura interna da caixa e preserva quebras
   manuais do usuário.
-- [ ] Alinhamentos esquerdo, centro, direito e justificado são definidos no núcleo
-  de layout e usados igualmente em todos os renderizadores.
-- [ ] Ajustar largura/altura do parágrafo por alças sem escalar glifos; transformar
+- [x] Alinhamentos esquerdo, centro e direito são definidos no núcleo de layout e
+  usados igualmente em todos os renderizadores.
+- [ ] Alinhamento justificado só será exposto depois que a distribuição de palavras
+  estiver implementada igualmente no preview e na exportação.
+- [x] Ajustar largura/altura do parágrafo por alças sem escalar glifos; transformar
   a camada continua sendo uma ação distinta e explícita.
 - [ ] Implementar recuo inicial, espaçamento antes/depois do parágrafo e controles
   de alinhamento vertical somente depois de validar a base de quebra automática.

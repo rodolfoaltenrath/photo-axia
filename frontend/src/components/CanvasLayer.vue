@@ -2,8 +2,10 @@
 import { computed, nextTick, ref, watch, type CSSProperties } from 'vue'
 import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../types/editor'
 import { layerCompositingStyle } from '../editor/blendModes'
+import { nativeTextStrokeEffect } from '../editor/layerStyleCompositor'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
 import { shapePathData } from '../editor/shape'
+import { layoutText } from '../editor/text'
 import { useLayerImageBuffer } from './canvas/composables/useLayerImageHandoff'
 import { useLayerStyleRaster } from './canvas/composables/useLayerStyleRaster'
 
@@ -13,6 +15,7 @@ const props = defineProps<{
   grouped: boolean
   layer: LayerItem
   layerStyleGlobalLight: LayerStyleGlobalLight
+  renderScale: number
   textEditor?: { value: string; selectAll: boolean }
   transform: LayerTransform
 }>()
@@ -28,6 +31,9 @@ const emit = defineEmits<{
 
 const layerRoot = ref<HTMLElement | null>(null)
 const textEditorElement = ref<HTMLTextAreaElement | null>(null)
+const nativeTextStroke = computed(() => props.layer.text && !props.textEditor
+  ? nativeTextStrokeEffect(props.layer.styles)
+  : undefined)
 const {
   desiredImageSource,
   geometryForSource,
@@ -36,7 +42,13 @@ const {
 } = useLayerStyleRaster({
   consumer: 'canvas',
   globalLight: () => props.layerStyleGlobalLight,
+  isInteracting: () => Boolean(
+    layerRoot.value?.classList.contains('document-layer--dragging') ||
+    layerRoot.value?.classList.contains('document-layer--transforming')
+  ),
   layer: () => props.layer,
+  renderScale: () => props.renderScale,
+  skipTextRaster: () => Boolean(nativeTextStroke.value),
   transform: () => props.transform
 })
 const {
@@ -59,6 +71,14 @@ const {
 })
 
 const activeImageIsStyled = computed(() => Boolean(geometryForSource(imageSources.value[activeImageSlot.value])))
+const showsStyledTextRaster = computed(() => Boolean(props.layer.text && !props.textEditor && activeImageIsStyled.value))
+// Para uma camada de texto, o primeiro raster estilizado começa sem imagem
+// ativa. Ainda assim o buffer precisa entrar no DOM para disparar `load` e só
+// então assumir o lugar do texto vetorial. Usar apenas `activeImageIsStyled`
+// aqui criava um ciclo: o <img> não existia para poder ficar ativo.
+const mountsStyledTextRaster = computed(() => Boolean(props.layer.text && !props.textEditor && desiredImageSource.value))
+
+const textLayout = computed(() => props.layer.text ? layoutText(props.layer.text) : undefined)
 
 function imageBufferStyle(source: string | null) {
   const geometry = geometryForSource(source)
@@ -72,7 +92,7 @@ function imageBufferStyle(source: string | null) {
 }
 
 const layerStyle = computed(() => {
-  const transform = props.layer.image ? activeImageTransform.value : props.transform
+  const transform = props.layer.image || showsStyledTextRaster.value ? activeImageTransform.value : props.transform
   const compositing = props.grouped
     ? { mixBlendMode: undefined, opacity: undefined }
     : layerCompositingStyle(props.layer.blendMode, props.layer.opacity)
@@ -90,6 +110,10 @@ const layerStyle = computed(() => {
 const textStyle = computed<CSSProperties | undefined>(() => {
   const text = props.layer.text
   if (!text) return undefined
+  const stroke = nativeTextStroke.value
+  const scaleX = props.transform.width / text.baseWidth
+  const scaleY = props.transform.height / text.baseHeight
+  const styleScale = Math.sqrt(Math.max(0.0001, scaleX * scaleY))
 
   return {
     width: `${text.baseWidth}px`,
@@ -101,14 +125,21 @@ const textStyle = computed<CSSProperties | undefined>(() => {
     fontStyle: text.fontStyle ?? 'normal',
     letterSpacing: `${text.letterSpacing ?? 0}px`,
     lineHeight: text.lineHeight,
-    textAlign: text.alignment,
     textDecoration: text.decoration ?? 'none',
     textTransform: text.textTransform ?? 'none',
-    whiteSpace: text.layoutMode === 'paragraph' ? 'pre-wrap' : 'pre',
-    overflowWrap: text.layoutMode === 'paragraph' ? 'break-word' : 'normal',
-    transform: `scale(${props.transform.width / text.baseWidth}, ${props.transform.height / text.baseHeight})`
+    transform: `scale(${scaleX}, ${scaleY})`,
+    ...(stroke?.paint.type === 'color'
+      ? {
+          WebkitTextStroke: `${stroke.size * 2 / styleScale}px ${stroke.paint.color}`,
+          paintOrder: 'stroke fill'
+        }
+      : {})
   }
 })
+
+function textLineStyle(x: number, y: number): CSSProperties {
+  return { left: `${x}px`, top: `${y}px` }
+}
 
 const shapePath = computed(() => {
   const shape = props.layer.shape
@@ -151,7 +182,7 @@ function handleTextEditorKeydown(event: KeyboardEvent) {
     :class="{
       'document-layer--active': active,
       'document-layer--content-hidden': contentHidden,
-      'document-layer--styled': activeImageIsStyled
+      'document-layer--styled': activeImageIsStyled || nativeTextStroke
     }"
     :data-layer-id="layer.id"
     :data-layer-kind="layer.kind"
@@ -159,7 +190,20 @@ function handleTextEditorKeydown(event: KeyboardEvent) {
     @axia-interaction-end="finishInteractiveTransform"
     @pointerdown="emit('pointerdown', $event)"
   >
-    <template v-if="layer.image">
+    <textarea
+      v-if="layer.kind === 'text' && layer.text && textEditor"
+      ref="textEditorElement"
+      class="document-text document-text-editor"
+      :style="textStyle"
+      :value="textEditor.value"
+      aria-label="Editar texto"
+      spellcheck="false"
+      @blur="emit('textCommit')"
+      @input="emit('textInput', ($event.target as HTMLTextAreaElement).value)"
+      @keydown.stop="handleTextEditorKeydown"
+      @pointerdown.stop
+    ></textarea>
+    <template v-else-if="layer.image || mountsStyledTextRaster">
       <img
         v-for="(source, slot) in imageSources"
         v-show="source"
@@ -179,25 +223,18 @@ function handleTextEditorKeydown(event: KeyboardEvent) {
         @load="handleImageLoad(slot as 0 | 1, $event)"
       />
     </template>
-    <textarea
-      v-else-if="layer.kind === 'text' && layer.text && textEditor"
-      ref="textEditorElement"
-      class="document-text document-text-editor"
-      :style="textStyle"
-      :value="textEditor.value"
-      aria-label="Editar texto"
-      spellcheck="false"
-      @blur="emit('textCommit')"
-      @input="emit('textInput', ($event.target as HTMLTextAreaElement).value)"
-      @keydown.stop="handleTextEditorKeydown"
-      @pointerdown.stop
-    ></textarea>
     <div
       v-else-if="layer.kind === 'text' && layer.text"
       class="document-text"
       :style="textStyle"
-      v-text="layer.text.content"
-    ></div>
+    >
+      <span
+        v-for="(line, index) in textLayout?.lines"
+        :key="index"
+        class="document-text-line"
+        :style="textLineStyle(line.x, line.y)"
+      >{{ line.content || ' ' }}</span>
+    </div>
     <svg
       v-else-if="layer.kind === 'shape' && layer.shape"
       class="document-shape"

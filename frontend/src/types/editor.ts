@@ -20,7 +20,7 @@ export type LayerKind = 'pixel' | 'text' | 'shape' | 'smart' | 'adjustment' | 'b
 export type LayerBlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
 export type DocumentUnit = 'px' | 'cm' | 'mm' | 'in'
 export type DocumentBackground = 'transparent' | 'white' | 'black'
-export type TextAlignment = 'left' | 'center' | 'right' | 'justify'
+export type TextAlignment = 'left' | 'center' | 'right'
 
 export interface LayerStyleGlobalLight {
   angle: number

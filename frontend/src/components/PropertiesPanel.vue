@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
 import type { EditorTool, LayerItem, TextLayerContent } from '../types/editor'
 import { layerKindHelp, layerKindLabel } from '../editor/layerPresentation'
 
@@ -15,18 +14,6 @@ const emit = defineEmits<{
   (event: 'update:text', patch: Partial<TextLayerContent>): void
   (event: 'update:zoom', value: number): void
 }>()
-
-const textInput = ref<HTMLTextAreaElement | null>(null)
-
-watch(
-  () => [props.activeLayer.id, props.activeTool],
-  async () => {
-    if (props.activeTool !== 'text' || props.activeLayer.kind !== 'text') return
-    await nextTick()
-    textInput.value?.focus()
-    textInput.value?.select()
-  }
-)
 
 </script>
 
@@ -64,7 +51,6 @@ watch(
         <label>
           Conteúdo
           <textarea
-            ref="textInput"
             :value="activeLayer.text.content"
             rows="2"
             spellcheck="false"
@@ -95,11 +81,14 @@ watch(
         </label>
 
         <label>
-          Fonte
-          <select
+          Fonte e fallback CSS
+          <input
             :value="activeLayer.text.fontFamily"
-            @change="$emit('update:text', { fontFamily: ($event.target as HTMLSelectElement).value })"
-          >
+            list="text-font-family-options"
+            maxlength="512"
+            @change="$emit('update:text', { fontFamily: ($event.target as HTMLInputElement).value })"
+          />
+          <datalist id="text-font-family-options">
             <option value="Arial, sans-serif">Arial</option>
             <option value="Helvetica, Arial, sans-serif">Helvetica</option>
             <option value="Verdana, sans-serif">Verdana</option>
@@ -110,7 +99,8 @@ watch(
             <option value="'Courier New', monospace">Courier New</option>
             <option value="Impact, sans-serif">Impact</option>
             <option value="system-ui, sans-serif">Sistema</option>
-          </select>
+          </datalist>
+          <small>Informe uma família ou uma pilha CSS, por exemplo: Inter, Arial, sans-serif.</small>
         </label>
 
         <div class="property-grid">
@@ -191,7 +181,6 @@ watch(
             <option value="left">Esquerda</option>
             <option value="center">Centro</option>
             <option value="right">Direita</option>
-            <option value="justify">Justificado</option>
           </select>
         </label>
         <div class="property-grid">

@@ -6,6 +6,7 @@ import {
   layerStyleNeedsCompositing
 } from '../../../editor/layerStyleCompositor'
 import { sourceScaleFactor } from '../../../editor/selection'
+import { drawTextLayerContent, textLayerSourceIdentity, textStyleRasterPlan } from '../../../editor/textCanvas'
 import {
   releaseLayerStyleRenderConsumer,
   renderLayerStyle
@@ -29,8 +30,39 @@ interface StyledImageSource extends StyledImageGeometry {
 interface LayerStyleRasterOptions {
   consumer: 'canvas' | 'thumbnail'
   globalLight: () => LayerStyleGlobalLight
+  isInteracting?: () => boolean
   layer: () => LayerItem
+  renderScale?: () => number
+  skipTextRaster?: () => boolean
   transform: () => LayerTransform
+}
+
+function canvasBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+}
+
+async function textStyleSource(layer: LayerItem, transform: LayerTransform, renderScale = 1) {
+  const text = layer.text
+  if (!text) return undefined
+  const plan = textStyleRasterPlan(text, transform, (window.devicePixelRatio || 1) * renderScale)
+  const canvas = document.createElement('canvas')
+  canvas.width = plan.width
+  canvas.height = plan.height
+  const context = canvas.getContext('2d')
+  if (!context) return undefined
+  drawTextLayerContent(context, text, { x: plan.drawScaleX, y: plan.drawScaleY })
+  const blob = await canvasBlob(canvas)
+  canvas.width = 1
+  canvas.height = 1
+  return blob
+    ? {
+        blob,
+        width: plan.width,
+        height: plan.height,
+        effectScale: plan.effectScale,
+        identity: `${textLayerSourceIdentity(text)}|${transform.width}x${transform.height}|${plan.effectScale}`
+      }
+    : undefined
 }
 
 export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
@@ -67,36 +99,44 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
     const source = originalSource.value
     const transform = options.transform()
     const effects = activeLayerStyleEffects(layer.styles)
-    if (!image || !source || !layerStyleNeedsCompositing(layer.styles) || effects.some((effect) => !layerStyleEffectIsRasterSupported(effect))) {
+    if (
+      (!image && !layer.text) || !layerStyleNeedsCompositing(layer.styles) ||
+      (layer.text && options.skipTextRaster?.()) ||
+      effects.some((effect) => !layerStyleEffectIsRasterSupported(effect))
+    ) {
       if (generation === localGeneration) styledSource.value = undefined
       return
     }
 
-    const preview = source === image.previewUrl
-    const sourceWidth = preview ? image.previewWidth ?? image.width : image.width
-    const sourceHeight = preview ? image.previewHeight ?? image.height : image.height
     try {
+      const textSource = !image ? await textStyleSource(layer, transform, options.renderScale?.() ?? 1) : undefined
+      if (!image && !textSource) throw new Error('Não foi possível preparar o texto para o preview de estilo.')
+      const preview = Boolean(image && source === image.previewUrl)
+      const sourceWidth = image ? (preview ? image.previewWidth ?? image.width : image.width) : textSource!.width
+      const sourceHeight = image ? (preview ? image.previewHeight ?? image.height : image.height) : textSource!.height
       const result = await renderLayerStyle({
         consumerId,
         layerId: layer.id,
-        sourceIdentity: `${source}|${image.editToken ?? ''}`,
-        source: async () => {
-          const response = await fetch(source)
+        sourceIdentity: image ? `${source}|${image.editToken ?? ''}` : textSource!.identity,
+        source: image ? async () => {
+          const response = await fetch(source!)
           if (!response.ok) throw new Error('Não foi possível carregar a camada para o preview de estilo.')
           return response.blob()
-        },
+        } : textSource!.blob,
         sourceWidth,
         sourceHeight,
         styles: layer.styles,
         globalLight: options.globalLight(),
-        resolutionScale: 1 / sourceScaleFactor(transform, sourceWidth, sourceHeight),
+        resolutionScale: image
+          ? 1 / sourceScaleFactor(transform, sourceWidth, sourceHeight)
+          : textSource!.effectScale,
         quality: 'interactive'
       })
       if (generation !== localGeneration) return
       const url = URL.createObjectURL(result.blob)
       const next: StyledImageSource = {
         url,
-        originalSource: source,
+        originalSource: source ?? `text:${layer.id}`,
         sourceWidth,
         sourceHeight,
         renderedWidth: result.width,
@@ -121,6 +161,8 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
         image?.editToken ?? '',
         image?.previewWidth ?? image?.width ?? 0,
         image?.previewHeight ?? image?.height ?? 0,
+        layer.text ? textLayerSourceIdentity(layer.text) : '',
+        options.renderScale?.() ?? 1,
         transform.width,
         transform.height,
         layerStyleHash(layer.styles, options.globalLight())
@@ -130,7 +172,11 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
       localGeneration++
       clearTimeout(renderTimer)
       const generation = localGeneration
-      renderTimer = setTimeout(() => void updateStyledRaster(generation), 40)
+      // Durante Ctrl+T, manter o último buffer pronto é mais fluido do que
+      // converter texto e recompor efeitos a cada movimento do ponteiro. A
+      // composição final ainda é solicitada logo após o gesto terminar.
+      const delay = options.isInteracting?.() ? 180 : 40
+      renderTimer = setTimeout(() => void updateStyledRaster(generation), delay)
     },
     { immediate: true }
   )

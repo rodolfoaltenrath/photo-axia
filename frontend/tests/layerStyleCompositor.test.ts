@@ -10,7 +10,8 @@ import {
   layerStyleHash,
   layerStyleInsets,
   layerStyleNeedsCompositing,
-  LAYER_STYLE_COMPOSITION_ORDER
+  LAYER_STYLE_COMPOSITION_ORDER,
+  nativeTextStrokeEffect
 } from '../src/editor/layerStyleCompositor.ts'
 import type { LayerStyleCacheIdentity, LayerStyleRaster } from '../src/editor/layerStyleCompositor.ts'
 import { createDefaultLayerEffect, normalizeLayerStyleConfig } from '../src/editor/layerStyles.ts'
@@ -81,6 +82,19 @@ test('efeitos desligados ou estilos globalmente ocultos não participam da compo
   assert.deepEqual(activeLayerStyleEffects(config).map((effect) => effect.id), ['visible'])
   config.enabled = false
   assert.deepEqual(activeLayerStyleEffects(config), [])
+})
+
+test('traçado externo sólido usa caminho vetorial nativo para texto', () => {
+  const stroke = createDefaultLayerEffect('stroke', 'native-text-stroke')
+  stroke.position = 'outside'
+  stroke.paint = { type: 'color', color: '#112233' }
+  assert.equal(nativeTextStrokeEffect(styles([stroke]))?.id, stroke.id)
+
+  stroke.position = 'inside'
+  assert.equal(nativeTextStrokeEffect(styles([stroke])), undefined)
+  stroke.position = 'outside'
+  const shadow = createDefaultLayerEffect('drop-shadow', 'shadow')
+  assert.equal(nativeTextStrokeEffect(styles([stroke, shadow])), undefined)
 })
 
 test('bounds incluem sombra direcional, brilho e traçado sem depender dos bounds originais', () => {
@@ -435,9 +449,27 @@ test('traçado externo expande os bounds e preserva o interior transparente com 
     { width: result.width, height: result.height, offsetX: result.offsetX, offsetY: result.offsetY },
     { width: 3, height: 3, offsetX: -1, offsetY: -1 }
   )
-  assert.equal(result.data[3], 255)
-  assert.deepEqual([...result.data.slice(0, 3)], [255, 0, 0])
+  assert.equal(result.data[3], 0)
+  assert.deepEqual([...result.data.slice(4, 7)], [255, 0, 0])
+  assert.equal(result.data[7], 255)
   assert.equal(result.data[(1 * 3 + 1) * 4 + 3], 0)
+})
+
+test('traçado externo usa disco e não transforma cantos de glifos em blocos quadrados', () => {
+  const source = { width: 3, height: 3, data: new Uint8ClampedArray(3 * 3 * 4) }
+  source.data[(1 * 3 + 1) * 4 + 3] = 255
+  const stroke = createDefaultLayerEffect('stroke', 'round-outside-stroke')
+  stroke.position = 'outside'
+  stroke.size = 1
+  stroke.opacity = 100
+  stroke.paint = { type: 'color', color: '#ff0000' }
+  const result = composeLayerStyleRaster(source, styles([stroke], 0), globalLight)
+
+  // O ponto diagonal está a raiz de dois pixels do centro e fica fora do
+  // raio 1; os quatro vizinhos cardeais continuam incluídos.
+  assert.equal(result.data[(1 * result.width + 1) * 4 + 3], 0)
+  assert.equal(result.data[(1 * result.width + 2) * 4 + 3], 255)
+  assert.equal(result.data[(2 * result.width + 1) * 4 + 3], 255)
 })
 
 test('traçado interno permanece recortado e não cobre o centro além da espessura', () => {
@@ -467,8 +499,8 @@ test('traçado aceita gradiente espacial e não produz efeito com padrão sem im
     }
   }
   const result = composeLayerStyleRaster(source, styles([stroke], 0), globalLight)
-  const left = [...result.data.slice(0, 3)]
-  const rightOffset = (result.width - 1) * 4
+  const left = [...result.data.slice(4, 7)]
+  const rightOffset = (result.width - 2) * 4
   const right = [...result.data.slice(rightOffset, rightOffset + 3)]
   assert.ok(left[0] > left[2])
   assert.ok(right[2] > right[0])

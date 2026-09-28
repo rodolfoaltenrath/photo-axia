@@ -1,6 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { layoutTextLines, measureTextLayer, textDisplayContent, textLayoutMode, textLines } from '../src/editor/text.ts'
+import {
+  layoutText,
+  layoutTextLines,
+  MAX_TEXT_CONTENT_LENGTH,
+  MAX_TEXT_LINE_COUNT,
+  measureTextLayer,
+  resizeParagraphText,
+  textContentIsWithinLimits,
+  textDisplayContent,
+  textLayoutMode,
+  textLines
+} from '../src/editor/text.ts'
+import { textStyleRasterPlan } from '../src/editor/textCanvas.ts'
 import type { TextLayerContent } from '../src/types/editor.ts'
 
 test('normaliza quebras de linha sem eliminar linhas vazias', () => {
@@ -39,6 +51,67 @@ test('parágrafo preserva largura e quebra em limites de palavra', () => {
   assert.deepEqual(measureTextLayer(text), { width: 18, height: 30 })
 })
 
+test('layout calcula a posição horizontal de cada linha para todos os alinhamentos suportados', () => {
+  const base: TextLayerContent = {
+    content: 'aa\nb', fontFamily: 'sans-serif', fontSize: 10, fontWeight: 400,
+    color: '#fff', alignment: 'left', lineHeight: 1, baseWidth: 30, baseHeight: 1,
+    layoutMode: 'paragraph', letterSpacing: 0
+  }
+  assert.deepEqual(layoutText(base, null).lines.map(({ x, y }) => ({ x, y })), [
+    { x: 0, y: 0 }, { x: 0, y: 10 }
+  ])
+  assert.deepEqual(layoutText({ ...base, alignment: 'center' }, null).lines.map(({ x, y }) => ({ x, y })), [
+    { x: 9, y: 0 }, { x: 12, y: 10 }
+  ])
+  assert.deepEqual(layoutText({ ...base, alignment: 'right' }, null).lines.map(({ x, y }) => ({ x, y })), [
+    { x: 18, y: 0 }, { x: 24, y: 10 }
+  ])
+})
+
 test('caixa alta altera apenas a apresentação, não o conteúdo persistido', () => {
   assert.equal(textDisplayContent({ content: 'Axia ç', textTransform: 'uppercase' }), 'AXIA Ç')
+})
+
+test('aceita Unicode e rejeita conteúdo que ultrapassa os limites seguros', () => {
+  assert.equal(textContentIsWithinLimits('Olá 👋\r\nمرحبا\r\n世界'), true)
+  assert.equal(textContentIsWithinLimits('a'.repeat(MAX_TEXT_CONTENT_LENGTH + 1)), false)
+  assert.equal(textContentIsWithinLimits(Array(MAX_TEXT_LINE_COUNT + 2).fill('a').join('\n')), false)
+})
+
+test('redimensionar parágrafo recompõe linhas sem alterar tamanho dos glifos', () => {
+  const source: TextLayerContent = {
+    content: 'aa bb cc dd', fontFamily: 'sans-serif', fontSize: 10, fontWeight: 400,
+    color: '#fff', alignment: 'left', lineHeight: 1, baseWidth: 60, baseHeight: 10,
+    layoutMode: 'paragraph'
+  }
+  const resized = resizeParagraphText(source, 18)
+  assert.equal(resized.fontSize, source.fontSize)
+  assert.equal(resized.baseWidth, 18)
+  assert.equal(resized.baseHeight, 40)
+  assert.deepEqual(layoutTextLines(resized, null), ['aa', 'bb', 'cc', 'dd'])
+})
+
+test('raster temporário acompanha a geometria do texto sem escalar o efeito em pixels', () => {
+  const text = {
+    content: 'Axia', fontFamily: 'sans-serif', fontSize: 40, fontWeight: 400,
+    color: '#fff', alignment: 'left' as const, lineHeight: 1.2, baseWidth: 200, baseHeight: 60,
+    layoutMode: 'point' as const
+  }
+  const initial = textStyleRasterPlan(text, { width: 200, height: 60 }, 2)
+  const enlarged = textStyleRasterPlan(text, { width: 800, height: 240 }, 2)
+
+  assert.deepEqual({ width: initial.width, height: initial.height, effectScale: initial.effectScale }, {
+    width: 400, height: 120, effectScale: 2
+  })
+  assert.deepEqual({ width: enlarged.width, height: enlarged.height, effectScale: enlarged.effectScale }, {
+    width: 1600, height: 480, effectScale: 2
+  })
+  assert.equal(enlarged.drawScaleX, initial.drawScaleX * 4)
+  assert.equal(enlarged.drawScaleY, initial.drawScaleY * 4)
+})
+
+test('raster temporário de texto reduz a densidade antes de exceder o orçamento', () => {
+  const plan = textStyleRasterPlan({ baseWidth: 1, baseHeight: 1 }, { width: 8_000, height: 8_000 }, 2)
+  assert.ok(plan.width * plan.height <= 16_000_000)
+  assert.ok(plan.effectScale < 1)
 })

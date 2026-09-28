@@ -83,6 +83,11 @@ const quickSelectionPreview = shallowRef<{
   points: SelectionPoint[]
   combineMode: SelectionCombineMode
 } | null>(null)
+const paragraphResizePreview = shallowRef<{
+  layerId: string
+  text: import('../types/editor').TextLayerContent
+  transform: LayerTransform
+} | null>(null)
 const textEditorSession = ref<{
   layerId: string
   initialContent: string
@@ -130,6 +135,7 @@ const {
   commitKeyboardLayerMove,
   displayTransform,
   freeTransformBox,
+  freeTransformParagraphOnly,
   freeTransformStyle,
   isTransforming,
   nudgeActiveLayer,
@@ -161,6 +167,11 @@ const {
   discardInteractionFrame,
   selectLayer: (layerId) => emit('selectLayer', layerId),
   moveLayers: (updates) => emit('moveLayers', updates),
+  previewParagraphResize: (layerId, text, transform) => {
+    paragraphResizePreview.value = { layerId, text, transform }
+  },
+  clearParagraphResizePreview: () => { paragraphResizePreview.value = null },
+  resizeTextParagraph: (layerId, value) => emit('resizeTextParagraph', layerId, value),
   updateTransform: (layerId, transform) => emit('updateTransform', layerId, transform),
   onTransformCancelled: () => emit('transformCancelled'),
   onTransformCommitted: () => emit('transformCommitted')
@@ -241,9 +252,15 @@ function layerIntersectsDocument(layer: LayerItem) {
   )
 }
 
-const renderedLayers = computed(() => [...props.layers].reverse().filter((layer) =>
-  (layer.kind !== 'background' || Boolean(layer.image)) && layer.visible && layerIntersectsDocument(layer)
-))
+const renderedLayers = computed(() => [...props.layers].reverse()
+  .filter((layer) => (layer.kind !== 'background' || Boolean(layer.image)) && layer.visible && layerIntersectsDocument(layer))
+  .map((layer) => {
+    const preview = paragraphResizePreview.value
+    return preview?.layerId === layer.id
+      ? { ...layer, text: preview.text, transform: preview.transform }
+      : layer
+  })
+)
 const defaultLayerTransform = computed<LayerTransform>(() => ({
   x: 0,
   y: 0,
@@ -503,6 +520,7 @@ const canvasSurfaceView = computed<CanvasSurfaceView>(() => ({
   documentWidth: props.document.width,
   draftGuide: draftGuide.value,
   frameStyle: frameStyle.value,
+  freeTransformParagraphOnly: freeTransformParagraphOnly.value,
   freeTransformStyle: freeTransformStyle.value,
   guides: props.guides,
   guidesInteractive: props.activeTool === 'move' && !props.guidesLocked,
@@ -553,6 +571,7 @@ const canvasSurfaceActions: CanvasSurfaceActions = {
   commitFreeTransform,
   commitShape: commitShapeDraft,
   displayTransform,
+  freeTransformParagraphOnly: () => freeTransformParagraphOnly.value,
   handleLayerImageError,
   handleLayerImageLoaded,
   handleLostPointerCapture,
@@ -1143,7 +1162,7 @@ function stopPointer(event: PointerEvent) {
   stopGradientPointer(event)
   stopShapePointer(event)
   stopSelectionMovePointer(event)
-  stopTransformPointer(event.pointerId)
+  stopTransformPointer(event.pointerId, event.type !== 'pointerup')
   if (panStart.value.pointerId === event.pointerId) {
     isPanning.value = false
     panStart.value.pointerId = -1
@@ -1220,6 +1239,7 @@ defineExpose({
       :rulers-visible="rulersVisible"
       :selection-mode="selectionMode"
       :selection-combine-mode="selectionCombineMode"
+      :text="activeLayer?.text"
       :visual-zoom="visualZoom"
       @cancel-transform="cancelFreeTransform"
       @cancel-shape="cancelShape"
@@ -1248,6 +1268,7 @@ defineExpose({
       @update-rulers-visible="emit('update:rulersVisible', $event)"
       @update-selection-mode="emit('update:selectionMode', $event)"
       @update-selection-combine-mode="emit('update:selectionCombineMode', $event)"
+      @update-text="emit('updateText', $event)"
       @zoom-in="zoomIn"
       @zoom-out="zoomOut"
     />

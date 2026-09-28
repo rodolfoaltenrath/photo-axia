@@ -548,6 +548,7 @@ const {
   moveLayer,
   renameLayer,
   reorderLayer,
+  resizeTextParagraph,
   toggleLayer,
   updateLayerBlendMode,
   updateLayerOpacity,
@@ -1684,7 +1685,7 @@ function currentLayerStyleWindowSession(): LayerStyleWindowSession | null {
     globalLight: { ...session.beforeGlobalLight },
     initialEffectType: session.initialEffectType,
     layerName: layer.name,
-    rasterEffectsAvailable: Boolean(layer.image),
+    rasterEffectsAvailable: Boolean(layer.image || layer.text),
     sessionId: session.sessionId,
     styles: cloneLayerStyleConfig(session.before)
   }
@@ -4703,6 +4704,8 @@ onBeforeUnmount(() => {
         @update-guide="updateGuide"
         @create-text="addTextLayer($event.point, $event.paragraphWidth)"
         @commit-text-edit="updateTextLayer($event.layerId, { content: $event.content })"
+        @resize-text-paragraph="resizeTextParagraph($event.layerId, $event)"
+        @update-text="updateTextLayer(activeLayerId, $event)"
         @select-layer="selectSingleLayer"
         @move-layers="moveLayerTransforms"
         @transform-cancelled="cancelCurrentImagePlacement"

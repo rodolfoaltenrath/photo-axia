@@ -612,6 +612,66 @@ textarea:focus-visible,
   cursor: pointer;
 }
 
+.text-context-options,
+.text-context-options label,
+.text-context-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  text-transform: none;
+}
+
+.text-context-options {
+  gap: 10px;
+}
+
+.text-context-options select,
+.text-context-options input[type='number'] {
+  height: 28px;
+  border: 1px solid #313944;
+  border-radius: 5px;
+  background: #1b2129;
+  color: #e8edf2;
+  padding: 0 6px;
+}
+
+.text-context-options select {
+  width: 112px;
+}
+
+.text-context-options input[type='number'] {
+  width: 58px;
+}
+
+.text-context-color input {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.text-context-toggle-group {
+  gap: 2px;
+}
+
+.text-context-toggle-group button[aria-pressed='true'] {
+  border-color: var(--ui-accent-hover);
+  background: var(--ui-accent);
+  color: var(--ui-text);
+}
+
+.text-context-toggle-group .text-align-left,
+.text-context-toggle-group .text-align-right {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.text-context-toggle-group .text-align-left { text-align: left; }
+.text-context-toggle-group .text-align-center { text-align: center; }
+.text-context-toggle-group .text-align-right { text-align: right; }
+
 .selection-options,
 .selection-options label {
   display: inline-flex;
@@ -2668,6 +2728,11 @@ html.layer-style-native-window body {
   cursor: move;
   touch-action: none;
   user-select: none;
+}
+
+.document-text-line {
+  position: absolute;
+  white-space: pre;
 }
 
 .document-text-editor {

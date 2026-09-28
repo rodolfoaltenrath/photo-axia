@@ -2,6 +2,12 @@ import type { EditorGuide, RulerOrigin, RulerUnit } from '../editor/guides'
 import type { DocumentSpec, ImageAsset, LayerItem, LayerKind, LayerStyleConfig, LayerStylePatternAsset, LayerTransform, PDFSmartSource, ShapeLayerContent, SmartLayerContent, TextLayerContent } from '../types/editor'
 import { normalizeLayerBlendMode } from '../editor/blendModes.ts'
 import {
+  MAX_TEXT_CONTENT_LENGTH,
+  MAX_TEXT_FONT_FAMILY_LENGTH,
+  MAX_TEXT_LINE_COUNT,
+  textContentIsWithinLimits
+} from '../editor/text.ts'
+import {
   cloneLayerStyleConfig,
   createLayerStyleConfig,
   normalizeLayerStyleConfig,
@@ -305,9 +311,15 @@ function restoreText(value: unknown): TextLayerContent | undefined {
   if (letterSpacing === undefined || letterSpacing < -100 || letterSpacing > 1_000) {
     throw new Error('Espaçamento entre letras inválido.')
   }
+  const content = requireString(text.content, 'Conteúdo de texto', true)
+  const fontFamily = requireString(text.fontFamily, 'Fonte')
+  if (!textContentIsWithinLimits(content)) {
+    throw new Error(`Conteúdo de texto excede o limite de ${MAX_TEXT_CONTENT_LENGTH} caracteres ou ${MAX_TEXT_LINE_COUNT} linhas.`)
+  }
+  if (fontFamily.length > MAX_TEXT_FONT_FAMILY_LENGTH) throw new Error('Fonte de texto excede o tamanho permitido.')
   return {
-    content: requireString(text.content, 'Conteúdo de texto', true),
-    fontFamily: requireString(text.fontFamily, 'Fonte'),
+    content,
+    fontFamily,
     fontSize,
     fontWeight,
     color: requireString(text.color, 'Cor'),

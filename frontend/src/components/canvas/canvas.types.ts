@@ -13,7 +13,8 @@ import type {
   ImportedImage,
   LayerItem,
   LayerStyleGlobalLight,
-  LayerTransform
+  LayerTransform,
+  TextLayerContent
 } from '../../types/editor'
 
 export interface SelectionMoveAnchor {
@@ -65,6 +66,7 @@ export interface CanvasViewportEmits {
   (event: 'update:zoom', zoom: number): void
   (event: 'createText', request: { point: DocumentPoint; paragraphWidth?: number }): void
   (event: 'commitTextEdit', edit: { layerId: string; content: string }): void
+  (event: 'updateText', patch: Partial<TextLayerContent>): void
   (event: 'createGuide', guide: EditorGuide): void
   (event: 'deleteGuide', guideId: string): void
   (event: 'imagesDropped', images: ImportedImage[], errors: string[]): void
@@ -112,6 +114,7 @@ export interface CanvasViewportEmits {
   (event: 'transformCommitted'): void
   (event: 'updateGuide', guide: EditorGuide): void
   (event: 'moveLayers', updates: Array<{ layerId: string; transform: LayerTransform }>): void
+  (event: 'resizeTextParagraph', layerId: string, value: { baseWidth: number; x: number; y: number }): void
   (event: 'updateTransform', layerId: string, transform: LayerTransform): void
   (event: 'update:autoSelectLayer', enabled: boolean): void
   (event: 'update:brushColor', color: string): void
@@ -160,6 +163,7 @@ export interface CanvasSurfaceView {
   documentWidth: number
   draftGuide: EditorGuide | null
   frameStyle: CSSProperties
+  freeTransformParagraphOnly: boolean
   freeTransformStyle?: CSSProperties
   guides: EditorGuide[]
   guidesInteractive: boolean
@@ -206,6 +210,7 @@ export interface CanvasSurfaceActions {
   commitFreeTransform: () => void
   commitShape: () => boolean
   displayTransform: (layer: LayerItem) => LayerTransform | undefined
+  freeTransformParagraphOnly: () => boolean
   handleLayerImageError: (layerId: string, source: string) => void
   handleLayerImageLoaded: (layerId: string, source: string) => void
   handleLostPointerCapture: (event: PointerEvent) => void
@@ -287,6 +292,12 @@ interface TransformInteractionBase {
 export type TransformInteraction =
   | (TransformInteractionBase & { type: 'move'; start: DocumentPoint })
   | (TransformInteractionBase & { type: 'resize'; handle: TransformHandle })
+  | (TransformInteractionBase & {
+    type: 'paragraph-resize'
+    handle: TransformHandle
+    layerId: string
+    text: TextLayerContent
+  })
   | (TransformInteractionBase & { type: 'rotate'; startAngle: number })
 
 export interface SelectionInteraction {

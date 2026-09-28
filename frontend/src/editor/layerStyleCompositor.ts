@@ -8,7 +8,8 @@ import type {
   LayerEffect,
   LayerEffectType,
   LayerStyleConfig,
-  LayerStyleGlobalLight
+  LayerStyleGlobalLight,
+  StrokeEffect
 } from '../types/editor.ts'
 
 export type LayerStyleRenderQuality = 'interactive' | 'final'
@@ -189,6 +190,25 @@ export function composeLayerStyleBase(source: LayerStyleRaster, stylesValue: Lay
     }))
   }
   return result
+}
+
+/**
+ * O SVG consegue desenhar este subconjunto sem rasterizar texto: o fill segue
+ * editável/nítido, e `vector-effect: non-scaling-stroke` mantém o traçado em
+ * pixels do documento durante Ctrl+T. Os demais efeitos continuam no
+ * compositor, cuja semântica é mais ampla.
+ */
+export function nativeTextStrokeEffect(stylesValue: LayerStyleConfig): StrokeEffect | undefined {
+  const styles = normalizeLayerStyleConfig(stylesValue)
+  if (!styles.enabled || !layerStyleBlendIfIsDefault(styles.blendIf)) return undefined
+  const effects = activeLayerStyleEffects(styles)
+  if (effects.length !== 1) return undefined
+  const effect = effects[0]
+  if (
+    effect?.type !== 'stroke' || effect.position !== 'outside' || effect.size <= 0 ||
+    effect.blendMode !== 'normal' || effect.paint.type !== 'color'
+  ) return undefined
+  return effect
 }
 
 function stableValue(value: unknown): unknown {
