@@ -3,13 +3,14 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { HistoryTimelineItem } from '../editor/history'
 import axiaLogo from '../../../assets/Logo.png'
 
-type MenuName = 'file' | 'edit' | 'layer' | 'select' | 'window'
+type MenuName = 'file' | 'edit' | 'layer' | 'text' | 'select' | 'window'
 
 const props = defineProps<{
   canConvertToSmartLayer: boolean
   canClearLayerStyles: boolean
   canDeleteLayer: boolean
   canDuplicateLayer: boolean
+  canEditText: boolean
   canEditSmartLayer: boolean
   canFillLayer: boolean
   canFlattenImage: boolean
@@ -20,6 +21,7 @@ const props = defineProps<{
   canScaleLayerEffects: boolean
   canRedo: boolean
   canUndo: boolean
+  characterPanelOpen: boolean
   documentDirty: boolean
   documentName: string
   hasSelection: boolean
@@ -65,6 +67,7 @@ const emit = defineEmits<{
   (event: 'redo'): void
   (event: 'saveProject'): void
   (event: 'undo'): void
+  (event: 'toggleCharacterPanel'): void
 }>()
 
 const menuBar = ref<HTMLElement | null>(null)
@@ -193,7 +196,12 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <button class="application-menu-trigger" type="button" role="menuitem" disabled @pointerenter="closeMenus">Texto</button>
+      <div class="application-menu" @pointerenter="switchOpenMenu('text')">
+        <button class="application-menu-trigger" type="button" role="menuitem" aria-haspopup="menu" :aria-expanded="openMenu === 'text'" @click="toggleMenu('text')" @keydown.down.prevent="openMenu = 'text'">Texto</button>
+        <div v-if="openMenu === 'text'" class="application-menu-popover" role="menu">
+          <button type="button" role="menuitem" :disabled="!canEditText" @click="runCommand(() => emit('toggleCharacterPanel'))">Caracteres…</button>
+        </div>
+      </div>
 
       <div class="application-menu" @pointerenter="switchOpenMenu('select')">
         <button class="application-menu-trigger" type="button" role="menuitem" aria-haspopup="menu" :aria-expanded="openMenu === 'select'" @click="toggleMenu('select')" @keydown.down.prevent="openMenu = 'select'">Selecionar</button>
@@ -208,6 +216,8 @@ onBeforeUnmount(() => {
       <div class="application-menu" @pointerenter="switchOpenMenu('window')">
         <button class="application-menu-trigger" type="button" role="menuitem" aria-haspopup="menu" :aria-expanded="openMenu === 'window'" @click="toggleMenu('window')" @keydown.down.prevent="openMenu = 'window'">Janela</button>
         <div v-if="openMenu === 'window'" class="application-menu-popover" role="menu">
+          <button type="button" role="menuitemcheckbox" :aria-checked="characterPanelOpen" @click="runCommand(() => emit('toggleCharacterPanel'))">Caracteres</button>
+          <div class="application-menu-separator" role="separator"></div>
           <button type="button" role="menuitem" aria-haspopup="true" :aria-expanded="historyOpen" @click.stop="historyOpen = !historyOpen">Histórico<span aria-hidden="true">›</span></button>
 
           <div v-if="historyOpen" class="history-popover application-history-popover">

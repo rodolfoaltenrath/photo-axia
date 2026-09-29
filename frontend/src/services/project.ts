@@ -307,6 +307,14 @@ function restoreText(value: unknown): TextLayerContent | undefined {
   if (textTransform !== undefined && textTransform !== 'none' && textTransform !== 'uppercase') {
     throw new Error('Transformação de texto inválida.')
   }
+  const pathMode = text.pathMode
+  if (pathMode !== undefined && pathMode !== 'none' && pathMode !== 'ellipse') {
+    throw new Error('Trajetória de texto inválida.')
+  }
+  const pathOffset = finiteNumber(text.pathOffset, 0)
+  if (pathOffset === undefined || pathOffset < -360 || pathOffset > 360) {
+    throw new Error('Posição da trajetória de texto inválida.')
+  }
   const letterSpacing = finiteNumber(text.letterSpacing, 0)
   if (letterSpacing === undefined || letterSpacing < -100 || letterSpacing > 1_000) {
     throw new Error('Espaçamento entre letras inválido.')
@@ -331,7 +339,9 @@ function restoreText(value: unknown): TextLayerContent | undefined {
     fontStyle: fontStyle ?? 'normal',
     letterSpacing,
     decoration: decoration ?? 'none',
-    textTransform: textTransform ?? 'none'
+    textTransform: textTransform ?? 'none',
+    pathMode: pathMode ?? 'none',
+    pathOffset
   }
 }
 

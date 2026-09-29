@@ -1,10 +1,24 @@
-import type { LayerStyleConfig, LayerStyleGlobalLight } from '../types/editor.ts'
+import type { LayerStyleConfig, LayerStyleGlobalLight, TextLayerContent } from '../types/editor.ts'
 import type { LayerStyleRenderQuality } from './layerStyleCompositor.ts'
+
+export interface LayerStyleWorkerRasterSource {
+  type: 'raster'
+  blob: Blob
+}
+
+export interface LayerStyleWorkerTextSource {
+  type: 'text'
+  text: TextLayerContent
+  drawScaleX: number
+  drawScaleY: number
+}
+
+export type LayerStyleWorkerSource = LayerStyleWorkerRasterSource | LayerStyleWorkerTextSource
 
 export interface LayerStyleWorkerRenderRequest {
   type: 'render'
   id: number
-  source: Blob
+  source: LayerStyleWorkerSource
   sourceWidth: number
   sourceHeight: number
   styles: LayerStyleConfig

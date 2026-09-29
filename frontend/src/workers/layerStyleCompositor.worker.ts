@@ -1,4 +1,5 @@
 import { composeLayerStyleRaster, type LayerStylePatternRasters } from '../editor/layerStyleRaster.ts'
+import { drawTextLayerContent } from '../editor/textCanvas.ts'
 import type {
   LayerStyleWorkerRenderRequest,
   LayerStyleWorkerRequest,
@@ -16,17 +17,17 @@ function ensureCurrent(id: number) {
 
 async function decodePatternBlob(blob: Blob) {
   const bitmap = await createImageBitmap(blob)
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
   try {
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
     const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true })
     if (!context) throw new Error('Renderizador de estilos indisponível.')
     context.drawImage(bitmap, 0, 0)
     const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height)
-    canvas.width = 1
-    canvas.height = 1
     return { width: pixels.width, height: pixels.height, data: pixels.data }
   } finally {
     bitmap.close()
+    canvas.width = 1
+    canvas.height = 1
   }
 }
 
@@ -39,20 +40,28 @@ async function decodePatterns(patterns: Record<string, Blob>): Promise<LayerStyl
 
 async function render(request: LayerStyleWorkerRenderRequest) {
   ensureCurrent(request.id)
-  const [bitmap, patterns] = await Promise.all([
-    createImageBitmap(request.source, {
-      resizeWidth: request.sourceWidth,
-      resizeHeight: request.sourceHeight,
-      resizeQuality: request.quality === 'interactive' ? 'medium' : 'high'
-    }),
-    decodePatterns(request.patterns)
-  ])
+  const patterns = await decodePatterns(request.patterns)
+  let bitmap: ImageBitmap | undefined
+  let sourceCanvas: OffscreenCanvas | undefined
+  let output: OffscreenCanvas | undefined
   try {
     ensureCurrent(request.id)
-    const sourceCanvas = new OffscreenCanvas(request.sourceWidth, request.sourceHeight)
+    sourceCanvas = new OffscreenCanvas(request.sourceWidth, request.sourceHeight)
     const sourceContext = sourceCanvas.getContext('2d', { alpha: true, willReadFrequently: true })
     if (!sourceContext) throw new Error('Renderizador de estilos indisponível.')
-    sourceContext.drawImage(bitmap, 0, 0, request.sourceWidth, request.sourceHeight)
+    if (request.source.type === 'text') {
+      drawTextLayerContent(sourceContext, request.source.text, {
+        x: request.source.drawScaleX,
+        y: request.source.drawScaleY
+      })
+    } else {
+      bitmap = await createImageBitmap(request.source.blob, {
+        resizeWidth: request.sourceWidth,
+        resizeHeight: request.sourceHeight,
+        resizeQuality: request.quality === 'interactive' ? 'medium' : 'high'
+      })
+      sourceContext.drawImage(bitmap, 0, 0, request.sourceWidth, request.sourceHeight)
+    }
     const source = sourceContext.getImageData(0, 0, request.sourceWidth, request.sourceHeight)
     const composed = composeLayerStyleRaster(
       { width: source.width, height: source.height, data: source.data },
@@ -63,7 +72,7 @@ async function render(request: LayerStyleWorkerRenderRequest) {
     )
     ensureCurrent(request.id)
 
-    const output = new OffscreenCanvas(composed.width, composed.height)
+    output = new OffscreenCanvas(composed.width, composed.height)
     const outputContext = output.getContext('2d', { alpha: true })
     if (!outputContext) throw new Error('Renderizador de estilos indisponível.')
     const outputPixels = new ImageData(composed.width, composed.height)
@@ -82,12 +91,16 @@ async function render(request: LayerStyleWorkerRenderRequest) {
       }
     }
     self.postMessage(message)
-    sourceCanvas.width = 1
-    sourceCanvas.height = 1
-    output.width = 1
-    output.height = 1
   } finally {
-    bitmap.close()
+    bitmap?.close()
+    if (sourceCanvas) {
+      sourceCanvas.width = 1
+      sourceCanvas.height = 1
+    }
+    if (output) {
+      output.width = 1
+      output.height = 1
+    }
   }
 }
 

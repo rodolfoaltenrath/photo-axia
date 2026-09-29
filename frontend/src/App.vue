@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import CanvasViewport from './components/CanvasViewport.vue'
+import CharacterPanel from './components/CharacterPanel.vue'
 import FlattenImageDialog from './components/FlattenImageDialog.vue'
 import ImportPdfDialog from './components/ImportPdfDialog.vue'
 import PDFRerenderDialog from './components/PDFRerenderDialog.vue'
@@ -189,6 +190,7 @@ import type {
 } from './types/editor'
 
 const RULERS_VISIBLE_PREFERENCE = 'axia:rulers-visible'
+const CHARACTER_PANEL_LAYOUT_PREFERENCE = 'axia:character-panel-layout'
 
 function initialRulersVisibility() {
   if (typeof window === 'undefined') return true
@@ -208,6 +210,17 @@ function browserPreferenceStorage() {
     return window.localStorage
   } catch {
     return undefined
+  }
+}
+
+function initialCharacterPanelLayout() {
+  const storage = browserPreferenceStorage()
+  try {
+    const stored = storage?.getItem(CHARACTER_PANEL_LAYOUT_PREFERENCE)
+    const layout = stored ? JSON.parse(stored) as { collapsed?: unknown; docked?: unknown } : undefined
+    return { docked: layout?.docked === true, collapsed: layout?.collapsed === true }
+  } catch {
+    return { docked: false, collapsed: false }
   }
 }
 
@@ -267,6 +280,47 @@ const showFlattenImageDialog = ref(false)
 const rasterizeLayerRequest = ref<{ layerId: string; toolLabel: string }>()
 const layerStylePresets = shallowRef<LayerStylePreset[]>([])
 const inspectorTab = ref<'properties' | 'styles'>('styles')
+const initialCharacterLayout = initialCharacterPanelLayout()
+const showCharacterPanel = ref(false)
+const characterPanelDocked = ref(initialCharacterLayout.docked)
+const characterPanelCollapsed = ref(initialCharacterLayout.collapsed)
+const characterPanelDragging = ref(false)
+
+function persistCharacterPanelLayout() {
+  try {
+    browserPreferenceStorage()?.setItem(CHARACTER_PANEL_LAYOUT_PREFERENCE, JSON.stringify({
+      collapsed: characterPanelCollapsed.value,
+      docked: characterPanelDocked.value
+    }))
+  } catch {
+    // A paleta continua funcional quando as preferências não podem ser gravadas.
+  }
+}
+
+function dockCharacterPanel() {
+  characterPanelDocked.value = true
+  characterPanelCollapsed.value = false
+  characterPanelDragging.value = false
+}
+
+function undockCharacterPanel() {
+  characterPanelDocked.value = false
+  characterPanelCollapsed.value = false
+}
+
+function toggleCharacterPanelCollapsed() {
+  if (characterPanelCollapsed.value) {
+    characterPanelCollapsed.value = false
+    return
+  }
+  // Uma paleta recolhida pertence à barra lateral; deixar um ícone flutuando
+  // sobre o canvas torna a posição ambígua e disputa espaço com o documento.
+  characterPanelDocked.value = true
+  characterPanelCollapsed.value = true
+  characterPanelDragging.value = false
+}
+
+watch([characterPanelDocked, characterPanelCollapsed], persistCharacterPanelLayout)
 const scaleLayerEffectsSession = shallowRef<{
   items: Array<{ layerId: string; before: LayerStyleConfig }>
 }>()
@@ -4525,6 +4579,7 @@ onBeforeUnmount(() => {
       :can-delete-layer="layers.length > 1"
       :can-convert-to-smart-layer="canConvertSelectedLayersToSmart"
       :can-clear-layer-styles="canClearActiveLayerStyles"
+      :can-edit-text="activeLayer.kind === 'text' && Boolean(activeLayer.text)"
       :can-duplicate-layer="Boolean(activeLayer.image || activeLayer.text || activeLayer.shape)"
       :can-edit-smart-layer="activeLayer.kind === 'smart'"
       :can-fill-layer="activeLayer.visible && ['background', 'pixel'].includes(activeLayer.kind) && Boolean(activeLayer.image && activeLayer.transform)"
@@ -4546,9 +4601,11 @@ onBeforeUnmount(() => {
       :redo-label="redoLabel"
       :status-text="statusText"
       :style-target-count="activeStyleTargetLayers.length"
+      :character-panel-open="showCharacterPanel"
       :undo-label="undoLabel"
       @add-layer="addLayer"
       @clear-selection="updateSelection(null)"
+      @toggle-character-panel="showCharacterPanel = !showCharacterPanel"
       @clear-layer-styles="clearLayerStyles()"
       @convert-to-smart-layer="convertSelectedLayersToSmart"
       @copy-layer-styles="copyLayerStyles()"
@@ -4732,7 +4789,16 @@ onBeforeUnmount(() => {
         @update:zoom="setZoom"
       />
 
-      <aside class="side-panels" :inert="imagePlacementActive || undefined" aria-label="Painéis do documento">
+      <aside
+        class="side-panels"
+        :class="{
+          'side-panels--character-collapsed': showCharacterPanel && characterPanelDocked && characterPanelCollapsed,
+          'side-panels--character-docked': showCharacterPanel && characterPanelDocked,
+          'side-panels--character-dock-ready': showCharacterPanel && !characterPanelDocked && characterPanelDragging
+        }"
+        :inert="imagePlacementActive || undefined"
+        aria-label="Painéis do documento"
+      >
         <PropertiesPanel
           :active-layer="activeLayer"
           :active-tool="activeTool"
@@ -4754,6 +4820,18 @@ onBeforeUnmount(() => {
             />
           </template>
         </PropertiesPanel>
+
+        <CharacterPanel
+          v-if="showCharacterPanel && characterPanelDocked"
+          docked
+          :collapsed="characterPanelCollapsed"
+          :layer-name="activeLayer.name"
+          :text="activeLayer.text"
+          @close="showCharacterPanel = false"
+          @toggle:collapsed="toggleCharacterPanelCollapsed"
+          @undock="undockCharacterPanel"
+          @update:text="updateTextLayer(activeLayerId, $event)"
+        />
 
         <LayersPanel
           :active-layer-id="activeLayerId"
@@ -4789,6 +4867,18 @@ onBeforeUnmount(() => {
         />
       </aside>
     </section>
+
+    <CharacterPanel
+      v-if="hasOpenDocument && showCharacterPanel && !characterPanelDocked"
+      :collapsed="characterPanelCollapsed"
+      :layer-name="activeLayer.name"
+      :text="activeLayer.text"
+      @close="showCharacterPanel = false; characterPanelDragging = false"
+      @dock="dockCharacterPanel"
+      @dragging="characterPanelDragging = $event"
+      @toggle:collapsed="toggleCharacterPanelCollapsed"
+      @update:text="updateTextLayer(activeLayerId, $event)"
+    />
 
     <NewDocumentDialog
       :busy="isBusy"

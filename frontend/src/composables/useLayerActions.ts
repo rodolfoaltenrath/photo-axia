@@ -7,7 +7,8 @@ import {
   MAX_TEXT_FONT_FAMILY_LENGTH,
   measureTextLayer,
   resizeParagraphText,
-  textContentIsWithinLimits
+  textContentIsWithinLimits,
+  textPathMode
 } from '../editor/text'
 import type { HistoryRecordOptions } from '../editor/history'
 import type {
@@ -124,7 +125,11 @@ export function useLayerActions(options: LayerActionsOptions) {
     text.fontSize = Math.min(1000, Math.max(1, Number.isFinite(text.fontSize) ? text.fontSize : previous.fontSize))
     text.fontWeight = Math.min(900, Math.max(100, Number.isFinite(text.fontWeight) ? text.fontWeight : previous.fontWeight))
     text.lineHeight = Math.min(3, Math.max(0.6, Number.isFinite(text.lineHeight) ? text.lineHeight : previous.lineHeight))
-    text.layoutMode = text.layoutMode === 'paragraph' ? 'paragraph' : 'point'
+    text.pathMode = text.pathMode === 'ellipse' ? 'ellipse' : 'none'
+    text.pathOffset = Math.min(360, Math.max(-360,
+      typeof text.pathOffset === 'number' && Number.isFinite(text.pathOffset) ? text.pathOffset : 0
+    ))
+    text.layoutMode = text.pathMode === 'ellipse' ? 'point' : text.layoutMode === 'paragraph' ? 'paragraph' : 'point'
     text.baseWidth = Math.min(16_384, Math.max(1, Number.isFinite(text.baseWidth) ? text.baseWidth : previous.baseWidth))
     text.fontStyle = text.fontStyle === 'italic' ? 'italic' : 'normal'
     text.letterSpacing = Math.min(1000, Math.max(-100,
@@ -135,6 +140,12 @@ export function useLayerActions(options: LayerActionsOptions) {
     text.alignment = text.alignment === 'center' || text.alignment === 'right'
       ? text.alignment
       : 'left'
+    if (textPathMode(previous) !== 'ellipse' && text.pathMode === 'ellipse') {
+      const linearSize = measureTextLayer({ ...text, pathMode: 'none' })
+      text.baseWidth = Math.min(16_384, Math.max(text.baseWidth, linearSize.width + text.fontSize * 2.4, 160))
+      text.baseHeight = Math.min(16_384, Math.max(text.baseHeight, text.fontSize * 4, 120))
+      if (patch.pathMode !== undefined && patch.alignment === undefined) text.alignment = 'center'
+    }
     const size = measureTextLayer(text)
     text.baseWidth = size.width
     text.baseHeight = size.height
@@ -161,7 +172,7 @@ export function useLayerActions(options: LayerActionsOptions) {
 
   function resizeTextParagraph(layerId: string, value: { baseWidth: number; x: number; y: number }) {
     const layer = options.layers.value.find((item) => item.id === layerId)
-    if (!layer?.text || !layer.transform || layer.text.layoutMode !== 'paragraph') return
+    if (!layer?.text || !layer.transform || layer.text.layoutMode !== 'paragraph' || textPathMode(layer.text) !== 'none') return
     const previous = layer.text
     const transform = layer.transform
     const text = resizeParagraphText(previous, value.baseWidth)

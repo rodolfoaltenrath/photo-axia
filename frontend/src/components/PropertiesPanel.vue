@@ -69,7 +69,19 @@ const emit = defineEmits<{
           </select>
         </label>
 
-        <label v-if="(activeLayer.text.layoutMode ?? 'point') === 'paragraph'">
+        <label>
+          Trajetória
+          <select
+            :value="activeLayer.text.pathMode ?? 'none'"
+            @change="$emit('update:text', { pathMode: ($event.target as HTMLSelectElement).value as TextLayerContent['pathMode'] })"
+          >
+            <option value="none">Sem trajetória</option>
+            <option value="ellipse">Elipse / círculo</option>
+          </select>
+          <small>O texto continua editável e acompanha a borda da elipse da própria camada.</small>
+        </label>
+
+        <label v-if="(activeLayer.text.layoutMode ?? 'point') === 'paragraph' && (activeLayer.text.pathMode ?? 'none') === 'none'">
           Largura do parágrafo
           <input
             :value="activeLayer.text.baseWidth"
@@ -80,130 +92,43 @@ const emit = defineEmits<{
           />
         </label>
 
-        <label>
-          Fonte e fallback CSS
-          <input
-            :value="activeLayer.text.fontFamily"
-            list="text-font-family-options"
-            maxlength="512"
-            @change="$emit('update:text', { fontFamily: ($event.target as HTMLInputElement).value })"
-          />
-          <datalist id="text-font-family-options">
-            <option value="Arial, sans-serif">Arial</option>
-            <option value="Helvetica, Arial, sans-serif">Helvetica</option>
-            <option value="Verdana, sans-serif">Verdana</option>
-            <option value="Tahoma, sans-serif">Tahoma</option>
-            <option value="Trebuchet MS, sans-serif">Trebuchet MS</option>
-            <option value="Georgia, serif">Georgia</option>
-            <option value="Times New Roman, serif">Times New Roman</option>
-            <option value="'Courier New', monospace">Courier New</option>
-            <option value="Impact, sans-serif">Impact</option>
-            <option value="system-ui, sans-serif">Sistema</option>
-          </datalist>
-          <small>Informe uma família ou uma pilha CSS, por exemplo: Inter, Arial, sans-serif.</small>
-        </label>
-
-        <div class="property-grid">
+        <template v-if="(activeLayer.text.pathMode ?? 'none') === 'ellipse'">
+          <div class="property-grid">
+            <label>
+              Largura da elipse
+              <input
+                :value="activeLayer.text.baseWidth"
+                max="16384"
+                min="1"
+                type="number"
+                @input="$emit('update:text', { baseWidth: Number(($event.target as HTMLInputElement).value) })"
+              />
+            </label>
+            <label>
+              Altura da elipse
+              <input
+                :value="activeLayer.text.baseHeight"
+                max="16384"
+                min="1"
+                type="number"
+                @input="$emit('update:text', { baseHeight: Number(($event.target as HTMLInputElement).value) })"
+              />
+            </label>
+          </div>
           <label>
-            Tamanho
+            Posição inicial (graus)
             <input
-              :value="activeLayer.text.fontSize"
-              max="1000"
-              min="1"
+              :value="activeLayer.text.pathOffset ?? 0"
+              max="360"
+              min="-360"
+              step="1"
               type="number"
-              @input="$emit('update:text', { fontSize: Number(($event.target as HTMLInputElement).value) })"
+              @input="$emit('update:text', { pathOffset: Number(($event.target as HTMLInputElement).value) })"
             />
+            <small>0° fica no topo; valores positivos avançam no sentido horário.</small>
           </label>
-          <label>
-            Peso
-            <select
-              :value="activeLayer.text.fontWeight"
-              @change="$emit('update:text', { fontWeight: Number(($event.target as HTMLSelectElement).value) })"
-            >
-              <option :value="300">Leve</option>
-              <option :value="400">Normal</option>
-              <option :value="600">Seminegrito</option>
-              <option :value="700">Negrito</option>
-            </select>
-          </label>
-          <label>
-            Estilo
-            <select
-              :value="activeLayer.text.fontStyle ?? 'normal'"
-              @change="$emit('update:text', { fontStyle: ($event.target as HTMLSelectElement).value as 'normal' | 'italic' })"
-            >
-              <option value="normal">Normal</option>
-              <option value="italic">Itálico</option>
-            </select>
-          </label>
-        </div>
+        </template>
 
-        <div class="property-grid">
-          <label>
-            Cor
-            <input
-              class="text-color-input"
-              :value="activeLayer.text.color"
-              type="color"
-              @input="$emit('update:text', { color: ($event.target as HTMLInputElement).value })"
-            />
-          </label>
-          <label>
-            Entrelinha
-            <input
-              :value="activeLayer.text.lineHeight"
-              max="3"
-              min="0.6"
-              step="0.05"
-              type="number"
-              @input="$emit('update:text', { lineHeight: Number(($event.target as HTMLInputElement).value) })"
-            />
-          </label>
-          <label>
-            Espaçamento
-            <input
-              :value="activeLayer.text.letterSpacing ?? 0"
-              max="1000"
-              min="-100"
-              step="0.1"
-              type="number"
-              @input="$emit('update:text', { letterSpacing: Number(($event.target as HTMLInputElement).value) })"
-            />
-          </label>
-        </div>
-
-        <label>
-          Alinhamento
-          <select
-            :value="activeLayer.text.alignment"
-            @change="$emit('update:text', { alignment: ($event.target as HTMLSelectElement).value as TextLayerContent['alignment'] })"
-          >
-            <option value="left">Esquerda</option>
-            <option value="center">Centro</option>
-            <option value="right">Direita</option>
-          </select>
-        </label>
-        <div class="property-grid">
-          <label>
-            Decoração
-            <select
-              :value="activeLayer.text.decoration ?? 'none'"
-              @change="$emit('update:text', { decoration: ($event.target as HTMLSelectElement).value as TextLayerContent['decoration'] })"
-            >
-              <option value="none">Nenhuma</option>
-              <option value="underline">Sublinhado</option>
-              <option value="line-through">Tachado</option>
-            </select>
-          </label>
-          <label class="property-checkbox">
-            <input
-              :checked="activeLayer.text.textTransform === 'uppercase'"
-              type="checkbox"
-              @change="$emit('update:text', { textTransform: ($event.target as HTMLInputElement).checked ? 'uppercase' : 'none' })"
-            />
-            Caixa alta
-          </label>
-        </div>
       </section>
 
       <section

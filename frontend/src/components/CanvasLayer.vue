@@ -5,7 +5,8 @@ import { layerCompositingStyle } from '../editor/blendModes'
 import { nativeTextStrokeEffect } from '../editor/layerStyleCompositor'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
 import { shapePathData } from '../editor/shape'
-import { layoutText } from '../editor/text'
+import { ellipseTextPathData, layoutText, textPathDisplayContent, textPathMode, textPathOffset } from '../editor/text'
+import { textPresentationScale } from '../editor/textCanvas'
 import { useLayerImageBuffer } from './canvas/composables/useLayerImageHandoff'
 import { useLayerStyleRaster } from './canvas/composables/useLayerStyleRaster'
 
@@ -79,6 +80,21 @@ const showsStyledTextRaster = computed(() => Boolean(props.layer.text && !props.
 const mountsStyledTextRaster = computed(() => Boolean(props.layer.text && !props.textEditor && desiredImageSource.value))
 
 const textLayout = computed(() => props.layer.text ? layoutText(props.layer.text) : undefined)
+const textScale = computed(() => props.layer.text
+  ? textPresentationScale(props.layer.text, props.transform, props.renderScale)
+  : undefined)
+const textPath = computed(() => {
+  const text = props.layer.text
+  return text && textPathMode(text) === 'ellipse'
+    ? ellipseTextPathData(text)
+    : undefined
+})
+const textPathId = computed(() => `text-path-${props.layer.id}`)
+const textPathContent = computed(() => props.layer.text ? textPathDisplayContent(props.layer.text) : '')
+const textPathStartOffset = computed(() => {
+  const degrees = textPathOffset(props.layer.text ?? { pathOffset: 0 })
+  return `${((degrees % 360) + 360) % 360 / 3.6}%`
+})
 
 function imageBufferStyle(source: string | null) {
   const geometry = geometryForSource(source)
@@ -111,26 +127,28 @@ const textStyle = computed<CSSProperties | undefined>(() => {
   const text = props.layer.text
   if (!text) return undefined
   const stroke = nativeTextStroke.value
-  const scaleX = props.transform.width / text.baseWidth
-  const scaleY = props.transform.height / text.baseHeight
-  const styleScale = Math.sqrt(Math.max(0.0001, scaleX * scaleY))
+  const scale = textScale.value
+  if (!scale) return undefined
+  const density = scale.renderScale
+  const transformX = scale.horizontalCorrection / density
+  const transformY = 1 / density
 
   return {
-    width: `${text.baseWidth}px`,
-    height: `${text.baseHeight}px`,
+    width: `${text.baseWidth * scale.scaleY * density}px`,
+    height: `${text.baseHeight * scale.scaleY * density}px`,
     color: text.color,
     fontFamily: text.fontFamily,
-    fontSize: `${text.fontSize}px`,
+    fontSize: `${text.fontSize * scale.scaleY * density}px`,
     fontWeight: text.fontWeight,
     fontStyle: text.fontStyle ?? 'normal',
-    letterSpacing: `${text.letterSpacing ?? 0}px`,
+    letterSpacing: `${(text.letterSpacing ?? 0) * scale.scaleY * density}px`,
     lineHeight: text.lineHeight,
     textDecoration: text.decoration ?? 'none',
     textTransform: text.textTransform ?? 'none',
-    transform: `scale(${scaleX}, ${scaleY})`,
+    transform: transformX === 1 && transformY === 1 ? undefined : `scale(${transformX}, ${transformY})`,
     ...(stroke?.paint.type === 'color'
       ? {
-          WebkitTextStroke: `${stroke.size * 2 / styleScale}px ${stroke.paint.color}`,
+          WebkitTextStroke: `${stroke.size * 2 * density}px ${stroke.paint.color}`,
           paintOrder: 'stroke fill'
         }
       : {})
@@ -138,8 +156,25 @@ const textStyle = computed<CSSProperties | undefined>(() => {
 })
 
 function textLineStyle(x: number, y: number): CSSProperties {
-  return { left: `${x}px`, top: `${y}px` }
+  const scale = textScale.value
+  const density = scale?.renderScale ?? 1
+  const verticalScale = (scale?.scaleY ?? 1) * density
+  return { left: `${x * verticalScale}px`, top: `${y * verticalScale}px` }
 }
+
+const textPathStyle = computed<CSSProperties | undefined>(() => {
+  const text = props.layer.text
+  const scale = textScale.value
+  if (!text || !scale) return undefined
+  const density = scale.renderScale
+  const transformX = scale.horizontalCorrection / density
+  const transformY = 1 / density
+  return {
+    width: `${text.baseWidth * scale.scaleY * density}px`,
+    height: `${text.baseHeight * scale.scaleY * density}px`,
+    transform: transformX === 1 && transformY === 1 ? undefined : `scale(${transformX}, ${transformY})`
+  }
+})
 
 const shapePath = computed(() => {
   const shape = props.layer.shape
@@ -224,7 +259,7 @@ function handleTextEditorKeydown(event: KeyboardEvent) {
       />
     </template>
     <div
-      v-else-if="layer.kind === 'text' && layer.text"
+      v-else-if="layer.kind === 'text' && layer.text && !textPath"
       class="document-text"
       :style="textStyle"
     >
@@ -235,6 +270,32 @@ function handleTextEditorKeydown(event: KeyboardEvent) {
         :style="textLineStyle(line.x, line.y)"
       >{{ line.content || ' ' }}</span>
     </div>
+    <svg
+      v-else-if="layer.kind === 'text' && layer.text && textPath"
+      class="document-text document-text-path"
+      :style="textPathStyle"
+      :viewBox="`0 0 ${layer.text.baseWidth} ${layer.text.baseHeight}`"
+      aria-hidden="true"
+    >
+      <defs>
+        <path :id="textPathId" :d="textPath" />
+      </defs>
+      <text
+        :fill="layer.text.color"
+        :font-family="layer.text.fontFamily"
+        :font-size="layer.text.fontSize"
+        :font-style="layer.text.fontStyle ?? 'normal'"
+        :font-weight="layer.text.fontWeight"
+        :letter-spacing="layer.text.letterSpacing ?? 0"
+        :paint-order="nativeTextStroke ? 'stroke fill' : undefined"
+        :stroke="nativeTextStroke?.paint.type === 'color' ? nativeTextStroke.paint.color : undefined"
+        :stroke-width="nativeTextStroke?.paint.type === 'color' ? nativeTextStroke.size * 2 : undefined"
+        :text-anchor="layer.text.alignment === 'center' ? 'middle' : layer.text.alignment === 'right' ? 'end' : 'start'"
+        :text-decoration="layer.text.decoration === 'none' ? undefined : layer.text.decoration"
+      >
+        <textPath :href="`#${textPathId}`" :startOffset="textPathStartOffset">{{ textPathContent }}</textPath>
+      </text>
+    </svg>
     <svg
       v-else-if="layer.kind === 'shape' && layer.shape"
       class="document-shape"

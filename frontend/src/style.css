@@ -1540,6 +1540,18 @@ textarea:focus-visible,
   padding: 10px;
 }
 
+.side-panels--character-docked {
+  grid-template-rows: minmax(120px, 0.28fr) minmax(64px, 0.44fr) minmax(170px, 1fr);
+}
+
+.side-panels--character-collapsed {
+  grid-template-rows: minmax(140px, 0.4fr) 46px minmax(190px, 1fr);
+}
+
+.side-panels--character-dock-ready {
+  box-shadow: inset 0 0 0 2px var(--ui-accent, #3f7fc2);
+}
+
 .panel {
   border: 1px solid #2d3540;
   border-radius: 8px;
@@ -2735,6 +2747,11 @@ html.layer-style-native-window body {
   white-space: pre;
 }
 
+.document-text-path {
+  display: block;
+  overflow: hidden;
+}
+
 .document-text-editor {
   display: block;
   box-sizing: border-box;
@@ -2750,6 +2767,176 @@ html.layer-style-native-window body {
   overflow: hidden;
   pointer-events: auto;
   user-select: text;
+}
+
+.character-panel {
+  z-index: 70;
+  overflow: hidden;
+  border: 1px solid var(--ui-border, #343d48);
+  border-radius: 8px;
+  background: var(--ui-surface-raised, #20262e);
+  box-shadow: 0 16px 44px rgb(0 0 0 / 44%);
+}
+
+.character-panel--floating {
+  position: fixed;
+  width: min(304px, calc(100vw - 16px));
+}
+
+.character-panel--docked {
+  position: relative;
+  z-index: auto;
+  width: 100%;
+  min-height: 0;
+  box-shadow: none;
+}
+
+.character-panel--collapsed {
+  display: grid;
+  width: 46px;
+  min-height: 46px;
+  place-items: center;
+}
+
+.character-panel--docked.character-panel--collapsed {
+  justify-self: start;
+}
+
+.character-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--ui-border, #343d48);
+  padding: 8px 10px 8px 14px;
+  cursor: move;
+  user-select: none;
+}
+
+.character-panel-header h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.character-panel-header span {
+  display: block;
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--ui-text-muted, #a9afba);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.character-panel-header button {
+  min-width: 28px;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-muted, #a9afba);
+  font-size: 20px;
+}
+
+.character-panel-header-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.character-panel-header button:hover,
+.character-panel-header button:focus-visible {
+  background: var(--ui-control-hover, #343d48);
+  color: var(--ui-text, #fff);
+}
+
+.character-panel-content {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.character-panel-collapsed-button {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text, #fff);
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.character-panel-collapsed-button:hover,
+.character-panel-collapsed-button:focus-visible {
+  background: var(--ui-control-hover, #343d48);
+}
+
+.character-panel label {
+  display: grid;
+  gap: 4px;
+  color: var(--ui-text-muted, #a9afba);
+  font-size: 11px;
+}
+
+.character-panel input,
+.character-panel select {
+  width: 100%;
+  min-width: 0;
+}
+
+.character-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.character-panel-color {
+  height: 30px;
+  padding: 2px;
+}
+
+.character-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.character-panel-button-group {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--ui-border, #343d48);
+  border-radius: 5px;
+}
+
+.character-panel-button-group button {
+  min-width: 31px;
+  min-height: 30px;
+  border: 0;
+  border-right: 1px solid var(--ui-border, #343d48);
+  border-radius: 0;
+  background: var(--ui-control, #292f38);
+  color: var(--ui-text, #fff);
+}
+
+.character-panel-button-group button:last-child {
+  border-right: 0;
+}
+
+.character-panel-button-group button[aria-pressed="true"] {
+  background: var(--ui-accent, #3f7fc2);
+}
+
+.character-align-center { text-align: center; }
+.character-align-right { text-align: right; }
+
+.character-panel-empty {
+  margin: 0;
+  padding: 18px 14px;
+  color: var(--ui-text-muted, #a9afba);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .layer-style-dialog--native-window {

@@ -9,5 +9,5 @@ if [ ! -x "${NODE_BIN}/npm" ]; then
 fi
 
 cd frontend
-PATH="${NODE_BIN}:$PATH" npm install
+PATH="${NODE_BIN}:$PATH" npm ci
 

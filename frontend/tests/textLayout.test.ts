@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  ellipseTextPathData,
   layoutText,
   layoutTextLines,
   MAX_TEXT_CONTENT_LENGTH,
@@ -10,9 +11,12 @@ import {
   textContentIsWithinLimits,
   textDisplayContent,
   textLayoutMode,
+  textPathDisplayContent,
+  textPathMode,
+  textPathOffset,
   textLines
 } from '../src/editor/text.ts'
-import { textStyleRasterPlan } from '../src/editor/textCanvas.ts'
+import { drawTextLayerContent, textPresentationScale, textStyleRasterPlan, textStyleRasterSource } from '../src/editor/textCanvas.ts'
 import type { TextLayerContent } from '../src/types/editor.ts'
 
 test('normaliza quebras de linha sem eliminar linhas vazias', () => {
@@ -72,6 +76,38 @@ test('caixa alta altera apenas a apresentação, não o conteúdo persistido', (
   assert.equal(textDisplayContent({ content: 'Axia ç', textTransform: 'uppercase' }), 'AXIA Ç')
 })
 
+test('trajetória elíptica mantém o texto editável em uma única linha visual', () => {
+  const text: TextLayerContent = {
+    content: 'Axia\nStudio', fontFamily: 'sans-serif', fontSize: 24, fontWeight: 400,
+    color: '#fff', alignment: 'center', lineHeight: 1.2, baseWidth: 240, baseHeight: 150,
+    pathMode: 'ellipse', pathOffset: 45
+  }
+  assert.equal(textPathMode(text), 'ellipse')
+  assert.equal(textPathMode({}), 'none')
+  assert.equal(textPathOffset({ pathOffset: 999 }), 360)
+  assert.equal(textPathDisplayContent(text), 'Axia Studio')
+  assert.match(ellipseTextPathData(text), /^M 120 /)
+  assert.deepEqual(measureTextLayer(text), { width: 240, height: 150 })
+})
+
+test('desenhador Canvas posiciona os glifos de uma trajetória sem rasterizar a camada', () => {
+  const calls: string[] = []
+  const context = {
+    save() {}, restore() {}, scale() {}, translate() {}, rotate() {}, fillRect() {},
+    measureText(value: string) { return { width: value.length * 12 } },
+    fillText(value: string) { calls.push(value) },
+    set fillStyle(_value: string) {}, set font(_value: string) {},
+    set textAlign(_value: string) {}, set textBaseline(_value: string) {},
+    set letterSpacing(_value: string) {}
+  } as unknown as CanvasRenderingContext2D
+  drawTextLayerContent(context, {
+    content: 'ABC', fontFamily: 'sans-serif', fontSize: 20, fontWeight: 400,
+    color: '#fff', alignment: 'center', lineHeight: 1.2, baseWidth: 200, baseHeight: 120,
+    pathMode: 'ellipse', pathOffset: 0
+  })
+  assert.deepEqual(calls, ['A', 'B', 'C'])
+})
+
 test('aceita Unicode e rejeita conteúdo que ultrapassa os limites seguros', () => {
   assert.equal(textContentIsWithinLimits('Olá 👋\r\nمرحبا\r\n世界'), true)
   assert.equal(textContentIsWithinLimits('a'.repeat(MAX_TEXT_CONTENT_LENGTH + 1)), false)
@@ -114,4 +150,45 @@ test('raster temporário de texto reduz a densidade antes de exceder o orçament
   const plan = textStyleRasterPlan({ baseWidth: 1, baseHeight: 1 }, { width: 8_000, height: 8_000 }, 2)
   assert.ok(plan.width * plan.height <= 16_000_000)
   assert.ok(plan.effectScale < 1)
+})
+
+test('worker text source clones the text payload', () => {
+  const text: TextLayerContent = {
+    content: 'Axia', fontFamily: 'sans-serif', fontSize: 40, fontWeight: 400,
+    color: '#fff', alignment: 'left', lineHeight: 1.2, baseWidth: 200, baseHeight: 60,
+    layoutMode: 'point', pathMode: 'ellipse', pathOffset: 70
+  }
+  const plan = textStyleRasterPlan(text, { width: 400, height: 120 }, 2)
+  const source = textStyleRasterSource(text, plan)
+
+  text.content = 'changed later'
+  assert.equal(source.type, 'text')
+  assert.equal(source.text.content, 'Axia')
+  assert.equal(source.text.pathMode, 'ellipse')
+  assert.equal(source.text.pathOffset, 70)
+  assert.equal(source.drawScaleX, 4)
+  assert.equal(source.drawScaleY, 4)
+})
+
+test('apresenta texto DOM no tamanho final e limita transform Ã  correÃ§Ã£o horizontal', () => {
+  assert.deepEqual(textPresentationScale(
+    { baseWidth: 120, baseHeight: 60 },
+    { width: 720, height: 360 }
+  ), { scaleX: 6, scaleY: 6, horizontalCorrection: 1, renderScale: 1 })
+  assert.deepEqual(textPresentationScale(
+    { baseWidth: 120, baseHeight: 60 },
+    { width: 720, height: 180 }
+  ), { scaleX: 6, scaleY: 3, horizontalCorrection: 2, renderScale: 1 })
+})
+
+test('quantizes DOM text density for viewport zoom without exceeding the pixel budget', () => {
+  assert.equal(textPresentationScale(
+    { baseWidth: 120, baseHeight: 60 }, { width: 720, height: 360 }, 5.2
+  ).renderScale, 6)
+  assert.equal(textPresentationScale(
+    { baseWidth: 120, baseHeight: 60 }, { width: 120, height: 60 }, 32
+  ).renderScale, 32)
+  assert.ok(textPresentationScale(
+    { baseWidth: 120, baseHeight: 60 }, { width: 8_000, height: 8_000 }, 16
+  ).renderScale < 2)
 })

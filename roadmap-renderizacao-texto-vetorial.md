@@ -92,9 +92,9 @@ nunca mudar cor, ordem, posição ou espessura semântica do efeito.
 
 Estado: `NÃO INICIADO`
 
-- [ ] Mapear os caminhos de texto: DOM, raster transitório, preview de estilo,
+- [x] Mapear os caminhos de texto: DOM, raster transitório, preview de estilo,
   miniatura, exportação, mesclagem e rasterização.
-- [ ] Registrar quais estilos usam caminho nativo e quais exigem compositor.
+- [x] Registrar quais estilos usam caminho nativo e quais exigem compositor.
 - [ ] Medir tempo, memória e quantidade de renders em digitação, mudança de fonte,
   Ctrl+T, zoom, pan e sliders de efeito.
 - [ ] Criar documentos de referência: texto curto, parágrafo, texto longo, fontes
@@ -107,6 +107,27 @@ Critério de aceite:
 - Relatório identifica se o atraso vem de layout, composição, transferência,
   decodificação ou pintura do DOM.
 - Nenhuma mudança visual é introduzida nesta fase.
+
+### Registro — 2026-09-29 — Auditoria estática e primeira contenção de trabalho obsoleto
+
+- O projeto já possui compositor compartilhado em `layerStyleCompositor.worker.ts`,
+  protocolo de cancelamento, cache LRU de blobs/bitmaps e proteção de geração por
+  consumidor. Portanto, criar outro worker não resolveria o gargalo.
+- O caminho complexo de texto ainda prepara, no main thread, um canvas em alta
+  densidade e o codifica em PNG. O worker decodifica esse PNG novamente, lê seus
+  pixels, compõe o efeito, codifica novo PNG e o canvas o decodifica para mostrar.
+  Esta ida e volta é o principal candidato a custo percebido em zoom e edição.
+- A invalidação anterior só alcançava o compositor depois de a preparação PNG do
+  texto terminar. Agora ela ocorre assim que a dependência muda; uma preparação
+  que se tornar obsoleta não é enviada ao worker.
+- Digitação em texto que exige compositor é coalescida por 120 ms. Transformações
+  continuam em 180 ms e camadas de imagem em 40 ms; efeitos nativos de texto não
+  passam por esse agendamento.
+- Validação desta contenção: 434 testes do frontend, typecheck, build Vite e
+  `git diff --check` aprovados.
+- Próxima investigação: substituir a preparação PNG intermediária por uma fonte
+  transitória que possa ser composta sem recodificação e sem duplicar trabalho
+  entre canvas e miniatura, preservando paridade com exportação.
 
 ## Fase 1 — Contrato único de aparência
 
@@ -127,6 +148,71 @@ Critério de aceite:
 
 - Preview, worker e exportação formam requisições equivalentes.
 - Testes cobrem normalização, bounds, escala, cache e projetos antigos.
+
+### Registro — 2026-09-29 — Fonte tipográfica transitória no worker
+
+- O protocolo do compositor agora diferencia fonte raster (`Blob`) de fonte de
+  texto (`TextLayerContent` clonável mais escala de desenho). A alteração é
+  estritamente transitória e não muda o formato `.axia`.
+- Preview, exportação e mesclagem enviam texto estilizado diretamente ao worker.
+  O `OffscreenCanvas` desenha os glifos antes de extrair a máscara alfa e compor
+  o estilo; foi removida a preparação main-thread de canvas e PNG para esse caso.
+- Imagens continuam no caminho de `Blob`, reduzindo o alcance da mudança e
+  preservando o comportamento já validado para camadas raster.
+- O núcleo de layout agora aceita contexto 2D de janela e de `OffscreenCanvas`,
+  garantindo que quebra de parágrafo, espaçamento e alinhamento sejam calculados
+  pelo mesmo algoritmo.
+- Foi adicionado teste para o payload de texto do worker, confirmando cópia sem
+  referência reativa. Validação: 435 testes, typecheck, build Vite e
+  `git diff --check` aprovados.
+- Pendente: validação visual em WebView real para fontes instaladas, Unicode,
+  nitidez e paridade de traçado antes de considerar a nova fonte aprovada.
+
+### Registro — 2026-09-29 — Correção de escala do texto nativo
+
+- A validação visual revelou que uma camada sem `fx` também ficava borrada. A
+  causa não era o worker: texto DOM de tamanho base era ampliado por
+  `transform: scale(...)`, permitindo ao WebView ampliar uma textura pequena.
+- A apresentação nativa agora materializa fonte, espaçamento, linhas e caixa na
+  escala vertical final da camada. Em escala uniforme não sobra transform no
+  elemento de texto; em escala não uniforme fica somente a correção horizontal.
+- Um teste protege as escalas uniforme e não uniforme. Validação automatizada:
+  436 testes, typecheck, build Vite e build Wails Windows aprovados.
+- Pendente: validação manual desta build em zoom de ajuste, 100% e zoom alto antes
+  de avançar para o próximo gargalo do compositor.
+
+### Registro — 2026-09-29 — Densidade nativa orientada pelo zoom
+
+- A apresentação DOM passou a considerar a escala do viewport, além da escala da
+  camada. Em zoom acima de 100%, o texto é materializado em densidade maior e
+  compensado por escala inversa, preservando geometria, alinhamento e espessura
+  documental do traçado.
+- Densidades são quantizadas em poucos degraus para não reconfigurar fonte, layout
+  e textura a cada frame do zoom por roda. A área e a dimensão máximas reutilizam
+  o orçamento de segurança de 16 MP e 16.384 px.
+- Texto simples e traçado nativo usam esse caminho. Efeitos complexos continuam
+  no worker, cuja fonte transitória já é criada na densidade do viewport.
+- Testes adicionados para escolha de densidade, limite de área e preservação de
+  escala uniforme/não uniforme. Validação: 437 testes, typecheck, build Vite e
+  build Wails Windows aprovados.
+- Gate pendente: validar em WebView real, inclusive no zoom máximo. Caso ainda
+  exista pixelização acima do orçamento, a próxima fase será um overlay vetorial
+  em coordenadas de tela, fora do `scale()` da superfície do documento.
+
+### Registro — 2026-09-29 — Cobertura do zoom máximo e descarte defensivo
+
+- A escala de densidade ganhou os degraus 24× e 32×, cobrindo o zoom máximo do
+  editor quando os limites de dimensão e área permitem. Em textos muito grandes,
+  o orçamento de 16 MP e 16.384 px continua reduzindo a densidade de forma
+  determinística, em vez de arriscar travamento ou consumo excessivo de memória.
+- O worker agora limpa explicitamente os `OffscreenCanvas` temporários usados
+  para padrões, fonte e resultado, tanto em sucesso quanto em cancelamento ou
+  erro. `ImageBitmap` também permanece fechado no mesmo caminho de finalização.
+- Foi acrescentada cobertura para a escolha de 32× em uma camada pequena. A
+  validação automatizada permanece em 437 testes do frontend, typecheck, build
+  Vite e build Wails Windows aprovados.
+- O próximo gate é somente a matriz manual de texto e efeitos no WebView real;
+  não há mudança de serialização, de formato de documento ou de cache persistido.
 
 ## Fase 2 — Worker, agenda e cache
 

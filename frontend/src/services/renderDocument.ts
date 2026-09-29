@@ -17,7 +17,7 @@ import {
   layerStyleBlendIfUsesUnderlying,
   layerStyleFillOpacity
 } from '../editor/layerStyles.ts'
-import { drawTextLayerContent, textLayerSourceIdentity, textStyleRasterPlan } from '../editor/textCanvas.ts'
+import { drawTextLayerContent, textLayerSourceIdentity, textStyleRasterPlan, textStyleRasterSource } from '../editor/textCanvas.ts'
 import { traceShapePath } from '../editor/shape.ts'
 import { sourceScaleFactor } from '../editor/selection.ts'
 import { applyLayerStyleBlendIfUnderlying } from '../editor/layerStyleRaster.ts'
@@ -174,18 +174,10 @@ function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
   return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality))
 }
 
-async function textStyleSource(text: TextLayerContent, transform: LayerTransform) {
+function textStyleSource(text: TextLayerContent, transform: LayerTransform) {
   const plan = textStyleRasterPlan(text, transform)
-  const canvas = createCanvas(plan.width, plan.height)
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('O sistema não disponibilizou o renderizador 2D.')
-  drawTextLayerContent(context, text, { x: plan.drawScaleX, y: plan.drawScaleY })
-  const blob = await canvasBlob(canvas, 'image/png')
-  canvas.width = 1
-  canvas.height = 1
-  if (!blob) throw new Error('Não foi possível preparar o texto para composição.')
   return {
-    blob,
+    source: textStyleRasterSource(text, plan),
     width: plan.width,
     height: plan.height,
     effectScale: plan.effectScale,
@@ -201,7 +193,7 @@ async function prepareLayerRaster(
   quality: LayerStyleRenderQuality
 ): Promise<PreparedLayerRaster> {
   const asset = layer.image
-  const textSource = !asset && layer.text && layer.transform ? await textStyleSource(layer.text, layer.transform) : undefined
+  const textSource = !asset && layer.text && layer.transform ? textStyleSource(layer.text, layer.transform) : undefined
   if (!asset && !textSource) throw new Error('A camada não possui conteúdo para composição.')
   const preview = Boolean(asset && usePreviewSource && asset.previewUrl)
   const source = asset ? (preview ? asset.previewUrl! : asset.sourceUrl) : undefined
@@ -225,7 +217,7 @@ async function prepareLayerRaster(
     consumerId,
     layerId: layer.id,
     sourceIdentity: asset ? `${source}|${asset.editToken ?? ''}` : textSource!.identity,
-    source: asset ? () => fetchImageBlob(source!) : textSource!.blob,
+    source: asset ? () => fetchImageBlob(source!) : textSource!.source,
     sourceWidth,
     sourceHeight,
     styles: layer.styles,

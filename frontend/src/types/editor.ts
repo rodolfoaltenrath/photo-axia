@@ -297,6 +297,7 @@ export interface PDFSmartSource {
 export type TextLayoutMode = 'point' | 'paragraph'
 export type TextDecoration = 'none' | 'underline' | 'line-through'
 export type TextTransform = 'none' | 'uppercase'
+export type TextPathMode = 'none' | 'ellipse'
 
 export interface TextLayerContent {
   content: string
@@ -314,6 +315,10 @@ export interface TextLayerContent {
   letterSpacing?: number
   decoration?: TextDecoration
   textTransform?: TextTransform
+  /** Trajetória vetorial local; projetos anteriores continuam sem trajetória. */
+  pathMode?: TextPathMode
+  /** Posição inicial sobre a elipse, em graus a partir do topo e no sentido horário. */
+  pathOffset?: number
 }
 
 export interface ImageAsset {

@@ -139,6 +139,23 @@ test('restaura documento, camadas, guias e visualização usando URLs registrada
   assert.equal(restored.view.zoom, 68.89)
 })
 
+test('persiste trajetória elíptica de texto sem criar asset derivado', () => {
+  const state = projectState()
+  const original = entry(state.layers, 2, 'camada de texto')
+  assert.ok(original.text)
+  original.text = { ...original.text, pathMode: 'ellipse', pathOffset: -135, baseWidth: 360, baseHeight: 220 }
+  original.transform = transform({ x: 300, y: 100, width: 360, height: 220, rotation: -5 })
+  const { manifest } = createAxiaProjectManifest(state)
+  const stored = entry(manifest.layers, 2, 'camada salva')
+  assert.equal(stored.text?.pathMode, 'ellipse')
+  assert.equal(stored.text?.pathOffset, -135)
+  const restored = restoreAxiaProject(JSON.stringify(manifest), {
+    [entry(manifest.assets, 0, 'assets').id]: '/__axia_asset/restored'
+  })
+  assert.equal(entry(restored.layers, 2, 'camada restaurada').text?.pathMode, 'ellipse')
+  assert.equal(entry(restored.layers, 2, 'camada restaurada').text?.pathOffset, -135)
+})
+
 test('migra image legado para pixel inclusive dentro de Objeto Inteligente', () => {
   const { manifest } = createAxiaProjectManifest(projectState())
   const legacy = serializedManifest(manifest)

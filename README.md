@@ -16,6 +16,13 @@ Axia is a desktop image editor built with Go, Wails, Vue 3, TypeScript, and
 Vite. It combines layer-based raster editing, worker-accelerated tools, native
 project files, and a workflow-focused interface for Windows and Linux.
 
+### Install on Windows
+
+Download `axia-<version>-amd64-installer.exe` from the desired release and run
+it. The installer includes the WebView2 bootstrapper and installs Axia for the
+current user. For a version without installation, use `axia.exe` from the same
+release instead.
+
 ### Install on Linux with Flatpak
 
 Download `Axia.flatpak` from the desired release and run this command from its
@@ -298,6 +305,12 @@ projects should remain backed up while the editor evolves.
 
 Axia 是一款使用 Go、Wails、Vue 3、TypeScript 和 Vite 构建的桌面图像编辑器。它面向 Windows 和 Linux，提供基于图层的光栅编辑、由 Worker 加速的工具、原生项目文件，以及专注高效工作流的界面。
 
+### 在 Windows 上安装
+
+从所需版本下载 `axia-<version>-amd64-installer.exe` 并运行。安装程序包含
+WebView2 引导程序，并为当前用户安装 Axia。如需免安装版本，请下载同一版本中的
+`axia.exe`。
+
 ### 在 Linux 上通过 Flatpak 安装
 
 从所需版本下载 `Axia.flatpak`，然后在下载目录中执行：
@@ -546,6 +559,12 @@ O Axia é um editor de imagens desktop construído com Go, Wails, Vue 3,
 TypeScript e Vite. Ele reúne edição raster por camadas, ferramentas aceleradas
 por workers, projetos nativos e uma interface voltada para fluxos rápidos no
 Windows e Linux.
+
+### Instalar no Windows
+
+Baixe o `axia-<versão>-amd64-installer.exe` da versão desejada e execute-o. O
+instalador inclui o bootstrapper do WebView2 e instala o Axia para o usuário
+atual. Para uma versão sem instalação, use o `axia.exe` da mesma versão.
 
 ### Instalar no Linux com Flatpak
 

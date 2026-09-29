@@ -40,6 +40,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.7" date="2026-09-29" type="development">
+      <description>
+        <p>Sharper text rendering across the editor zoom range, with safer worker cleanup for style composition.</p>
+      </description>
+    </release>
     <release version="0.1.6" date="2026-09-22" type="development">
       <description>
         <p>Quick Selection, unified rasterization confirmation, and preview synchronization fixes.</p>

@@ -6,6 +6,16 @@ vars:
   VITE_PORT: '{{.WAILS_VITE_PORT | default 34115}}'
 
 tasks:
+  toolchains:check:
+    summary: Confere as versões declaradas de Go, Node, Wails, Rust e pacotes frontend
+    cmds:
+      - node scripts/check-toolchains.mjs
+
+  toolchains:check-installed:
+    summary: Confere também as ferramentas disponíveis no PATH atual
+    cmds:
+      - node scripts/check-toolchains.mjs --installed
+
   go:mod:tidy:
     internal: true
     run: once
@@ -22,7 +32,7 @@ tasks:
     generates:
       - node_modules/**/*
     cmds:
-      - npm install
+      - npm ci
 
   bindings:
     summary: Gera bindings TypeScript tipados para os serviços Go
@@ -42,6 +52,7 @@ tasks:
     internal: true
     run: once
     deps:
+      - toolchains:check
       - frontend:install
       - bindings
     dir: frontend
@@ -117,6 +128,7 @@ tasks:
   test:
     summary: Executa testes Go e frontend
     deps:
+      - toolchains:check
       - frontend:install
     cmds:
       - go test ./...

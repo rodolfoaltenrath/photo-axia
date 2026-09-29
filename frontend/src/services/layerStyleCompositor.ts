@@ -3,10 +3,16 @@ import {
   type LayerStyleRenderQuality
 } from '../editor/layerStyleCompositor.ts'
 import { composeLayerStyleRaster, type LayerStylePatternRasters } from '../editor/layerStyleRaster.ts'
+import { drawTextLayerContent } from '../editor/textCanvas.ts'
 import { layerStylePatternAssets, normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from '../editor/layerStyles.ts'
 import { ByteBudgetLruCache, LatestGenerationByKey } from '../editor/renderCache.ts'
 import { prepareImageSource, releasePreparedImage } from './imageImport.ts'
-import type { LayerStyleWorkerRequest, LayerStyleWorkerResult } from '../editor/layerStyleRenderProtocol.ts'
+import type {
+  LayerStyleWorkerRequest,
+  LayerStyleWorkerResult,
+  LayerStyleWorkerSource,
+  LayerStyleWorkerTextSource
+} from '../editor/layerStyleRenderProtocol.ts'
 import type { LayerStyleConfig, LayerStyleGlobalLight } from '../types/editor.ts'
 
 const patternBlobCache = new Map<string, { sourceUrl: string, blob: Blob }>()
@@ -53,7 +59,7 @@ export interface LayerStyleRenderRequest {
   consumerId: string
   layerId: string
   sourceIdentity: string
-  source: Blob | (() => Promise<Blob>)
+  source: Blob | LayerStyleWorkerTextSource | (() => Promise<Blob>)
   sourceWidth: number
   sourceHeight: number
   styles: LayerStyleConfig
@@ -221,7 +227,7 @@ function encodeCanvas(canvas: HTMLCanvasElement | OffscreenCanvas) {
 }
 
 async function fallbackRender(
-  source: Blob,
+  source: LayerStyleWorkerSource,
   sourceWidth: number,
   sourceHeight: number,
   styles: LayerStyleConfig,
@@ -230,18 +236,24 @@ async function fallbackRender(
   quality: LayerStyleRenderQuality,
   patterns: Record<string, Blob>
 ) {
-  const [bitmap, decodedPatterns] = await Promise.all([
-    createImageBitmap(source, {
-      resizeWidth: sourceWidth,
-      resizeHeight: sourceHeight,
-      resizeQuality: quality === 'interactive' ? 'medium' : 'high'
-    }),
-    decodePatternsMainThread(patterns)
-  ])
+  const decodedPatterns = await decodePatternsMainThread(patterns)
   const sourceCanvas = makeCanvas(sourceWidth, sourceHeight)
   try {
     const sourceContext = context2d(sourceCanvas, true)
-    sourceContext.drawImage(bitmap, 0, 0, sourceWidth, sourceHeight)
+    if (source.type === 'text') {
+      drawTextLayerContent(sourceContext, source.text, { x: source.drawScaleX, y: source.drawScaleY })
+    } else {
+      const bitmap = await createImageBitmap(source.blob, {
+        resizeWidth: sourceWidth,
+        resizeHeight: sourceHeight,
+        resizeQuality: quality === 'interactive' ? 'medium' : 'high'
+      })
+      try {
+        sourceContext.drawImage(bitmap, 0, 0, sourceWidth, sourceHeight)
+      } finally {
+        bitmap.close()
+      }
+    }
     const pixels = sourceContext.getImageData(0, 0, sourceWidth, sourceHeight)
     const composed = composeLayerStyleRaster(
       { width: pixels.width, height: pixels.height, data: pixels.data },
@@ -267,14 +279,13 @@ async function fallbackRender(
       output.height = 1
     }
   } finally {
-    bitmap.close()
     sourceCanvas.width = 1
     sourceCanvas.height = 1
   }
 }
 
 function executeRender(
-  source: Blob,
+  source: LayerStyleWorkerSource,
   sourceWidth: number,
   sourceHeight: number,
   styles: LayerStyleConfig,
@@ -360,8 +371,11 @@ export async function renderLayerStyle(request: LayerStyleRenderRequest): Promis
         resolvePatternBlobs(styles)
       ])
       if (cancelled) throw new LayerStyleRenderCancelledError()
+      const workerSource: LayerStyleWorkerSource = source instanceof Blob
+        ? { type: 'raster', blob: source }
+        : source
       const execution = executeRender(
-        source, request.sourceWidth, request.sourceHeight, styles, globalLight, resolutionScale, quality, patterns
+        workerSource, request.sourceWidth, request.sourceHeight, styles, globalLight, resolutionScale, quality, patterns
       )
       cancelExecution = execution.cancel
       const result = await execution.promise
