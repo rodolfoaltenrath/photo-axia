@@ -35,6 +35,27 @@ export function writeLanguagePreference(storage: PreferenceStorage | null | unde
   }
 }
 
+/** Prefer the desktop result; use the WebView only if it is empty or unavailable. */
+export function preferredLanguageCandidates(
+  desktopLanguages: readonly unknown[] | null | undefined,
+  browserLanguages: readonly unknown[] = []
+): string[] {
+  const normalize = (values: readonly unknown[]) => {
+    const result: string[] = []
+    const seen = new Set<string>()
+    for (const value of values) {
+      const tag = canonicalLanguageTag(value)
+      if (!tag || seen.has(tag.toLowerCase())) continue
+      seen.add(tag.toLowerCase())
+      result.push(tag)
+      if (result.length === 16) break
+    }
+    return result
+  }
+  const desktop = normalize(desktopLanguages ?? [])
+  return desktop.length ? desktop : normalize(browserLanguages)
+}
+
 function matchLanguage(language: string, available: ReadonlySet<string>): string | undefined {
   const tag = canonicalLanguageTag(language)
   if (!tag) return undefined

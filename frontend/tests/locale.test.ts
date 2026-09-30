@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   LANGUAGE_PREFERENCE_KEY,
   canonicalLanguageTag,
+  preferredLanguageCandidates,
   readLanguagePreference,
   resolveLanguage,
   writeLanguagePreference
@@ -21,6 +22,13 @@ test('preferência ausente ou inválida mantém modo automático', () => {
   assert.equal(readLanguagePreference(undefined), 'auto')
   assert.equal(readLanguagePreference(memoryStorage({ [LANGUAGE_PREFERENCE_KEY]: '??' })), 'auto')
   assert.equal(canonicalLanguageTag('zh-cn'), 'zh-CN')
+})
+
+test('lista do SO prevalece sobre WebView e rejeita entradas inválidas/duplicadas', () => {
+  assert.deepEqual(preferredLanguageCandidates(['pt_BR', 'pt-BR', 'zh-CN', '??'], ['en-US']), ['pt-BR', 'zh-CN'])
+  assert.deepEqual(preferredLanguageCandidates([], ['en-US', 'en-us', 'fr-FR']), ['en-US', 'fr-FR'])
+  assert.deepEqual(preferredLanguageCandidates(['??'], ['zh-TW']), ['zh-TW'])
+  assert.deepEqual(preferredLanguageCandidates(null, []), [])
 })
 
 test('grava idioma manual e tolera armazenamento indisponível', () => {

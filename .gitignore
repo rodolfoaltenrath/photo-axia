@@ -2,6 +2,7 @@
 /.toolchains/
 /node_modules/
 /frontend/node_modules/
+target/
 
 # Saidas de build
 /build/bin/
@@ -24,6 +25,7 @@
 /coverage/
 /.nyc_output/
 coverage.out
+*.tsbuildinfo
 *.test
 *.prof
 

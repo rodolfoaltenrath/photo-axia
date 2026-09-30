@@ -5,6 +5,7 @@ import {
   documentBaseMemoryBytes,
   documentPhysicalSize,
   documentPixelSize,
+  documentSettingsErrorCode,
   parseCustomDocumentPresets,
   pixelsPerDocumentUnit,
   proportionalDocumentDimension,
@@ -57,6 +58,11 @@ test('trocar entre unidades físicas não reinterpreta os números', () => {
 
 test('valida limites de dimensão, resolução e megapixels', () => {
   assert.equal(validateDocumentSettings(settings()), '')
+  assert.equal(documentSettingsErrorCode(settings()), '')
+  assert.equal(documentSettingsErrorCode(settings({ width: 0 })), 'invalid-dimensions')
+  assert.equal(documentSettingsErrorCode(settings({ resolutionDpi: 2401 })), 'invalid-dpi')
+  assert.equal(documentSettingsErrorCode(settings({ width: 20_000, height: 10 })), 'dimension-limit')
+  assert.equal(documentSettingsErrorCode(settings({ width: 10_000, height: 10_000 })), 'pixel-limit')
   assert.match(validateDocumentSettings(settings({ width: 0 })), /dimensões válidas/)
   assert.match(validateDocumentSettings(settings({ resolutionDpi: 2401 })), /2.400/)
   assert.match(validateDocumentSettings(settings({ width: 10_000, height: 10_000 })), /64 megapixels/)

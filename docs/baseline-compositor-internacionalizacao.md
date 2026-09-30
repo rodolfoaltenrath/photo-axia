@@ -34,7 +34,47 @@ chinês tradicional e pacote externo. A mesma suíte passou com a distribuição
 local fixada de Node 24.14.1/npm 11.11.0. O build de produção também passou após
 a fixação das dependências, sem alteração do bundle da interface.
 
-Há agora 62 arquivos em `frontend/tests/`, incluindo fixtures e benchmarks, e 11
+Com o primeiro corpus RGBA versionado, a suíte chegou a **451/451 testes**;
+os seis casos de golden passaram também no Node 24.14.1 fixado. Esses casos
+congelam o núcleo puro, não substituem fixtures visuais de documento/Canvas.
+
+Ampliando o corpus para os dez tipos atuais de efeito, a suíte passou com
+**458/458 testes**. O comparador independente validou os 11 casos RGBA. Esta
+medição continua no Node do PATH; a versão fixada deve ser repetida no gate C0.
+
+## Medição CPU reproduzível (primeira amostra)
+
+`frontend/benchmarks/layerStyleBaseline.mjs` mede diretamente as funções puras
+de estilos, com raster sintético de 512 × 512, duas passagens de aquecimento e
+cinco amostras por caso. Com Node **24.14.1 fixado**, kernel Windows 10.0.26200 x64,
+Intel i7-3770 (8 threads), foram observadas estas medianas **nesta execução**:
+
+| Caso | Mediana | p95 amostral |
+| --- | ---: | ---: |
+| Fill opacity | 10,94 ms | 14,70 ms |
+| Sombra projetada | 28,84 ms | 29,98 ms |
+| Sobreposição de gradiente | 99,94 ms | 131,88 ms |
+| Bisel | 43,65 ms | 60,38 ms |
+| Sobreposição de padrão | 39,89 ms | 41,12 ms |
+| `Blend If` subjacente | 22,58 ms | 23,14 ms |
+
+Reproduzir em `frontend/` com
+`../.toolchains/node-v24.14.1-win-x64/node.exe --experimental-strip-types benchmarks/layerStyleBaseline.mjs 512 5`
+(ou o executável fixado equivalente na plataforma). O script emite ambiente,
+tempos, tamanho de saída, RSS e checksum por caso em JSONL. O p95 com apenas
+cinco amostras é o máximo observado, **não** uma estimativa confiável da cauda.
+Esses números não incluem decode, Canvas, Worker, transferência, handoff,
+renderização do documento nem GC controlado; não são uma meta de desempenho
+para Rust nem uma comparação entre engines.
+
+`frontend/benchmarks/documentOracle.html` já prepara dois documentos pequenos
+(formas/fundo/mesclagem e pixels/`Blend If`) através de `renderDocumentPNG`.
+Ainda mostra `unbaselined`: não há fixture de Canvas validada. Nesta máquina,
+Edge headless encerrou sem devolver DOM, inclusive com perfil isolado; portanto
+**nenhum byte Canvas foi congelado**. Rodar a página em navegador controlado,
+inspecionar a saída e registrar versão/OS antes de aprovar a fixture visual.
+
+Há agora 64 arquivos em `frontend/tests/`, incluindo fixtures e benchmarks, e 11
 Workers em `frontend/src/workers/`. Esses totais não medem cobertura de cenários
 de composição. Falta executar os mesmos checks com o Go/Node fixados, em Linux,
 e medir tempo/RAM/FPS em hardware identificado.
@@ -68,8 +108,28 @@ produzirá bytes iguais por definição.
   produz erros e rótulos de diálogos em português (`app.go`, `project.go`,
   `export_upload.go`). Será preciso classificar mensagens exibidas e logs.
 - `frontend/src/i18n/locale.ts` já define negociação pura e preferência
-  persistível, ainda **não conectadas** à UI ou à leitura real do SO. Catálogos
-  oficiais, troca sem reinício e pacotes externos ainda não estão implementados.
+  persistível. A consulta nativa ao SO existe, mas ainda **não determina** o
+  idioma da UI. Catálogos
+  oficiais começaram em `frontend/src/i18n/catalogs.ts`, com 20 chaves da tela
+  inicial; troca sem reinício e pacotes externos ainda não estão implementados.
+
+A primeira fatia de catálogo elevou a suíte para **461/461 testes** e o build
+passou. Com o adaptador nativo de idiomas, chegou a **462/462 testes**;
+`go test ./...` com Go 1.26.5 fixado e o build frontend também passaram.
+Os componentes iniciais continuam em PT-BR por padrão; não há UI multilíngue
+anunciada. O método nativo foi exercitado no Windows; Linux/macOS ainda
+precisam de teste nos ambientes correspondentes. Ver
+[inventário](inventario-strings-i18n.md).
+
+Com o menu superior extraído, os catálogos oficiais somam 74 chaves e a suíte
+passou com **463/463 testes**; o build frontend também passou. Layout com
+textos longos em inglês/chinês permanece pendente de QA visual.
+
+Com o diálogo Novo documento extraído, os catálogos somam **128 chaves** e a
+suíte passou com **466/466 testes**; `vue-tsc` e o build frontend passaram.
+Essas checagens não substituem QA visual em inglês/chinês. O valor persistido
+`Sem título` e os presets criados pelo usuário não foram traduzidos; o idioma
+alternativo ainda não foi ativado globalmente.
 
 Próximas medições exigidas: corpus de imagens/fontes autorizado, matriz de
 documentos 1080p/4K/8K, 10–300 camadas, zoom/pan com DPR variável, estilos,

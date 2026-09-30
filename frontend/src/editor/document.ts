@@ -57,21 +57,34 @@ export function convertDocumentUnit(
   }
 }
 
-export function validateDocumentSettings(settings: NewDocumentSettings) {
+export type DocumentSettingsErrorCode = '' | 'invalid-dimensions' | 'invalid-dpi' | 'dimension-limit' | 'pixel-limit'
+
+export function documentSettingsErrorCode(settings: NewDocumentSettings): DocumentSettingsErrorCode {
   if (!Number.isFinite(settings.width) || !Number.isFinite(settings.height) || settings.width <= 0 || settings.height <= 0) {
-    return 'Informe dimensões válidas.'
+    return 'invalid-dimensions'
   }
   if (!Number.isFinite(settings.resolutionDpi) || settings.resolutionDpi < 1 || settings.resolutionDpi > 2400) {
-    return 'A resolução deve estar entre 1 e 2.400 pixels por polegada.'
+    return 'invalid-dpi'
   }
   const pixels = documentPixelSize(settings)
   if (pixels.width > MAX_DOCUMENT_DIMENSION || pixels.height > MAX_DOCUMENT_DIMENSION) {
-    return 'Cada dimensão pode ter no máximo 16.384 px.'
+    return 'dimension-limit'
   }
   if (pixels.width * pixels.height > MAX_DOCUMENT_PIXELS) {
-    return 'O documento pode ter no máximo 64 megapixels.'
+    return 'pixel-limit'
   }
   return ''
+}
+
+/** Compatibility surface for existing callers; UI should localize the code. */
+export function validateDocumentSettings(settings: NewDocumentSettings) {
+  switch (documentSettingsErrorCode(settings)) {
+    case 'invalid-dimensions': return 'Informe dimensões válidas.'
+    case 'invalid-dpi': return 'A resolução deve estar entre 1 e 2.400 pixels por polegada.'
+    case 'dimension-limit': return 'Cada dimensão pode ter no máximo 16.384 px.'
+    case 'pixel-limit': return 'O documento pode ter no máximo 64 megapixels.'
+    default: return ''
+  }
 }
 
 export function parseCustomDocumentPresets(value: unknown) {

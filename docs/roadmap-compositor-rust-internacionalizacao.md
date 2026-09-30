@@ -1,7 +1,7 @@
 # Roadmap: compositor único em Rust e Axia multilíngue
 
-Estado: **C0/I0 iniciados; nenhuma migração visual ou de compositor ativada**.
-Atualizado em 2026-09-29.
+Estado: **C0/I0 iniciados; C1 com POC isolada; nenhuma migração visual ou de compositor ativada**.
+Atualizado em 2026-09-30.
 
 Este plano tem duas trilhas independentes, com contratos compartilhados: (A) unificar
 preview e exportação em um compositor de documento, introduzindo Rust/WASM onde
@@ -210,7 +210,14 @@ e decisão registrada. Nenhum passo exige migração do modelo/histórico.
 
 Primeira coleta de testes/versões e inventário de caminhos:
 [baseline-compositor-internacionalizacao.md](baseline-compositor-internacionalizacao.md).
-O marco C0 segue aberto: faltam medições visuais/de desempenho, fixtures e
+Primeiro contrato espacial/semântico e corpus RGBA portátil:
+[contrato-compositor-v1.md](contrato-compositor-v1.md) e
+`frontend/tests/fixtures/layerStyleGoldens.v1.json`.
+O corpus agora cobre os dez tipos atuais de efeito e possui comparador
+independente do compositor TS. Há também um benchmark reproduzível do núcleo
+CPU e uma sonda de documento/Canvas ainda sem baseline validado. O marco C0
+segue aberto: faltam medições end-to-end, fixtures de documento/Canvas e
+combinações/erros, além de
 repetição em toolchains fixadas e plataformas alvo.
 
 ### C1 — POC Rust/WASM isolada, sem mudança visual
@@ -225,6 +232,12 @@ repetição em toolchains fixadas e plataformas alvo.
   necessário; avaliar SIMD separadamente.
 - [ ] Gate: resultado correto, build offline/reprodutível, sem piora relevante
   de UI. Se falhar, manter compositor único como objetivo, mas reavaliar Rust.
+
+Primeira fatia: [prova Rust/WASM](prova-rust-wasm-c1.md) com um passe puro de
+opacidade de preenchimento, `Cargo.lock` sem dependências e testes nativo/WASM
+contra o golden e a matriz completa de alfa/opacidade. Ainda faltam Worker,
+carregamento no app empacotado, medições de cópias/tempo e fechamento de C0;
+portanto **nenhuma caixa C1 foi marcada como concluída**.
 
 ### C2 — Estilos CPU e raster por região
 
@@ -342,8 +355,33 @@ leitura ao diretório configurado e entrega apenas dados validados à UI.
   preferência e testes de seleção/fallback. Versionar dependência de i18n.
 
 O resolvedor puro, a preferência persistível e os primeiros testes estão em
-`frontend/src/i18n/locale.ts` e `frontend/tests/locale.test.ts`; falta conectar
-a leitura real do SO, os catálogos e a interface de escolha.
+`frontend/src/i18n/locale.ts` e `frontend/tests/locale.test.ts`. O método nativo
+`GetSystemLanguages` e o adaptador `getSystemLanguages()` já fornecem a lista
+ordenada do SO (Windows API; variáveis POSIX no Linux; AppleLanguages no macOS),
+com `navigator.languages` apenas como fallback. A chamada real foi testada no
+Windows; Linux/macOS ainda exigem validação nas plataformas alvo. A lista não
+altera automaticamente o idioma da UI por enquanto.
+
+O [inventário de strings](inventario-strings-i18n.md) classifica as fronteiras.
+O primeiro catálogo tipado (`frontend/src/i18n/catalogs.ts`) cobre 20 chaves
+da tela inicial em três idiomas; chinês ainda requer revisão fluente.
+`ProjectHome.vue` e `RecentProjectCard.vue` consomem essa fatia com PT-BR como
+padrão, sem seletor nem ativação automática. Faltam os demais fluxos, conexão
+da lista do SO ao estado global e validação visual antes de declarar I0/I1
+concluídos.
+
+O menu superior foi extraído em seguida: 54 chaves adicionais em
+`frontend/src/i18n/menuCatalogs.ts` (74 no total), incluindo plurais, tooltips
+e acessibilidade. `TopMenu.vue` continua em PT-BR por padrão; rótulos gerados
+por histórico/status e checagem visual de largura ainda são pendências.
+
+O diálogo Novo documento foi extraído com 54 chaves adicionais (128 no total),
+incluindo validações por código e números de estimativas formatados para
+exibição. Predefinições internas usam IDs para obter rótulos traduzidos; nomes
+salvos pelo usuário e dados serializados permanecem intactos. A prop `locale`
+do diálogo ainda usa PT-BR por padrão e não foi ligada ao estado global.
+Testes dos rótulos, dos erros e do contrato existente passaram; faltam QA
+visual e os demais diálogos antes de ativar idiomas alternativos.
 
 #### I1 — Migração completa de strings e formatação
 

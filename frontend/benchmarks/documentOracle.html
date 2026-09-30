@@ -1,0 +1,129 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Axia document compositor oracle</title>
+<pre id="result">running</pre>
+<script type="module">
+import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { renderDocumentPNG } from '../src/services/renderDocument.ts'
+
+const result = document.querySelector('#result')
+const width = 8
+const height = 6
+const light = { angle: 120, altitude: 30 }
+
+function doc(id, background) {
+  return {
+    id, name: id, width, height, unit: 'px', physicalWidth: width,
+    physicalHeight: height, resolutionDpi: 72, colorSpace: 'srgb',
+    background, createdAt: '', layerStyleGlobalLight: light
+  }
+}
+
+function layer(id, kind, content, transform, options = {}) {
+  return {
+    id, name: id, kind, visible: true, opacity: 100, blendMode: 'normal',
+    styles: createLayerStyleConfig(), transform, ...content, ...options
+  }
+}
+
+function rectangle(id, color, transform, options) {
+  return layer(id, 'shape', {
+    shape: {
+      kind: 'rectangle', color, cornerRadius: 0, squareness: 0,
+      starPoints: 5, starInnerRatio: 50,
+      baseWidth: transform.width, baseHeight: transform.height
+    }
+  }, transform, options)
+}
+
+function imageUrl(rgba) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 2
+  canvas.height = 2
+  const context = canvas.getContext('2d')
+  context.putImageData(new ImageData(new Uint8ClampedArray(rgba), 2, 2), 0, 0)
+  return canvas.toDataURL('image/png')
+}
+
+function imageLayer(id, rgba, options = {}) {
+  return layer(id, 'pixel', {
+    image: { width: 2, height: 2, mimeType: 'image/png', sourceUrl: imageUrl(rgba) }
+  }, { x: 3, y: 2, width: 2, height: 2, rotation: 0 }, options)
+}
+
+async function pixelsFromPng(dataUrl) {
+  const image = new Image()
+  image.src = dataUrl
+  await image.decode()
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  context.drawImage(image, 0, 0)
+  return [...context.getImageData(0, 0, width, height).data]
+}
+
+async function renderCases() {
+  const background = layer('background', 'background', {}, undefined)
+  const shapeLayers = [
+    rectangle('red-multiply', '#ff4020', { x: 2, y: 1, width: 4, height: 3, rotation: 0 },
+      { opacity: 65, blendMode: 'multiply' }),
+    rectangle('blue-base', '#2060ff', { x: 1, y: 1, width: 4, height: 4, rotation: 0 }),
+    background
+  ]
+  const blendIfStyles = createLayerStyleConfig()
+  blendIfStyles.blendIf = {
+    channel: 'red', thisLayer: { shadows: [0, 0], highlights: [255, 255] },
+    underlyingLayer: { shadows: [64, 192], highlights: [255, 255] }
+  }
+  const pixelLayers = [
+    imageLayer('green-blend-if', [
+      20, 220, 50, 255, 20, 220, 50, 255,
+      20, 220, 50, 255, 20, 220, 50, 255
+    ], { opacity: 80, styles: blendIfStyles }),
+    imageLayer('backdrop', [
+      0, 30, 200, 255, 64, 30, 200, 255,
+      192, 30, 200, 255, 255, 30, 200, 255
+    ])
+  ]
+  return [
+    { id: 'shapes-and-background', rgba: await pixelsFromPng(await renderDocumentPNG(doc('shapes', 'white'), shapeLayers)) },
+    { id: 'pixel-stack-blend-if', rgba: await pixelsFromPng(await renderDocumentPNG(doc('pixels', 'transparent'), pixelLayers)) }
+  ]
+}
+
+try {
+  const cases = await renderCases()
+  if (new URLSearchParams(location.search).has('record')) {
+    result.textContent = JSON.stringify({ status: 'record', width, height, cases })
+  } else {
+    const response = await fetch('../tests/fixtures/documentOracle.v1.json')
+    if (!response.ok || !response.headers.get('content-type')?.includes('json')) {
+      result.textContent = JSON.stringify({ status: 'unbaselined', width, height, cases })
+    } else {
+      const golden = await response.json()
+      const errors = []
+      if (golden.schemaVersion !== 1 || golden.width !== width || golden.height !== height) {
+        errors.push('schema/dimensões divergentes')
+      }
+      for (const item of cases) {
+        const reference = golden.cases.find((entry) => entry.id === item.id)
+        if (!reference || reference.rgba.length !== item.rgba.length) {
+          errors.push(`${item.id}: caso ausente ou tamanho inválido`)
+          continue
+        }
+        let maxDifference = 0
+        for (let index = 0; index < item.rgba.length; index++) {
+          maxDifference = Math.max(maxDifference, Math.abs(item.rgba[index] - reference.rgba[index]))
+        }
+        if (maxDifference > reference.maxChannelDifference) {
+          errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)
+        }
+      }
+      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length })
+    }
+  }
+} catch (error) {
+  result.textContent = JSON.stringify({ status: 'error', message: String(error), stack: error?.stack })
+}
+</script>

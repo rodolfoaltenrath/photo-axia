@@ -4,6 +4,7 @@ import {
   CreateDocument,
   FinalizeAxiaProjectOpen,
   GetEditorStatus,
+  GetSystemLanguages,
   ImportDroppedFiles,
   ListRecentProjects,
   OpenAxiaProject,
@@ -26,6 +27,7 @@ import { Events } from '@wailsio/runtime'
 import type { DocumentSpec, ImportedImage, NewDocumentSettings, RecentProject } from '../types/editor'
 import { EXPORT_FORMAT_CAPABILITIES, exportFilename, type ExportFormat } from '../editor/exportSettings'
 import { DEFAULT_LAYER_STYLE_GLOBAL_LIGHT, normalizeLayerStyleGlobalLight } from '../editor/layerStyles'
+import { preferredLanguageCandidates } from '../i18n/locale'
 import type { PDFImportSource } from './pdfImport.ts'
 
 interface EditorStatus {
@@ -111,6 +113,17 @@ export function registerNativeFileDrop(
       result.errors ?? []
     )
   })
+}
+
+/** Native OS preferences first; navigator.languages is only a fallback. */
+export async function getSystemLanguages(): Promise<string[]> {
+  const browserLanguages = typeof navigator === 'undefined' ? [] : navigator.languages
+  if (!hasDesktopBackend()) return preferredLanguageCandidates(null, browserLanguages)
+  try {
+    return preferredLanguageCandidates(await GetSystemLanguages(), browserLanguages)
+  } catch {
+    return preferredLanguageCandidates(null, browserLanguages)
+  }
 }
 
 export async function selectDesktopImage(): Promise<ImportedImage | null> {

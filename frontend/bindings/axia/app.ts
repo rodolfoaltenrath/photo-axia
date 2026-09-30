@@ -30,6 +30,15 @@ export function GetEditorStatus(): $CancellablePromise<$models.EditorStatus> {
 }
 
 /**
+ * GetSystemLanguages returns the desktop user's preferred UI languages in order.
+ * An empty list is valid and lets the frontend use navigator.languages as a
+ * fallback. It does not change the current application's language yet.
+ */
+export function GetSystemLanguages(): $CancellablePromise<string[] | null> {
+    return $Call.ByID(3979473453);
+}
+
+/**
  * ImportDroppedFiles reads the files a user dragged onto the window (native
  * OS drag-and-drop, delivered as absolute paths by the Wails runtime). Unlike
  * SelectImageFiles, a dropped file may be a folder or an unsupported format,

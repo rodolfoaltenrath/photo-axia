@@ -6,18 +6,21 @@ import {
   documentBaseMemoryBytes,
   documentPhysicalSize,
   documentPixelSize,
+  documentSettingsErrorCode,
   parseCustomDocumentPresets,
   proportionalDocumentDimension,
-  validateDocumentSettings,
   type DocumentPreset
 } from '../editor/document'
 import type { DocumentBackground, DocumentUnit, NewDocumentSettings } from '../types/editor'
 import { canCreateDocument } from '../editor/interactionGuards'
+import { formatOfficialMessage, type MessageKey, type MessageParams, type OfficialLocale } from '../i18n/catalogs'
+import { documentPresetDisplayLabel, documentSettingsErrorMessage } from '../i18n/documentLabels'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   busy: boolean
   open: boolean
-}>()
+  locale?: OfficialLocale
+}>(), { locale: 'pt-BR' })
 
 const emit = defineEmits<{
   (event: 'close'): void
@@ -42,12 +45,19 @@ const form = reactive<NewDocumentSettings>({
   background: 'transparent'
 })
 
-const categories: Array<{ id: DocumentPreset['category']; label: string }> = [
-  { id: 'screen', label: 'Tela' },
-  { id: 'photo', label: 'Foto' },
-  { id: 'print', label: 'Impressão' },
-  { id: 'saved', label: 'Salvos' }
+const categories: Array<{ id: DocumentPreset['category']; key: MessageKey }> = [
+  { id: 'screen', key: 'document.category.screen' },
+  { id: 'photo', key: 'document.category.photo' },
+  { id: 'print', key: 'document.category.print' },
+  { id: 'saved', key: 'document.category.saved' }
 ]
+
+const t = (key: MessageKey, params?: MessageParams) => formatOfficialMessage(props.locale, key, params)
+const presetLabel = (preset: DocumentPreset) => documentPresetDisplayLabel(props.locale, preset)
+const numberFormatter = (digits: number) => new Intl.NumberFormat(props.locale, {
+  minimumFractionDigits: digits,
+  maximumFractionDigits: digits
+})
 
 const visiblePresets = computed(() => (
   category.value === 'saved'
@@ -55,17 +65,17 @@ const visiblePresets = computed(() => (
     : BUILTIN_DOCUMENT_PRESETS.filter((preset) => preset.category === category.value)
 ))
 const pixelSize = computed(() => documentPixelSize(form))
-const validationError = computed(() => validateDocumentSettings(form))
-const megapixels = computed(() => (pixelSize.value.width * pixelSize.value.height / 1_000_000).toFixed(2))
+const validationError = computed(() => documentSettingsErrorMessage(props.locale, documentSettingsErrorCode(form)))
+const megapixels = computed(() => numberFormatter(2).format(pixelSize.value.width * pixelSize.value.height / 1_000_000))
 const physicalSize = computed(() => documentPhysicalSize(form))
 const physicalSizeLabel = computed(() => (
-  `${physicalSize.value.widthCentimeters.toFixed(2)} × ${physicalSize.value.heightCentimeters.toFixed(2)} cm`
+  `${numberFormatter(2).format(physicalSize.value.widthCentimeters)} × ${numberFormatter(2).format(physicalSize.value.heightCentimeters)} cm`
 ))
 const memoryLabel = computed(() => {
   const bytes = documentBaseMemoryBytes(form)
   return bytes < 1024 * 1024
-    ? `${Math.ceil(bytes / 1024)} KB`
-    : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    ? `${numberFormatter(0).format(Math.ceil(bytes / 1024))} KB`
+    : `${numberFormatter(1).format(bytes / (1024 * 1024))} MB`
 })
 
 function loadCustomPresets() {
@@ -205,15 +215,15 @@ watch(() => props.open, async (open) => {
     >
       <header class="dialog-header">
         <div>
-          <h2 id="new-doc-title">Novo documento</h2>
-          <span>{{ pixelSize.width }} × {{ pixelSize.height }} px · {{ megapixels }} MP</span>
+          <h2 id="new-doc-title">{{ t('document.title') }}</h2>
+          <span>{{ t('document.summary', { size: `${pixelSize.width} × ${pixelSize.height}`, megapixels }) }}</span>
         </div>
-        <button :disabled="busy" type="button" title="Fechar" aria-label="Fechar" @click="closeDialog">×</button>
+        <button :disabled="busy" type="button" :title="t('document.close')" :aria-label="t('document.close')" @click="closeDialog">×</button>
       </header>
 
       <div class="new-document-content">
-        <section class="document-presets" aria-label="Predefinições de documento">
-          <nav class="preset-categories" aria-label="Categorias">
+        <section class="document-presets" :aria-label="t('document.presets.label')">
+          <nav class="preset-categories" :aria-label="t('document.presets.categories')">
             <button
               v-for="item in categories"
               :key="item.id"
@@ -222,7 +232,7 @@ watch(() => props.open, async (open) => {
               type="button"
               @click="category = item.id"
             >
-              {{ item.label }}
+              {{ t(item.key) }}
             </button>
           </nav>
           <div v-if="visiblePresets.length" class="preset-grid">
@@ -233,34 +243,34 @@ watch(() => props.open, async (open) => {
             >
               <button class="preset-apply" :disabled="busy" type="button" @click="applyPreset(preset)">
                 <span class="preset-ratio" :style="{ aspectRatio: `${preset.width} / ${preset.height}` }"></span>
-                <strong>{{ preset.label }}</strong>
+                <strong>{{ presetLabel(preset) }}</strong>
                 <small>{{ preset.width }} × {{ preset.height }} {{ preset.unit }}</small>
               </button>
               <button
                 v-if="preset.category === 'saved'"
                 class="preset-delete"
-                :aria-label="`Excluir predefinição ${preset.label}`"
+                :aria-label="t('document.preset.deleteAria', { name: preset.label })"
                 :disabled="busy"
-                title="Excluir predefinição"
+                :title="t('document.preset.deleteTitle')"
                 type="button"
                 @click.stop="deletePreset(preset.id)"
               >×</button>
             </article>
           </div>
           <div v-else class="preset-empty">
-            <p>Nenhuma predefinição salva.</p>
-            <span>Configure o documento ao lado e salve para reutilizar.</span>
+            <p>{{ t('document.preset.empty') }}</p>
+            <span>{{ t('document.preset.emptyHelp') }}</span>
           </div>
         </section>
 
         <form class="document-form document-details" :aria-busy="busy" :inert="busy || undefined" @submit.prevent="createDocument">
           <label class="field-full">
-            Nome
+            {{ t('document.field.name') }}
             <input ref="nameInput" v-model="form.name" :disabled="busy" maxlength="160" type="text" />
           </label>
 
           <label>
-            Largura
+            {{ t('document.field.width') }}
             <input
               :value="form.width"
               :disabled="busy"
@@ -271,7 +281,7 @@ watch(() => props.open, async (open) => {
             />
           </label>
           <label>
-            Altura
+            {{ t('document.field.height') }}
             <input
               :value="form.height"
               :disabled="busy"
@@ -283,19 +293,19 @@ watch(() => props.open, async (open) => {
           </label>
           <label class="document-proportion-lock field-full">
             <input v-model="keepProportions" :disabled="busy" type="checkbox" @change="toggleProportions" />
-            Manter proporção entre largura e altura
+            {{ t('document.field.keepProportions') }}
           </label>
           <label>
-            Unidade
+            {{ t('document.field.unit') }}
             <select :value="form.unit" :disabled="busy" @change="changeUnit">
-              <option value="px">Pixels</option>
-              <option value="cm">Centímetros</option>
-              <option value="mm">Milímetros</option>
-              <option value="in">Polegadas</option>
+              <option value="px">{{ t('document.unit.px') }}</option>
+              <option value="cm">{{ t('document.unit.cm') }}</option>
+              <option value="mm">{{ t('document.unit.mm') }}</option>
+              <option value="in">{{ t('document.unit.in') }}</option>
             </select>
           </label>
           <label>
-            Resolução
+            {{ t('document.field.resolution') }}
             <span class="field-with-suffix">
               <input v-model.number="form.resolutionDpi" :disabled="busy" max="2400" min="1" step="1" type="number" />
               <span>ppi</span>
@@ -304,54 +314,54 @@ watch(() => props.open, async (open) => {
 
           <p class="document-resolution-help field-full">
             <template v-if="form.unit === 'px'">
-              Em pixels, o PPI define apenas o tamanho físico e os metadados: não redimensiona o documento nem reduz o arquivo.
+              {{ t('document.resolutionHelp.pixels') }}
             </template>
             <template v-else>
-              Em unidades físicas, o PPI determina quantos pixels serão criados.
+              {{ t('document.resolutionHelp.physical') }}
             </template>
           </p>
 
           <div class="orientation-control field-full">
-            <span>Orientação</span>
-            <button :disabled="busy" type="button" @click="swapOrientation">↔ Trocar largura e altura</button>
+            <span>{{ t('document.field.orientation') }}</span>
+            <button :disabled="busy" type="button" @click="swapOrientation">{{ t('document.orientation.swap') }}</button>
           </div>
 
           <label class="field-full">
-            Conteúdo do fundo
+            {{ t('document.field.background') }}
             <select v-model="form.background" :disabled="busy">
-              <option value="transparent">Transparente</option>
-              <option value="white">Branco</option>
-              <option value="black">Preto</option>
+              <option value="transparent">{{ t('document.background.transparent') }}</option>
+              <option value="white">{{ t('document.background.white') }}</option>
+              <option value="black">{{ t('document.background.black') }}</option>
             </select>
           </label>
 
           <details class="document-advanced field-full">
-            <summary>Opções avançadas</summary>
+            <summary>{{ t('document.advanced') }}</summary>
             <dl>
-              <div><dt>Modo de cor</dt><dd>RGB · 8 bits</dd></div>
-              <div><dt>Perfil</dt><dd>sRGB</dd></div>
-              <div><dt>Proporção do pixel</dt><dd>Pixels quadrados</dd></div>
+              <div><dt>{{ t('document.advanced.colorMode') }}</dt><dd>RGB · 8 bits</dd></div>
+              <div><dt>{{ t('document.advanced.profile') }}</dt><dd>sRGB</dd></div>
+              <div><dt>{{ t('document.advanced.pixelAspect') }}</dt><dd>{{ t('document.advanced.squarePixels') }}</dd></div>
             </dl>
           </details>
 
           <div class="document-estimate field-full">
-            <span>Tamanho base</span>
+            <span>{{ t('document.estimate.baseSize') }}</span>
             <strong>{{ pixelSize.width }} × {{ pixelSize.height }} px · {{ memoryLabel }}</strong>
-            <small>Tamanho físico em {{ form.resolutionDpi || 0 }} ppi: {{ physicalSizeLabel }}</small>
+            <small>{{ t('document.estimate.physical', { dpi: form.resolutionDpi || 0, size: physicalSizeLabel }) }}</small>
           </div>
 
           <p v-if="validationError" class="form-error field-full" role="alert">{{ validationError }}</p>
 
           <div v-if="savingPreset" class="save-preset-row field-full">
-            <input v-model="presetName" :disabled="busy" maxlength="80" placeholder="Nome da predefinição" type="text" />
-            <button :disabled="busy || !presetName.trim() || Boolean(validationError)" type="button" @click="savePreset">Salvar</button>
-            <button :disabled="busy" type="button" @click="savingPreset = false">Cancelar</button>
+            <input v-model="presetName" :disabled="busy" maxlength="80" :placeholder="t('document.preset.namePlaceholder')" type="text" />
+            <button :disabled="busy || !presetName.trim() || Boolean(validationError)" type="button" @click="savePreset">{{ t('document.action.save') }}</button>
+            <button :disabled="busy" type="button" @click="savingPreset = false">{{ t('document.action.cancel') }}</button>
           </div>
 
           <footer class="dialog-actions field-full">
-            <button :disabled="busy" type="button" @click="savingPreset = !savingPreset">Salvar predefinição</button>
-            <button :disabled="busy" type="button" @click="closeDialog">Cancelar</button>
-            <button class="primary-button" :disabled="busy || Boolean(validationError)" type="submit">Criar</button>
+            <button :disabled="busy" type="button" @click="savingPreset = !savingPreset">{{ t('document.action.savePreset') }}</button>
+            <button :disabled="busy" type="button" @click="closeDialog">{{ t('document.action.cancel') }}</button>
+            <button class="primary-button" :disabled="busy || Boolean(validationError)" type="submit">{{ t('document.action.create') }}</button>
           </footer>
         </form>
       </div>
