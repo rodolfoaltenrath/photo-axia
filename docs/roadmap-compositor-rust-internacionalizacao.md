@@ -235,9 +235,15 @@ repetição em toolchains fixadas e plataformas alvo.
 
 Primeira fatia: [prova Rust/WASM](prova-rust-wasm-c1.md) com um passe puro de
 opacidade de preenchimento, `Cargo.lock` sem dependências e testes nativo/WASM
-contra o golden e a matriz completa de alfa/opacidade. Ainda faltam Worker,
-carregamento no app empacotado, medições de cópias/tempo e fechamento de C0;
-portanto **nenhuma caixa C1 foi marcada como concluída**.
+contra o golden e a matriz completa de alfa/opacidade. Um Worker experimental
+já exercita transferência, cancelamento pendente e descarte fora da UI. O
+pré-build agora gera o WASM local, e o Vite inclui Worker e asset com hash;
+uma checagem de bundle e um smoke em Edge headless com tempo real via
+`vite preview` passaram.
+Há primeira medição Node de cópias/tempo, ainda sem comparação representativa.
+Faltam executável instalado em Wails/WebView2, CI Windows/Linux, baseline
+end-to-end e fechamento de C0; portanto **nenhuma caixa C1 foi marcada como
+concluída**.
 
 ### C2 — Estilos CPU e raster por região
 

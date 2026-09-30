@@ -12,6 +12,7 @@ target/
 *.syso
 /frontend/dist/*
 !/frontend/dist/.gitkeep
+/frontend/src/generated/axia_pixel_core.wasm
 /vendor/
 /.flatpak-builder/
 /builddir/

@@ -58,6 +58,11 @@ tasks:
     dir: frontend
     sources:
       - src/**/*
+      - scripts/buildRustPixelPoc.mjs
+      - ../rust-toolchain.toml
+      - ../rust/axia-pixel-core/Cargo.toml
+      - ../rust/axia-pixel-core/Cargo.lock
+      - ../rust/axia-pixel-core/src/**/*.rs
       - index.html
       - package.json
       - package-lock.json
