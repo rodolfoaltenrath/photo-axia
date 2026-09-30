@@ -1,0 +1,136 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Axia document pipeline benchmark</title>
+<pre id="result">running</pre>
+<script type="module">
+import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { renderDocumentPNG } from '../src/services/renderDocument.ts'
+
+const result = document.querySelector('#result')
+const params = new URLSearchParams(location.search)
+
+function boundedInteger(name, fallback, minimum, maximum) {
+  const raw = params.get(name)
+  const value = raw === null ? fallback : Number(raw)
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} deve ser inteiro entre ${minimum} e ${maximum}.`)
+  }
+  return value
+}
+
+function summary(samples) {
+  const sorted = [...samples].sort((a, b) => a - b)
+  const median = sorted[Math.floor(sorted.length / 2)]
+  const p95Observed = sorted[Math.ceil(sorted.length * 0.95) - 1]
+  return { samplesMs: samples.map((value) => +value.toFixed(2)), medianMs: +median.toFixed(2),
+    p95ObservedMs: +p95Observed.toFixed(2) }
+}
+
+async function measure(action, count, warmups = 2) {
+  const samples = []
+  for (let index = -warmups; index < count; index++) {
+    const start = performance.now()
+    await action()
+    if (index >= 0) samples.push(performance.now() - start)
+  }
+  return summary(samples)
+}
+
+function sourceUrl(width, height, phase) {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) throw new Error('Canvas 2D indisponível.')
+  const pixels = context.createImageData(width, height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = (y * width + x) * 4
+      pixels.data[index] = (x * 7 + y * 3 + phase) & 255
+      pixels.data[index + 1] = (x * 2 + y * 11 + phase) & 255
+      pixels.data[index + 2] = (x * 5 + y * 13 + phase) & 255
+      pixels.data[index + 3] = phase === 0 ? 255 : ((x + y) % 4 === 0 ? 96 : 255)
+    }
+  }
+  context.putImageData(pixels, 0, 0)
+  return canvas.toDataURL('image/png')
+}
+
+function imageLayer(id, url, width, height, styles) {
+  return {
+    id, name: id, kind: 'pixel', visible: true, opacity: 100, blendMode: 'normal', styles,
+    image: { width, height, mimeType: 'image/png', sourceUrl: url },
+    transform: { x: 0, y: 0, width, height, rotation: 0 }
+  }
+}
+
+async function decodeAndRead(png, width, height) {
+  const blob = await (await fetch(png)).blob()
+  const bitmap = await createImageBitmap(blob)
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    context.drawImage(bitmap, 0, 0)
+    const data = context.getImageData(0, 0, width, height).data
+    let checksum = 0
+    for (let index = 0; index < data.length; index += 97) checksum = (checksum + data[index]) >>> 0
+    return checksum
+  } finally {
+    bitmap.close()
+  }
+}
+
+try {
+  const width = boundedInteger('width', 512, 64, 1920)
+  const height = boundedInteger('height', 512, 64, 1080)
+  const samples = boundedInteger('samples', 5, 1, 20)
+  if (width * height > 2_073_600) throw new Error('Limite de 2 MP por execução.')
+
+  const sourceStart = performance.now()
+  const baseUrl = sourceUrl(width, height, 0)
+  const topUrl = sourceUrl(width, height, 29)
+  const sourceGenerationMs = +(performance.now() - sourceStart).toFixed(2)
+  const sourceDecode = await measure(async () => {
+    const bitmap = await createImageBitmap(await (await fetch(topUrl)).blob())
+    bitmap.close()
+  }, samples)
+
+  const shadow = createDefaultLayerEffect('drop-shadow', 'benchmark-shadow')
+  shadow.distance = 6
+  shadow.size = 8
+  const overlay = createDefaultLayerEffect('color-overlay', 'benchmark-overlay')
+  overlay.color = '#40a0e0'
+  overlay.opacity = 35
+  const styled = createLayerStyleConfig()
+  styled.effects = [shadow, overlay]
+  const plain = createLayerStyleConfig()
+  const doc = {
+    id: 'document-pipeline-benchmark', name: 'benchmark', width, height, unit: 'px',
+    physicalWidth: width, physicalHeight: height, resolutionDpi: 72, colorSpace: 'srgb',
+    background: 'transparent', createdAt: '', layerStyleGlobalLight: { angle: 120, altitude: 30 }
+  }
+  const base = imageLayer('base', baseUrl, width, height, plain)
+  const top = imageLayer('top', topUrl, width, height, plain)
+  const styledTop = imageLayer('styled-top', topUrl, width, height, styled)
+  const scenarios = []
+  for (const [id, layers] of [
+    ['two-pixel-layers', [top, base]],
+    ['styled-layer-over-pixels', [styledTop, base]]
+  ]) {
+    let png
+    const render = await measure(async () => { png = await renderDocumentPNG(doc, layers) }, samples)
+    const decodeOutput = await measure(async () => { await decodeAndRead(png, width, height) }, samples)
+    scenarios.push({ id, renderPng: render, decodeDrawReadPng: decodeOutput,
+      pngBytes: (await (await fetch(png)).blob()).size,
+      checksum: await decodeAndRead(png, width, height) })
+  }
+  result.textContent = JSON.stringify({ status: 'benchmark', width, height, samples,
+    environment: { userAgent: navigator.userAgent, devicePixelRatio: devicePixelRatio,
+      hardwareConcurrency: navigator.hardwareConcurrency ?? null },
+    sourceGenerationMs, sourceDataUrlToBitmap: sourceDecode, scenarios })
+} catch (error) {
+  result.textContent = JSON.stringify({ status: 'error', message: String(error), stack: error?.stack })
+}
+</script>

@@ -22,13 +22,6 @@ export interface LayerStyleInsets {
   left: number
 }
 
-export interface LayerStylePipeline {
-  external: LayerEffect[]
-  internal: LayerEffect[]
-  overlay: LayerEffect[]
-  upper: LayerEffect[]
-}
-
 export interface LayerStyleRaster {
   width: number
   height: number
@@ -50,20 +43,9 @@ export const LAYER_STYLE_COMPOSITION_ORDER: readonly LayerStyleCompositionStage[
   'external', 'content', 'internal', 'overlay', 'upper'
 ])
 
-const RASTER_SUPPORTED_EFFECTS = new Set<LayerEffectType>([
-  'drop-shadow',
-  'inner-shadow',
-  'outer-glow',
-  'inner-glow',
-  'satin',
-  'color-overlay',
-  'gradient-overlay',
-  'pattern-overlay',
-  'stroke',
-  'bevel-emboss'
-])
+type RasterStage = Exclude<LayerStyleCompositionStage, 'content'>
 
-const EFFECT_STAGE: Readonly<Record<LayerEffectType, Exclude<LayerStyleCompositionStage, 'content'>>> = Object.freeze({
+const EFFECT_STAGE = Object.freeze({
   'drop-shadow': 'external',
   'outer-glow': 'external',
   'inner-shadow': 'internal',
@@ -74,7 +56,37 @@ const EFFECT_STAGE: Readonly<Record<LayerEffectType, Exclude<LayerStyleCompositi
   'pattern-overlay': 'overlay',
   'bevel-emboss': 'upper',
   stroke: 'upper'
-})
+} as const satisfies Readonly<Record<LayerEffectType, RasterStage>>)
+
+type EffectTypeAtStage<Stage extends RasterStage> = {
+  [Type in LayerEffectType]: (typeof EFFECT_STAGE)[Type] extends Stage ? Type : never
+}[LayerEffectType]
+
+export type LayerStyleStageEffect<Stage extends RasterStage> = Extract<LayerEffect, {
+  type: EffectTypeAtStage<Stage>
+}>
+
+export interface LayerStylePipeline {
+  external: LayerStyleStageEffect<'external'>[]
+  internal: LayerStyleStageEffect<'internal'>[]
+  overlay: LayerStyleStageEffect<'overlay'>[]
+  upper: LayerStyleStageEffect<'upper'>[]
+}
+
+export class LayerStyleUnsupportedEffectError extends Error {
+  readonly code = 'LAYER_STYLE_UNSUPPORTED_EFFECT' as const
+  readonly effectTypes: string[]
+
+  constructor(effectTypes: string[]) {
+    super(`Efeitos ainda não suportados pelo compositor: ${effectTypes.join(', ')}.`)
+    this.name = 'LayerStyleUnsupportedEffectError'
+    this.effectTypes = effectTypes
+  }
+}
+
+function assertNeverEffect(effect: never): never {
+  throw new LayerStyleUnsupportedEffectError([String((effect as { type?: unknown }).type)])
+}
 
 function finitePositive(value: number, fallback = 1) {
   return Number.isFinite(value) && value > 0 ? value : fallback
@@ -120,13 +132,25 @@ export function activeLayerStyleEffects(styles: LayerStyleConfig) {
 }
 
 export function layerStyleEffectIsRasterSupported(effect: LayerEffect) {
-  return RASTER_SUPPORTED_EFFECTS.has(effect.type)
+  return Object.hasOwn(EFFECT_STAGE, effect.type)
+}
+
+function effectsAtStage<Stage extends RasterStage>(effects: LayerEffect[], stage: Stage) {
+  return effects.filter((effect): effect is LayerStyleStageEffect<Stage> => EFFECT_STAGE[effect.type] === stage)
 }
 
 export function buildLayerStylePipeline(styles: LayerStyleConfig): LayerStylePipeline {
-  const pipeline: LayerStylePipeline = { external: [], internal: [], overlay: [], upper: [] }
-  for (const effect of activeLayerStyleEffects(styles)) pipeline[EFFECT_STAGE[effect.type]].push(effect)
-  return pipeline
+  const effects = activeLayerStyleEffects(styles)
+  const unsupported = effects.filter((effect) => !layerStyleEffectIsRasterSupported(effect))
+  if (unsupported.length) {
+    throw new LayerStyleUnsupportedEffectError(unsupported.map((effect) => effect.type))
+  }
+  return {
+    external: effectsAtStage(effects, 'external'),
+    internal: effectsAtStage(effects, 'internal'),
+    overlay: effectsAtStage(effects, 'overlay'),
+    upper: effectsAtStage(effects, 'upper')
+  }
 }
 
 export function layerStyleInsets(
@@ -139,16 +163,32 @@ export function layerStyleInsets(
   const scale = finitePositive(resolutionScale)
   const insets: LayerStyleInsets = { top: 0, right: 0, bottom: 0, left: 0 }
   for (const effect of activeLayerStyleEffects(styles)) {
-    if (effect.type === 'drop-shadow') {
-      const angle = effect.useGlobalLight ? globalLight.angle : effect.angle
-      mergeInsets(insets, shadowInsets(angle, effect.distance, effect.size, scale))
-    } else if (effect.type === 'outer-glow') {
-      mergeInsets(insets, uniformInsets(effect.size, scale))
-    } else if (effect.type === 'stroke') {
-      const outside = effect.position === 'outside' ? effect.size : effect.position === 'center' ? effect.size / 2 : 0
-      mergeInsets(insets, uniformInsets(outside, scale))
-    } else if (effect.type === 'bevel-emboss' && effect.style !== 'inner-bevel') {
-      mergeInsets(insets, uniformInsets(effect.size + effect.soften, scale))
+    switch (effect.type) {
+      case 'drop-shadow': {
+        const angle = effect.useGlobalLight ? globalLight.angle : effect.angle
+        mergeInsets(insets, shadowInsets(angle, effect.distance, effect.size, scale))
+        break
+      }
+      case 'outer-glow':
+        mergeInsets(insets, uniformInsets(effect.size, scale))
+        break
+      case 'stroke': {
+        const outside = effect.position === 'outside' ? effect.size : effect.position === 'center' ? effect.size / 2 : 0
+        mergeInsets(insets, uniformInsets(outside, scale))
+        break
+      }
+      case 'bevel-emboss':
+        if (effect.style !== 'inner-bevel') mergeInsets(insets, uniformInsets(effect.size + effect.soften, scale))
+        break
+      case 'inner-shadow':
+      case 'inner-glow':
+      case 'satin':
+      case 'color-overlay':
+      case 'gradient-overlay':
+      case 'pattern-overlay':
+        break
+      default:
+        assertNeverEffect(effect)
     }
   }
   return insets
@@ -178,7 +218,7 @@ export function composeLayerStyleBase(source: LayerStyleRaster, stylesValue: Lay
   const styles = normalizeLayerStyleConfig(stylesValue)
   const effects = activeLayerStyleEffects(styles)
   if (effects.length) {
-    throw new Error(`Efeitos ainda não suportados pelo compositor: ${effects.map((effect) => effect.type).join(', ')}.`)
+    throw new LayerStyleUnsupportedEffectError(effects.map((effect) => effect.type))
   }
   const result = applyLayerFillOpacity(source, styles.fillOpacity)
   if (layerStyleBlendIfIsDefault(styles.blendIf)) return result

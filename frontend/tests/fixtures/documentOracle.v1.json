@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "width": 8,
+  "height": 6,
+  "recordedWith": {
+    "browser": "Edg/154.0.4258.37",
+    "platform": "win32"
+  },
+  "cases": [
+    {
+      "id": "shapes-and-background",
+      "maxChannelDifference": 2,
+      "rows": [
+        "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff",
+        "ffffffff 2060ffff 20326eff 20326eff 20326eff ff836eff ffffffff ffffffff",
+        "ffffffff 2060ffff 20326eff 20326eff 20326eff ff836eff ffffffff ffffffff",
+        "ffffffff 2060ffff 20326eff 20326eff 20326eff ff836eff ffffffff ffffffff",
+        "ffffffff 2060ffff 2060ffff 2060ffff 2060ffff ffffffff ffffffff ffffffff",
+        "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff"
+      ]
+    },
+    {
+      "id": "pixel-stack-blend-if",
+      "maxChannelDifference": 2,
+      "rows": [
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+        "00000000 00000000 00000000 001ec8ff 401ec8ff 00000000 00000000 00000000",
+        "00000000 00000000 00000000 37b650ff 43b650ff 00000000 00000000 00000000",
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
+      ]
+    },
+    {
+      "id": "combined-styles-over-backdrop",
+      "maxChannelDifference": 2,
+      "rows": [
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000",
+        "00000000 00000000 203060ff dd070eff dd070eff 203060ff 00000000 00000000",
+        "00000000 0000ffa2 dd070eff 40c752ff 904a3aff dd070eff 00000000 00000000",
+        "00000000 00000000 0b11c5ff dd070eff 40c752ff dd070eff 00000000 00000000",
+        "00000000 00000000 203060ff 203060ff dd070eff 203060ff 00000000 00000000",
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
+      ]
+    }
+  ]
+}

@@ -141,6 +141,12 @@ corromper o documento nem bloquear salvar.
   arredondamento e ordem de passes. Um teste de tipos exige atualizar a matriz
   quando um novo efeito for acrescentado. Ainda faltam combinações mais amplas,
   zoom/escala e casos de erro antes de apagar o compositor antigo.
+- `frontend/tests/fixtures/documentOracle.v1.json` congela três documentos
+  pequenos renderizados por Canvas no Edge/Windows: formas e mesclagem,
+  `Blend If` e estilos combinados. `npm run smoke:document-oracle` compara
+  canais RGBA com tolerância de 2 e verifica rejeição explícita de estilo
+  incompatível com forma. É uma referência ambiental de exportação, não prova
+  de paridade do preview nem de outros navegadores.
 - Para comparar um candidato independente, produzir uma linha JSON por caso no
   formato `{ "id": "...", "expected": { "width": ..., "height": ...,
   "offsetX": ..., "offsetY": ..., "rgba": [...] } }` (para `Blend If`, apenas

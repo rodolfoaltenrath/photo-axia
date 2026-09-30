@@ -3,6 +3,9 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,6 +27,23 @@ func init() {
 
 func main() {
 	service := NewApp()
+	rustPocSmoke := slices.Contains(os.Args[1:], "--axia-rust-poc-smoke")
+	mainURL := "/"
+	if rustPocSmoke {
+		mainURL = "/?axiaRustPoc=1"
+	}
+	windowsOptions := application.WindowsOptions{}
+	if rustPocSmoke {
+		port, err := strconv.Atoi(os.Getenv("AXIA_RUST_POC_CDP_PORT"))
+		if err != nil || port < 1 || port > 65535 {
+			log.Fatal("Porta CDP inválida para o smoke Rust/WASM.")
+		}
+		windowsOptions.WebviewUserDataPath = os.Getenv("AXIA_RUST_POC_WEBVIEW_DATA")
+		if windowsOptions.WebviewUserDataPath == "" {
+			log.Fatal("Perfil WebView2 temporário ausente para o smoke Rust/WASM.")
+		}
+		windowsOptions.AdditionalBrowserArgs = []string{"--remote-debugging-port=" + strconv.Itoa(port)}
+	}
 
 	desktop := application.New(application.Options{
 		Name:        "Axia",
@@ -35,6 +55,7 @@ func main() {
 			Handler:    application.AssetFileServerFS(assets),
 			Middleware: service.assetMiddleware,
 		},
+		Windows: windowsOptions,
 		Linux: application.LinuxOptions{
 			ProgramName: "axia",
 		},
@@ -43,7 +64,7 @@ func main() {
 	window := desktop.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:       "main",
 		Title:      "Axia",
-		URL:        "/",
+		URL:        mainURL,
 		Width:      1440,
 		Height:     960,
 		MinWidth:   1024,
@@ -73,12 +94,16 @@ func main() {
 	// This is emitted by Wails after the WebView runtime has loaded. At that
 	// point index.html's static startup shell is already painted, so it is safe
 	// to reveal the window without exposing a stale WebView frame.
-	window.OnWindowEvent(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) {
-		revealMainWindow()
-	})
+	if !rustPocSmoke {
+		window.OnWindowEvent(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) {
+			revealMainWindow()
+		})
+	}
 	// A broken runtime must never leave the application inaccessible. This only
 	// runs on failure; normal startup is released by WindowRuntimeReady first.
-	time.AfterFunc(2*time.Second, revealMainWindow)
+	if !rustPocSmoke {
+		time.AfterFunc(2*time.Second, revealMainWindow)
+	}
 
 	window.RegisterHook(events.Common.WindowClosing, service.handleWindowClosing)
 	window.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {

@@ -27,8 +27,13 @@ npm run benchmark:rust-poc -- 512 10
 
 Para o smoke de navegador, execute `npm run preview` em outro terminal e
 `npm run smoke:rust-poc` em `frontend/`. O script abre um Edge headless local,
-consulta o diagnóstico por tempo real e encerra o processo. Não inicia nem
-modifica o editor normal.
+consulta o diagnóstico por tempo real e encerra o processo. No Windows,
+`npm run smoke:rust-wails` recompila o frontend, confere o bundle, constrói um
+executável de produção em uma pasta temporária e testa o mesmo diagnóstico no
+WebView2 do Wails. A janela fica oculta; a conexão DevTools usa uma porta local
+e um perfil WebView2 temporário. O script encerra o executável e tenta remover
+somente essa pasta temporária. Nenhum dos dois comandos altera o editor normal
+ou substitui um instalador/portável existente.
 
 O teste WASM usa o golden `fill-opacity-rounding` e compara todas as 25.856
 combinações de alfa (0–255) e opacidade inteira (0–100) com
@@ -48,8 +53,12 @@ Em 2026-09-30, o build Vite e o diagnóstico em Edge headless servido por
 `vite preview` passaram (`data-axia-rust-poc="passed"`). Um teste anterior
 com `--dump-dom --virtual-time-budget` produziu um timeout artificial do
 diagnóstico; a repetição pelo protocolo DevTools, aguardando tempo real,
-passou. Isso comprova esse caminho de asset/Worker no Edge, **não** o
-executável instalado em Wails/WebView2. Cancelamento não interrompe uma
+passou. O smoke em um **executável de produção Wails/WebView2 temporário**
+também passou em três execuções consecutivas. Isso comprova o carregamento
+nesse runtime, mas **não** valida um instalador efetivamente instalado, nem
+paridade de renderização no editor. Esse smoke usou Go 1.27.0 e Node 24.19.0
+do `PATH`, ainda não as versões fixadas para o gate de reprodutibilidade.
+Cancelamento não interrompe uma
 chamada WASM síncrona; o chamador também precisa ignorar IDs obsoletos.
 
 A ABI `axia_poc_*` é interna e experimental: o adaptador JS deve passar
@@ -57,7 +66,14 @@ somente ponteiros alocados por `axia_poc_alloc` e liberar cada par
 ponteiro/comprimento uma única vez; o runtime TS e o harness respeitam esse
 contrato, mas ainda não há validação nativa de handles. Não a expor
 como API pública ou a dados não confiáveis. Antes de ligar ao compositor do
-app, testar carregamento no pacote instalável, cópias de memória e desempenho.
+app, testar o pacote instalável, cópias de memória e desempenho end-to-end.
+
+O workflow `.github/workflows/rust-wasm-proof.yml` roda a prova portátil em
+Windows e Linux a cada push/PR. Ele testa o núcleo Rust, o contrato Worker,
+o frontend e a integridade do bundle; no Windows também roda os testes Go.
+O smoke Wails/WebView2 no runner hospedado é acionado apenas por
+`workflow_dispatch`, pois ainda precisa ser observado nessa imagem. Nenhum
+resultado de CI deve ser presumido antes da primeira execução.
 
 ## Primeira medição do POC, sem meta de desempenho
 

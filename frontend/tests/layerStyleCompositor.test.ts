@@ -10,6 +10,7 @@ import {
   layerStyleHash,
   layerStyleInsets,
   layerStyleNeedsCompositing,
+  LayerStyleUnsupportedEffectError,
   LAYER_STYLE_COMPOSITION_ORDER,
   nativeTextStrokeEffect
 } from '../src/editor/layerStyleCompositor.ts'
@@ -17,7 +18,7 @@ import type { LayerStyleCacheIdentity, LayerStyleRaster } from '../src/editor/la
 import { createDefaultLayerEffect, normalizeLayerStyleConfig } from '../src/editor/layerStyles.ts'
 import { applyLayerStyleBlendIfUnderlying, composeLayerStyleRaster } from '../src/editor/layerStyleRaster.ts'
 import { ByteBudgetLruCache, LatestGenerationByKey } from '../src/editor/renderCache.ts'
-import type { LayerEffectType, LayerStyleGlobalLight, LayerStylePatternAsset } from '../src/types/editor.ts'
+import type { LayerEffect, LayerEffectType, LayerStyleGlobalLight, LayerStylePatternAsset } from '../src/types/editor.ts'
 
 const globalLight: LayerStyleGlobalLight = { angle: 0, altitude: 30 }
 
@@ -63,14 +64,31 @@ test('formaliza a ordem estável dos estágios e preserva a ordem entre efeitos 
     { type: 'inner-glow', id: 'inner' },
     { type: 'outer-glow', id: 'glow' },
     { type: 'drop-shadow', id: 'shadow-b' },
-    { type: 'stroke', id: 'stroke' }
+    { type: 'stroke', id: 'stroke' },
+    { type: 'inner-shadow', id: 'inner-shadow' },
+    { type: 'satin', id: 'satin' },
+    { type: 'gradient-overlay', id: 'gradient' },
+    { type: 'pattern-overlay', id: 'pattern' },
+    { type: 'bevel-emboss', id: 'bevel' }
   ])
   const pipeline = buildLayerStylePipeline(config)
   assert.deepEqual(LAYER_STYLE_COMPOSITION_ORDER, ['external', 'content', 'internal', 'overlay', 'upper'])
   assert.deepEqual(pipeline.external.map((effect) => effect.id), ['shadow-a', 'glow', 'shadow-b'])
-  assert.deepEqual(pipeline.internal.map((effect) => effect.id), ['inner'])
-  assert.deepEqual(pipeline.overlay.map((effect) => effect.id), ['color'])
-  assert.deepEqual(pipeline.upper.map((effect) => effect.id), ['stroke'])
+  assert.deepEqual(pipeline.internal.map((effect) => effect.id), ['inner', 'inner-shadow', 'satin'])
+  assert.deepEqual(pipeline.overlay.map((effect) => effect.id), ['color', 'gradient', 'pattern'])
+  assert.deepEqual(pipeline.upper.map((effect) => effect.id), ['stroke', 'bevel'])
+  assert.equal(Object.values(pipeline).flat().length, activeLayerStyleEffects(config).length)
+})
+
+test('pipeline rejeita variante de efeito não implementada em vez de omiti-la', () => {
+  const config = styles([])
+  config.effects.push({ id: 'future', type: 'future-effect', enabled: true, opacity: 100 } as unknown as LayerEffect)
+  assert.throws(() => buildLayerStylePipeline(config), (error) => {
+    assert.ok(error instanceof LayerStyleUnsupportedEffectError)
+    assert.equal(error.code, 'LAYER_STYLE_UNSUPPORTED_EFFECT')
+    assert.deepEqual(error.effectTypes, ['future-effect'])
+    return true
+  })
 })
 
 test('efeitos desligados ou estilos globalmente ocultos não participam da composição', () => {

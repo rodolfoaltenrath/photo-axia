@@ -1,7 +1,7 @@
 import {
-  activeLayerStyleEffects,
-  layerStyleEffectIsRasterSupported,
+  buildLayerStylePipeline,
   layerStyleInsets,
+  LayerStyleUnsupportedEffectError,
   type LayerStyleRaster
 } from './layerStyleCompositor.ts'
 import {
@@ -38,13 +38,21 @@ export interface ComposedLayerStyleRaster extends LayerStyleRaster {
 export type LayerStylePatternRasters = Map<string, LayerStyleRaster>
 
 export class LayerStylePatternMissingError extends Error {
+  readonly code = 'LAYER_STYLE_PATTERN_MISSING' as const
+  readonly effectType: string
+
   constructor(effectType: string) {
     super(`Padrão não foi decodificado para compor o efeito: ${effectType}.`)
     this.name = 'LayerStylePatternMissingError'
+    this.effectType = effectType
   }
 }
 
 const MAX_COMPOSED_PIXELS = 80_000_000
+
+function assertNeverEffect(effect: never): never {
+  throw new LayerStyleUnsupportedEffectError([String((effect as { type?: unknown }).type)])
+}
 
 function clamp01(value: number) {
   return Math.min(1, Math.max(0, value))
@@ -910,11 +918,7 @@ export function composeLayerStyleRaster(
   const styles = normalizeLayerStyleConfig(stylesValue)
   const globalLight = normalizeLayerStyleGlobalLight(globalLightValue)
   const scale = Number.isFinite(resolutionScale) && resolutionScale > 0 ? Math.min(8, resolutionScale) : 1
-  const effects = activeLayerStyleEffects(styles)
-  const unsupported = effects.filter((effect) => !layerStyleEffectIsRasterSupported(effect))
-  if (unsupported.length) {
-    throw new Error(`Efeitos ainda não suportados pelo compositor: ${unsupported.map((effect) => effect.type).join(', ')}.`)
-  }
+  const pipeline = buildLayerStylePipeline(styles)
 
   const insets = layerStyleInsets(styles, globalLight, scale)
   const width = source.width + insets.left + insets.right
@@ -929,29 +933,61 @@ export function composeLayerStyleRaster(
     }
   }
   const data = new Uint8ClampedArray(width * height * 4)
-  for (const effect of effects) {
-    if (effect.type === 'drop-shadow') renderDropShadow(data, sourceAlpha, width, height, effect, globalLight, scale)
-    else if (effect.type === 'outer-glow') renderOuterGlow(data, sourceAlpha, width, height, effect, scale)
-  }
-  compositeContent(data, source, insets.left, insets.top, width, styles.fillOpacity)
-  for (const effect of effects) {
-    if (effect.type === 'inner-shadow') renderInnerShadow(data, sourceAlpha, width, height, effect, globalLight, scale)
-    else if (effect.type === 'inner-glow') renderInnerGlow(data, sourceAlpha, width, height, effect, scale)
-    else if (effect.type === 'satin') renderSatin(data, sourceAlpha, width, height, effect, scale)
-  }
-  for (const effect of effects) {
-    if (effect.type === 'color-overlay') renderColorOverlay(data, sourceAlpha, effect)
-    else if (effect.type === 'gradient-overlay') renderGradientOverlay(data, sourceAlpha, width, height, effect)
-    else if (effect.type === 'pattern-overlay') {
-      renderPatternOverlay(data, sourceAlpha, width, height, effect, effect.pattern && patterns?.get(effect.pattern.id))
+  for (const effect of pipeline.external) {
+    switch (effect.type) {
+      case 'drop-shadow':
+        renderDropShadow(data, sourceAlpha, width, height, effect, globalLight, scale)
+        break
+      case 'outer-glow':
+        renderOuterGlow(data, sourceAlpha, width, height, effect, scale)
+        break
+      default:
+        assertNeverEffect(effect)
     }
   }
-  for (const effect of effects) {
-    if (effect.type === 'bevel-emboss') {
-      renderBevelEmboss(data, sourceAlpha, width, height, effect, globalLight, scale, effect.texture && patterns?.get(effect.texture.id))
-    } else if (effect.type === 'stroke') {
-      const patternId = effect.paint.type === 'pattern' ? effect.paint.pattern?.id : undefined
-      renderStroke(data, sourceAlpha, width, height, effect, scale, patternId ? patterns?.get(patternId) : undefined)
+  compositeContent(data, source, insets.left, insets.top, width, styles.fillOpacity)
+  for (const effect of pipeline.internal) {
+    switch (effect.type) {
+      case 'inner-shadow':
+        renderInnerShadow(data, sourceAlpha, width, height, effect, globalLight, scale)
+        break
+      case 'inner-glow':
+        renderInnerGlow(data, sourceAlpha, width, height, effect, scale)
+        break
+      case 'satin':
+        renderSatin(data, sourceAlpha, width, height, effect, scale)
+        break
+      default:
+        assertNeverEffect(effect)
+    }
+  }
+  for (const effect of pipeline.overlay) {
+    switch (effect.type) {
+      case 'color-overlay':
+        renderColorOverlay(data, sourceAlpha, effect)
+        break
+      case 'gradient-overlay':
+        renderGradientOverlay(data, sourceAlpha, width, height, effect)
+        break
+      case 'pattern-overlay':
+        renderPatternOverlay(data, sourceAlpha, width, height, effect, effect.pattern && patterns?.get(effect.pattern.id))
+        break
+      default:
+        assertNeverEffect(effect)
+    }
+  }
+  for (const effect of pipeline.upper) {
+    switch (effect.type) {
+      case 'bevel-emboss':
+        renderBevelEmboss(data, sourceAlpha, width, height, effect, globalLight, scale, effect.texture && patterns?.get(effect.texture.id))
+        break
+      case 'stroke': {
+        const patternId = effect.paint.type === 'pattern' ? effect.paint.pattern?.id : undefined
+        renderStroke(data, sourceAlpha, width, height, effect, scale, patternId ? patterns?.get(patternId) : undefined)
+        break
+      }
+      default:
+        assertNeverEffect(effect)
     }
   }
   applyBlendIfToRaster(data, styles)

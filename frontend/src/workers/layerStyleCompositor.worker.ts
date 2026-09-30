@@ -1,5 +1,6 @@
 import { composeLayerStyleRaster, type LayerStylePatternRasters } from '../editor/layerStyleRaster.ts'
 import { drawTextLayerContent } from '../editor/textCanvas.ts'
+import { serializeLayerStyleWorkerError } from '../editor/layerStyleRenderProtocol.ts'
 import type {
   LayerStyleWorkerRenderRequest,
   LayerStyleWorkerRequest,
@@ -114,7 +115,7 @@ self.onmessage = (event: MessageEvent<LayerStyleWorkerRequest>) => {
     if (error instanceof DOMException && error.name === 'AbortError') return
     const message: LayerStyleWorkerResult = {
       id: request.id,
-      error: error instanceof Error ? error.message : 'Falha ao compor estilo de camada.'
+      error: serializeLayerStyleWorkerError(error)
     }
     self.postMessage(message)
   })

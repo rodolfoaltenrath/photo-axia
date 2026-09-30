@@ -215,10 +215,14 @@ Primeiro contrato espacial/semântico e corpus RGBA portátil:
 `frontend/tests/fixtures/layerStyleGoldens.v1.json`.
 O corpus agora cobre os dez tipos atuais de efeito e possui comparador
 independente do compositor TS. Há também um benchmark reproduzível do núcleo
-CPU e uma sonda de documento/Canvas ainda sem baseline validado. O marco C0
-segue aberto: faltam medições end-to-end, fixtures de documento/Canvas e
-combinações/erros, além de
-repetição em toolchains fixadas e plataformas alvo.
+CPU e a primeira fixture de documento/Canvas validada no Edge/Windows. Ela
+agora cobre três pilhas pequenas, inclusive estilos combinados, e uma rejeição
+explícita de efeito incompatível com forma.
+Uma primeira sonda end-to-end de exportação PNG mede agora documentos
+sintéticos de 512² e 1024² no Edge/Windows, com e sem estilos, incluindo
+sondas separadas de decode e leitura em Canvas. O marco C0 segue aberto:
+faltam decompor Worker e handoff do preview, medir documentos maiores/reais,
+mais combinações/erros e repetir nas plataformas alvo.
 
 ### C1 — POC Rust/WASM isolada, sem mudança visual
 
@@ -238,21 +242,37 @@ opacidade de preenchimento, `Cargo.lock` sem dependências e testes nativo/WASM
 contra o golden e a matriz completa de alfa/opacidade. Um Worker experimental
 já exercita transferência, cancelamento pendente e descarte fora da UI. O
 pré-build agora gera o WASM local, e o Vite inclui Worker e asset com hash;
-uma checagem de bundle e um smoke em Edge headless com tempo real via
-`vite preview` passaram.
+uma checagem de bundle, um smoke em Edge headless via `vite preview` e outro
+em executável de produção temporário Wails/WebView2 passaram. O último foi
+repetido três vezes sem falha, mas não é um instalador instalado.
 Há primeira medição Node de cópias/tempo, ainda sem comparação representativa.
-Faltam executável instalado em Wails/WebView2, CI Windows/Linux, baseline
+Faltam teste do instalador/portável distribuível, CI Windows/Linux, baseline
 end-to-end e fechamento de C0; portanto **nenhuma caixa C1 foi marcada como
 concluída**.
+
+Há agora um workflow de CI Windows/Linux para testes Rust, contrato Worker,
+frontend e bundle; Go é testado no Windows. O smoke Wails/WebView2 no runner
+hospedado fica disponível por acionamento manual até termos a primeira execução
+observada. Criar o workflow não equivale a aprovar o gate: faltam resultados
+reais da CI e o teste do instalador distribuível.
 
 ### C2 — Estilos CPU e raster por região
 
 - [ ] Portar passes de estilo gradualmente, com testes de combinação e paridade
   por efeito. Adicionar entradas/halos e seed/âncora absolutos; verificar
   equivalência tile vs raster inteiro. Separar rasterização de texto/forma.
-- [ ] Fechar dispatch exaustivo de efeitos no TS atual independentemente do
+- [x] Fechar dispatch exaustivo de efeitos no TS atual independentemente do
   porte; casos não suportados retornam erro estruturado, nunca somem em silêncio.
 - [ ] Cache/cancelamento/orçamentos com benchmark end-to-end, não apenas kernel.
+
+O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
+derivado do mapa efeito→estágio. Um efeito desconhecido chega a
+`LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os
+três documentos Canvas mantiveram a aparência. O protocolo do Worker preserva
+esse código/tipos e identifica também padrão não decodificado; o fallback sem
+Worker usa as mesmas classes. O teste de protocolo cobre a serialização por
+`structuredClone` e mensagem legada. A validação visual manual e os demais
+gates C2 continuam pendentes.
 
 ### C3 — Um compositor offscreen do documento
 

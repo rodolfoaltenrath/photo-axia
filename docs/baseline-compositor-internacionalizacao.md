@@ -67,12 +67,50 @@ Esses números não incluem decode, Canvas, Worker, transferência, handoff,
 renderização do documento nem GC controlado; não são uma meta de desempenho
 para Rust nem uma comparação entre engines.
 
-`frontend/benchmarks/documentOracle.html` já prepara dois documentos pequenos
-(formas/fundo/mesclagem e pixels/`Blend If`) através de `renderDocumentPNG`.
-Ainda mostra `unbaselined`: não há fixture de Canvas validada. Nesta máquina,
-Edge headless encerrou sem devolver DOM, inclusive com perfil isolado; portanto
-**nenhum byte Canvas foi congelado**. Rodar a página em navegador controlado,
-inspecionar a saída e registrar versão/OS antes de aprovar a fixture visual.
+`frontend/benchmarks/documentOracle.html` prepara três documentos pequenos
+(formas/fundo/mesclagem, pixels/`Blend If` e estilos combinados sobre uma
+camada inferior) através de `renderDocumentPNG`. Confere também que um
+traçado não suportado em forma é rejeitado explicitamente.
+Em 2026-09-30, o runner por DevTools conseguiu ler o resultado no Edge
+**154.0.4258.37** em Windows. Após inspeção das cores/posições, os 8 × 6
+pixels por caso foram congelados em
+`frontend/tests/fixtures/documentOracle.v1.json`, em linhas RGBA
+hex legíveis, com tolerância máxima de **2 por canal** para diferenças do
+Canvas entre ambientes. `npm run smoke:document-oracle` inicia Vite e Edge,
+compara a saída e encerra os processos; `npm run record:document-oracle` apenas
+imprime uma nova proposta de fixture, sem sobrescrever a referência. A
+comparação dos três casos passou duas vezes localmente, inclusive com Node
+24.14.1 fixado. Ainda falta observar essa mesma fixture na CI e em outro
+browser/SO; ela não é um oráculo universal nem cobre texto, combinações mais
+amplas ou documentos reais.
+
+### Primeira medição do pipeline de documento
+
+`frontend/benchmarks/documentPipeline.html` exercita o caminho real de
+`renderDocumentPNG` no Edge, com duas imagens rasterizadas sintéticas e uma
+variante que aplica sombra projetada e sobreposição de cor à camada superior.
+O runner é `npm run benchmark:document-pipeline -- 512 512 5` em `frontend/`;
+os argumentos são largura, altura e amostras. Há duas passagens de aquecimento
+por série. A saída JSON inclui amostras, mediana, p95 **observado**, tamanho
+do PNG, checksum e ambiente. A geração das imagens de origem é medida
+separadamente e não entra no tempo de renderização.
+
+Em 2026-09-30, com Node 24.14.1, Edge headless **154.0.4258.37**
+(`--disable-gpu`), Windows 10.0.26200 x64, Intel i7-3770 (8 threads), DPR 1:
+
+| Documento sintético | `renderDocumentPNG` 512², 5 amostras | `renderDocumentPNG` 1024², 3 amostras |
+| --- | ---: | ---: |
+| Duas camadas de pixels | 7,9 ms mediana / 9,7 ms máximo | 20,7 ms / 21,8 ms |
+| Camada estilizada sobre pixels | 11,5 ms / 12,2 ms | 36,8 ms / 40,3 ms |
+
+A conversão de `data:` URL de origem para `ImageBitmap` teve medianas de
+5,4 ms (512²) e 15,5 ms (1024²). Converter o PNG final em `ImageBitmap`,
+desenhá-lo em Canvas e ler os pixels teve medianas de 6,9/10,6 ms (512²,
+sem/com estilo) e 22,2/25,7 ms (1024²). Essas são **sondas separadas**, não
+parcelas somáveis do tempo de exportação; incluem conversão de `data:` URL.
+O p95 com 3–5 amostras é apenas o maior valor observado. Ainda faltam
+instrumentação isolada do Worker e do handoff no preview, documentos grandes
+e reais, memória/FPS, execução sem `--disable-gpu` e outras plataformas.
 
 Há agora 64 arquivos em `frontend/tests/`, incluindo fixtures e benchmarks, e 11
 Workers em `frontend/src/workers/`. Esses totais não medem cobertura de cenários

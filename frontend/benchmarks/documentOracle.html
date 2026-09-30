@@ -3,7 +3,8 @@
 <title>Axia document compositor oracle</title>
 <pre id="result">running</pre>
 <script type="module">
-import { createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { LayerStyleUnsupportedEffectError } from '../src/editor/layerStyleCompositor.ts'
 import { renderDocumentPNG } from '../src/services/renderDocument.ts'
 
 const result = document.querySelector('#result')
@@ -86,14 +87,55 @@ async function renderCases() {
       192, 30, 200, 255, 255, 30, 200, 255
     ])
   ]
+  const shadow = createDefaultLayerEffect('drop-shadow', 'combo-shadow')
+  shadow.useGlobalLight = false
+  shadow.angle = 0
+  shadow.distance = 2
+  shadow.size = 0
+  shadow.color = '#0000ff'
+  shadow.blendMode = 'normal'
+  const overlay = createDefaultLayerEffect('color-overlay', 'combo-overlay')
+  overlay.color = '#00ff00'
+  overlay.opacity = 60
+  const stroke = createDefaultLayerEffect('stroke', 'combo-stroke')
+  stroke.size = 1
+  stroke.position = 'outside'
+  stroke.paint = { type: 'color', color: '#ff0000' }
+  const comboStyles = createLayerStyleConfig()
+  comboStyles.fillOpacity = 65
+  comboStyles.effects = [shadow, overlay, stroke]
+  const combinedLayers = [
+    imageLayer('styled-pixels', [
+      255, 255, 255, 255, 255, 255, 255, 128,
+      255, 0, 0, 0, 255, 255, 255, 255
+    ], { opacity: 85, styles: comboStyles }),
+    rectangle('combo-backdrop', '#203060', { x: 2, y: 1, width: 4, height: 4, rotation: 0 })
+  ]
   return [
     { id: 'shapes-and-background', rgba: await pixelsFromPng(await renderDocumentPNG(doc('shapes', 'white'), shapeLayers)) },
-    { id: 'pixel-stack-blend-if', rgba: await pixelsFromPng(await renderDocumentPNG(doc('pixels', 'transparent'), pixelLayers)) }
+    { id: 'pixel-stack-blend-if', rgba: await pixelsFromPng(await renderDocumentPNG(doc('pixels', 'transparent'), pixelLayers)) },
+    { id: 'combined-styles-over-backdrop', rgba: await pixelsFromPng(await renderDocumentPNG(doc('combined', 'transparent'), combinedLayers)) }
   ]
+}
+
+async function assertUnsupportedShapeStyleRejects() {
+  const stroke = createDefaultLayerEffect('stroke', 'unsupported-shape-stroke')
+  const styles = createLayerStyleConfig()
+  styles.effects = [stroke]
+  const shape = rectangle('unsupported-shape', '#ffffff',
+    { x: 2, y: 1, width: 3, height: 3, rotation: 0 }, { styles })
+  try {
+    await renderDocumentPNG(doc('unsupported', 'transparent'), [shape])
+  } catch (error) {
+    if (error instanceof LayerStyleUnsupportedEffectError && error.effectTypes.includes('stroke')) return
+    throw new Error(`A rejeição não identificou o efeito: ${error}`)
+  }
+  throw new Error('O compositor aceitou em silêncio um estilo não suportado em forma.')
 }
 
 try {
   const cases = await renderCases()
+  await assertUnsupportedShapeStyleRejects()
   if (new URLSearchParams(location.search).has('record')) {
     result.textContent = JSON.stringify({ status: 'record', width, height, cases })
   } else {
@@ -106,15 +148,27 @@ try {
       if (golden.schemaVersion !== 1 || golden.width !== width || golden.height !== height) {
         errors.push('schema/dimensões divergentes')
       }
+      if (!Array.isArray(golden.cases) || golden.cases.length !== cases.length) {
+        errors.push('quantidade de casos divergente')
+      }
       for (const item of cases) {
-        const reference = golden.cases.find((entry) => entry.id === item.id)
-        if (!reference || reference.rgba.length !== item.rgba.length) {
-          errors.push(`${item.id}: caso ausente ou tamanho inválido`)
+        const references = Array.isArray(golden.cases)
+          ? golden.cases.filter((entry) => entry?.id === item.id) : []
+        const reference = references[0]
+        const validRows = Array.isArray(reference?.rows) && reference.rows.length === height &&
+          reference.rows.every((row) => typeof row === 'string' && row.split(' ').length === width)
+        const cells = validRows ? reference.rows.flatMap((row) => row.split(' ')) : []
+        if (references.length !== 1 || !validRows ||
+          cells.length !== width * height || cells.some((cell) => !/^[0-9a-f]{8}$/.test(cell)) ||
+          !Number.isInteger(reference.maxChannelDifference) ||
+          reference.maxChannelDifference < 0 || reference.maxChannelDifference > 255) {
+          errors.push(`${item.id}: fixture ausente ou inválida`)
           continue
         }
         let maxDifference = 0
         for (let index = 0; index < item.rgba.length; index++) {
-          maxDifference = Math.max(maxDifference, Math.abs(item.rgba[index] - reference.rgba[index]))
+          const expected = parseInt(cells[Math.floor(index / 4)].slice(index % 4 * 2, index % 4 * 2 + 2), 16)
+          maxDifference = Math.max(maxDifference, Math.abs(item.rgba[index] - expected))
         }
         if (maxDifference > reference.maxChannelDifference) {
           errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)

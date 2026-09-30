@@ -8,6 +8,7 @@ import {
 } from '../editor/renderBounds.ts'
 import {
   activeLayerStyleEffects,
+  LayerStyleUnsupportedEffectError,
   layerStyleEffectIsRasterSupported,
   layerStyleNeedsCompositing,
   type LayerStyleRenderQuality
@@ -120,7 +121,7 @@ function assertSupportedLayerStyles(layers: LayerItem[]) {
     if (!layer.image && !layer.text && !layerStyleBlendIfIsDefault(layer.styles.blendIf)) unsupported.push('blend-if')
   }
   if (unsupported.length) {
-    throw new Error(`Efeitos ainda nao suportados pelo compositor: ${[...new Set(unsupported)].join(', ')}.`)
+    throw new LayerStyleUnsupportedEffectError([...new Set(unsupported)])
   }
 }
 

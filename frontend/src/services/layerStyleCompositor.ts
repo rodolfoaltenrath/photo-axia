@@ -7,6 +7,7 @@ import { drawTextLayerContent } from '../editor/textCanvas.ts'
 import { layerStylePatternAssets, normalizeLayerStyleConfig, normalizeLayerStyleGlobalLight } from '../editor/layerStyles.ts'
 import { ByteBudgetLruCache, LatestGenerationByKey } from '../editor/renderCache.ts'
 import { prepareImageSource, releasePreparedImage } from './imageImport.ts'
+import { deserializeLayerStyleWorkerError } from '../editor/layerStyleRenderProtocol.ts'
 import type {
   LayerStyleWorkerRequest,
   LayerStyleWorkerResult,
@@ -189,7 +190,7 @@ function workerInstance() {
     const pending = workerPending.get(event.data.id)
     if (!pending) return
     workerPending.delete(event.data.id)
-    if (event.data.error) pending.reject(new Error(event.data.error))
+    if (event.data.error) pending.reject(deserializeLayerStyleWorkerError(event.data.error))
     else if (event.data.result) pending.resolve(event.data.result)
     else pending.reject(new Error('O compositor retornou um resultado inválido.'))
   }

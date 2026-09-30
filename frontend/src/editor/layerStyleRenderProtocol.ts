@@ -1,5 +1,6 @@
 import type { LayerStyleConfig, LayerStyleGlobalLight, TextLayerContent } from '../types/editor.ts'
-import type { LayerStyleRenderQuality } from './layerStyleCompositor.ts'
+import { LayerStyleUnsupportedEffectError, type LayerStyleRenderQuality } from './layerStyleCompositor.ts'
+import { LayerStylePatternMissingError } from './layerStyleRaster.ts'
 
 export interface LayerStyleWorkerRasterSource {
   type: 'raster'
@@ -35,6 +36,36 @@ export interface LayerStyleWorkerCancelRequest {
 
 export type LayerStyleWorkerRequest = LayerStyleWorkerRenderRequest | LayerStyleWorkerCancelRequest
 
+export type LayerStyleWorkerError =
+  | { code: 'LAYER_STYLE_UNSUPPORTED_EFFECT', message: string, effectTypes: string[] }
+  | { code: 'LAYER_STYLE_PATTERN_MISSING', message: string, effectType: string }
+  | { code: 'LAYER_STYLE_RENDER_FAILED', message: string }
+
+export function serializeLayerStyleWorkerError(error: unknown): LayerStyleWorkerError {
+  if (error instanceof LayerStyleUnsupportedEffectError) {
+    return { code: error.code, message: error.message, effectTypes: [...error.effectTypes] }
+  }
+  if (error instanceof LayerStylePatternMissingError) {
+    return { code: error.code, message: error.message, effectType: error.effectType }
+  }
+  return {
+    code: 'LAYER_STYLE_RENDER_FAILED',
+    message: error instanceof Error ? error.message : 'Falha ao compor estilo de camada.'
+  }
+}
+
+export function deserializeLayerStyleWorkerError(error: LayerStyleWorkerError | string): Error {
+  if (typeof error === 'string') return new Error(error)
+  if (error.code === 'LAYER_STYLE_UNSUPPORTED_EFFECT' &&
+    Array.isArray(error.effectTypes) && error.effectTypes.every((type) => typeof type === 'string')) {
+    return new LayerStyleUnsupportedEffectError(error.effectTypes)
+  }
+  if (error.code === 'LAYER_STYLE_PATTERN_MISSING' && typeof error.effectType === 'string') {
+    return new LayerStylePatternMissingError(error.effectType)
+  }
+  return new Error(typeof error.message === 'string' ? error.message : 'Falha ao compor estilo de camada.')
+}
+
 export interface LayerStyleWorkerResult {
   id: number
   result?: {
@@ -44,5 +75,5 @@ export interface LayerStyleWorkerResult {
     offsetX: number
     offsetY: number
   }
-  error?: string
+  error?: LayerStyleWorkerError | string
 }
