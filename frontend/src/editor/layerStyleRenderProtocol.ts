@@ -27,6 +27,15 @@ export interface LayerStyleWorkerRenderRequest {
   resolutionScale: number
   quality: LayerStyleRenderQuality
   patterns: Record<string, Blob>
+  benchmarkTimings?: boolean
+}
+
+export interface LayerStyleWorkerTimings {
+  patternDecodeMs: number
+  sourceDecodeReadMs: number
+  rasterComposeMs: number
+  outputCanvasEncodeMs: number
+  workerTotalMs: number
 }
 
 export interface LayerStyleWorkerCancelRequest {
@@ -74,6 +83,7 @@ export interface LayerStyleWorkerResult {
     height: number
     offsetX: number
     offsetY: number
+    timings?: LayerStyleWorkerTimings
   }
   error?: LayerStyleWorkerError | string
 }

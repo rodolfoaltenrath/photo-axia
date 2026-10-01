@@ -40,8 +40,11 @@ async function decodePatterns(patterns: Record<string, Blob>): Promise<LayerStyl
 }
 
 async function render(request: LayerStyleWorkerRenderRequest) {
+  const timed = request.benchmarkTimings === true
+  const started = timed ? performance.now() : 0
   ensureCurrent(request.id)
   const patterns = await decodePatterns(request.patterns)
+  const patternsReady = timed ? performance.now() : 0
   let bitmap: ImageBitmap | undefined
   let sourceCanvas: OffscreenCanvas | undefined
   let output: OffscreenCanvas | undefined
@@ -64,6 +67,7 @@ async function render(request: LayerStyleWorkerRenderRequest) {
       sourceContext.drawImage(bitmap, 0, 0, request.sourceWidth, request.sourceHeight)
     }
     const source = sourceContext.getImageData(0, 0, request.sourceWidth, request.sourceHeight)
+    const sourceReady = timed ? performance.now() : 0
     const composed = composeLayerStyleRaster(
       { width: source.width, height: source.height, data: source.data },
       request.styles,
@@ -71,6 +75,7 @@ async function render(request: LayerStyleWorkerRenderRequest) {
       request.resolutionScale,
       patterns
     )
+    const rasterReady = timed ? performance.now() : 0
     ensureCurrent(request.id)
 
     output = new OffscreenCanvas(composed.width, composed.height)
@@ -80,6 +85,7 @@ async function render(request: LayerStyleWorkerRenderRequest) {
     outputPixels.data.set(composed.data)
     outputContext.putImageData(outputPixels, 0, 0)
     const blob = await output.convertToBlob({ type: 'image/png' })
+    const encoded = timed ? performance.now() : 0
     ensureCurrent(request.id)
     const message: LayerStyleWorkerResult = {
       id: request.id,
@@ -88,7 +94,14 @@ async function render(request: LayerStyleWorkerRenderRequest) {
         width: composed.width,
         height: composed.height,
         offsetX: composed.offsetX,
-        offsetY: composed.offsetY
+        offsetY: composed.offsetY,
+        ...(timed ? { timings: {
+          patternDecodeMs: patternsReady - started,
+          sourceDecodeReadMs: sourceReady - patternsReady,
+          rasterComposeMs: rasterReady - sourceReady,
+          outputCanvasEncodeMs: encoded - rasterReady,
+          workerTotalMs: encoded - started
+        } } : {})
       }
     }
     self.postMessage(message)

@@ -28,19 +28,31 @@ func init() {
 func main() {
 	service := NewApp()
 	rustPocSmoke := slices.Contains(os.Args[1:], "--axia-rust-poc-smoke")
+	previewSmoke := slices.Contains(os.Args[1:], "--axia-preview-smoke")
+	if rustPocSmoke && previewSmoke {
+		log.Fatal("Selecione apenas um modo de smoke WebView2.")
+	}
 	mainURL := "/"
 	if rustPocSmoke {
 		mainURL = "/?axiaRustPoc=1"
+	} else if previewSmoke {
+		mainURL = "/?axiaPreviewSmoke=1"
 	}
 	windowsOptions := application.WindowsOptions{}
-	if rustPocSmoke {
-		port, err := strconv.Atoi(os.Getenv("AXIA_RUST_POC_CDP_PORT"))
-		if err != nil || port < 1 || port > 65535 {
-			log.Fatal("Porta CDP inválida para o smoke Rust/WASM.")
+	if rustPocSmoke || previewSmoke {
+		portEnv := "AXIA_RUST_POC_CDP_PORT"
+		dataEnv := "AXIA_RUST_POC_WEBVIEW_DATA"
+		if previewSmoke {
+			portEnv = "AXIA_PREVIEW_CDP_PORT"
+			dataEnv = "AXIA_PREVIEW_WEBVIEW_DATA"
 		}
-		windowsOptions.WebviewUserDataPath = os.Getenv("AXIA_RUST_POC_WEBVIEW_DATA")
+		port, err := strconv.Atoi(os.Getenv(portEnv))
+		if err != nil || port < 1 || port > 65535 {
+			log.Fatal("Porta CDP inválida para o smoke WebView2.")
+		}
+		windowsOptions.WebviewUserDataPath = os.Getenv(dataEnv)
 		if windowsOptions.WebviewUserDataPath == "" {
-			log.Fatal("Perfil WebView2 temporário ausente para o smoke Rust/WASM.")
+			log.Fatal("Perfil WebView2 temporário ausente para o smoke WebView2.")
 		}
 		windowsOptions.AdditionalBrowserArgs = []string{"--remote-debugging-port=" + strconv.Itoa(port)}
 	}

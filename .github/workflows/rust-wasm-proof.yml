@@ -85,3 +85,9 @@ jobs:
         shell: bash
         working-directory: frontend
         run: npm run smoke:rust-wails
+
+      - name: Smoke actual Wails preview handoff and screenshot
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
+        shell: bash
+        working-directory: frontend
+        run: npm run smoke:preview-wails

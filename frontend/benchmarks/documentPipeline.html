@@ -4,6 +4,7 @@
 <pre id="result">running</pre>
 <script type="module">
 import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { composeLayerStyleRaster } from '../src/editor/layerStyleRaster.ts'
 import { renderDocumentPNG } from '../src/services/renderDocument.ts'
 
 const result = document.querySelector('#result')
@@ -20,7 +21,9 @@ function boundedInteger(name, fallback, minimum, maximum) {
 
 function summary(samples) {
   const sorted = [...samples].sort((a, b) => a - b)
-  const median = sorted[Math.floor(sorted.length / 2)]
+  const middle = Math.floor(sorted.length / 2)
+  const median = sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
   const p95Observed = sorted[Math.ceil(sorted.length * 0.95) - 1]
   return { samplesMs: samples.map((value) => +value.toFixed(2)), medianMs: +median.toFixed(2),
     p95ObservedMs: +p95Observed.toFixed(2) }
@@ -30,7 +33,7 @@ async function measure(action, count, warmups = 2) {
   const samples = []
   for (let index = -warmups; index < count; index++) {
     const start = performance.now()
-    await action()
+    await action(index)
     if (index >= 0) samples.push(performance.now() - start)
   }
   return summary(samples)
@@ -82,6 +85,79 @@ async function decodeAndRead(png, width, height) {
   }
 }
 
+async function workerAndCoreBaseline(blob, width, height, styles, globalLight, samples) {
+  const bitmap = await createImageBitmap(blob)
+  const sourceCanvas = document.createElement('canvas')
+  sourceCanvas.width = width
+  sourceCanvas.height = height
+  const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true })
+  try {
+    sourceContext.drawImage(bitmap, 0, 0)
+  } finally {
+    bitmap.close()
+  }
+  const sourcePixels = sourceContext.getImageData(0, 0, width, height).data
+  let coreResult
+  const pureRasterCore = await measure(() => {
+    coreResult = composeLayerStyleRaster(
+      { width, height, data: sourcePixels }, styles, globalLight, 1, new Map()
+    )
+  }, samples)
+
+  const worker = new Worker(new URL('../src/workers/layerStyleCompositor.worker.ts', import.meta.url), { type: 'module' })
+  let nextId = 0
+  function roundTrip() {
+    const id = ++nextId
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => finish(new Error(`Worker não respondeu à solicitação ${id}.`)), 30_000)
+      let settled = false
+      function finish(error, value) {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        worker.removeEventListener('message', onMessage)
+        worker.removeEventListener('error', onError)
+        if (error) reject(error)
+        else resolve(value)
+      }
+      function onMessage(event) {
+        if (event.data.id !== id) return
+        if (event.data.error) finish(new Error(JSON.stringify(event.data.error)))
+        else if (event.data.result?.blob instanceof Blob) finish(null, event.data.result)
+        else finish(new Error('Resposta inválida do Worker.'))
+      }
+      function onError(event) { finish(new Error(event.message || 'Worker interrompido.')) }
+      worker.addEventListener('message', onMessage)
+      worker.addEventListener('error', onError)
+      try {
+        worker.postMessage({ type: 'render', id, source: { type: 'raster', blob },
+          sourceWidth: width, sourceHeight: height, styles, globalLight,
+          resolutionScale: 1, quality: 'final', patterns: {}, benchmarkTimings: true })
+      } catch (error) { finish(error) }
+    })
+  }
+  try {
+    let workerResult
+    const workerSamples = []
+    const workerRoundTrip = await measure(async (index) => {
+      workerResult = await roundTrip()
+      if (index >= 0) workerSamples.push(workerResult.timings)
+    }, samples)
+    const fields = ['patternDecodeMs', 'sourceDecodeReadMs', 'rasterComposeMs',
+      'outputCanvasEncodeMs', 'workerTotalMs']
+    if (workerSamples.some((timings) => !timings ||
+      fields.some((field) => !Number.isFinite(timings[field]) || timings[field] < 0))) {
+      throw new Error('O Worker não retornou tempos válidos.')
+    }
+    const workerStages = Object.fromEntries(fields.map((field) =>
+      [field, summary(workerSamples.map((timings) => timings[field]))]))
+    return { pureRasterCore, workerRoundTrip, workerStages, outputBytes: workerResult.blob.size,
+      width: coreResult.width, height: coreResult.height }
+  } finally {
+    worker.terminate()
+  }
+}
+
 try {
   const width = boundedInteger('width', 512, 64, 1920)
   const height = boundedInteger('height', 512, 64, 1080)
@@ -126,10 +202,27 @@ try {
       pngBytes: (await (await fetch(png)).blob()).size,
       checksum: await decodeAndRead(png, width, height) })
   }
+  let uncachedSequence = 0
+  let uncachedPng
+  const uncachedRender = await measure(async () => {
+    const uncachedTop = { ...styledTop, image: {
+      ...styledTop.image, editToken: `benchmark-${++uncachedSequence}`
+    } }
+    uncachedPng = await renderDocumentPNG(doc, [uncachedTop, base])
+  }, samples)
+  scenarios.push({ id: 'styled-layer-cache-miss', renderPng: uncachedRender,
+    pngBytes: (await (await fetch(uncachedPng)).blob()).size,
+    checksum: await decodeAndRead(uncachedPng, width, height) })
+  if (scenarios[1].checksum !== scenarios[2].checksum) {
+    throw new Error('A composição com cache e sem cache produziu pixels diferentes.')
+  }
+  const workerStyle = await workerAndCoreBaseline(
+    await (await fetch(topUrl)).blob(), width, height, styled, doc.layerStyleGlobalLight, samples
+  )
   result.textContent = JSON.stringify({ status: 'benchmark', width, height, samples,
     environment: { userAgent: navigator.userAgent, devicePixelRatio: devicePixelRatio,
       hardwareConcurrency: navigator.hardwareConcurrency ?? null },
-    sourceGenerationMs, sourceDataUrlToBitmap: sourceDecode, scenarios })
+    sourceGenerationMs, sourceDataUrlToBitmap: sourceDecode, scenarios, workerStyle })
 } catch (error) {
   result.textContent = JSON.stringify({ status: 'error', message: String(error), stack: error?.stack })
 }

@@ -12,11 +12,16 @@ const edge = process.env.AXIA_EDGE || (process.platform === 'win32'
   : 'microsoft-edge')
 const record = process.argv.includes('--record')
 const pipeline = process.argv.includes('--pipeline')
-if (record && pipeline) throw new Error('--record e --pipeline são mutuamente exclusivos.')
-const pipelineArgs = pipeline ? process.argv.slice(process.argv.indexOf('--pipeline') + 1) : []
-const pageName = pipeline ? 'documentPipeline.html' : 'documentOracle.html'
-const pageQuery = pipeline
-  ? `?width=${encodeURIComponent(pipelineArgs[0] ?? '512')}&height=${encodeURIComponent(pipelineArgs[1] ?? '512')}&samples=${encodeURIComponent(pipelineArgs[2] ?? '5')}`
+const handoff = process.argv.includes('--handoff')
+if (Number(record) + Number(pipeline) + Number(handoff) > 1) {
+  throw new Error('--record, --pipeline e --handoff são mutuamente exclusivos.')
+}
+const benchmark = pipeline || handoff
+const benchmarkArgs = benchmark
+  ? process.argv.slice(process.argv.indexOf(pipeline ? '--pipeline' : '--handoff') + 1) : []
+const pageName = pipeline ? 'documentPipeline.html' : handoff ? 'layerHandoff.html' : 'documentOracle.html'
+const pageQuery = benchmark
+  ? `?width=${encodeURIComponent(benchmarkArgs[0] ?? '512')}&height=${encodeURIComponent(benchmarkArgs[1] ?? '512')}&samples=${encodeURIComponent(benchmarkArgs[2] ?? '5')}`
   : record ? '?record' : ''
 const profile = mkdtempSync(join(tmpdir(), 'axia-document-oracle-'))
 let vite
@@ -140,14 +145,14 @@ try {
   socket = await pageSocket(debugPort)
   const evaluate = evaluator(socket)
   let content = 'running'
-  for (let attempt = 0; attempt < (pipeline ? 1200 : 200); attempt++) {
+  for (let attempt = 0; attempt < (benchmark ? 1200 : 200); attempt++) {
     content = await evaluate('document.querySelector("#result")?.textContent')
     if (content && content !== 'running') break
     await delay(100)
   }
-  assert.notEqual(content, 'running', `A sonda não concluiu em ${pipeline ? 120 : 20} segundos.`)
+  assert.notEqual(content, 'running', `A sonda não concluiu em ${benchmark ? 120 : 20} segundos.`)
   const result = JSON.parse(content)
-  assert.equal(result.status, pipeline ? 'benchmark' : record ? 'record' : 'pass', JSON.stringify(result))
+  assert.equal(result.status, benchmark ? 'benchmark' : record ? 'record' : 'pass', JSON.stringify(result))
   const version = await (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json()
   if (record) {
     const fixture = {

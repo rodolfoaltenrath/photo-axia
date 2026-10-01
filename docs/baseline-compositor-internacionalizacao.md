@@ -101,7 +101,7 @@ Em 2026-09-30, com Node 24.14.1, Edge headless **154.0.4258.37**
 | Documento sintético | `renderDocumentPNG` 512², 5 amostras | `renderDocumentPNG` 1024², 3 amostras |
 | --- | ---: | ---: |
 | Duas camadas de pixels | 7,9 ms mediana / 9,7 ms máximo | 20,7 ms / 21,8 ms |
-| Camada estilizada sobre pixels | 11,5 ms / 12,2 ms | 36,8 ms / 40,3 ms |
+| Camada estilizada sobre pixels, cache aquecido | 11,5 ms / 12,2 ms | 36,8 ms / 40,3 ms |
 
 A conversão de `data:` URL de origem para `ImageBitmap` teve medianas de
 5,4 ms (512²) e 15,5 ms (1024²). Converter o PNG final em `ImageBitmap`,
@@ -111,6 +111,105 @@ parcelas somáveis do tempo de exportação; incluem conversão de `data:` URL.
 O p95 com 3–5 amostras é apenas o maior valor observado. Ainda faltam
 instrumentação isolada do Worker e do handoff no preview, documentos grandes
 e reais, memória/FPS, execução sem `--disable-gpu` e outras plataformas.
+
+Em 2026-10-01, a sonda passou a medir também uma **falha de cache de estilo
+forçada** por `editToken` novo em cada renderização. No mesmo Edge/Windows, uma
+nova execução obteve estas medianas e máximos observados:
+
+| Caminho | 512², 5 amostras | 1024², 3 amostras |
+| --- | ---: | ---: |
+| `renderDocumentPNG`, estilo em cache | 12,1 / 15,1 ms | 34,3 / 36,0 ms |
+| `renderDocumentPNG`, estilo recomposto | 119,8 / 136,8 ms | 410,1 / 468,5 ms |
+| Núcleo puro `composeLayerStyleRaster` | 78,0 / 92,6 ms | 295,4 / 301,9 ms |
+| Ida e volta direta ao Worker de estilos | 123,9 / 129,5 ms | 343,7 / 455,9 ms |
+
+O benchmark direto do Worker usa o **mesmo Worker de produção**, com Blob de
+origem e estilos idênticos, mas ignora cache e serviço de orquestração; inclui
+clone da mensagem, decode, Canvas, composição, encode PNG e resposta. O núcleo
+puro recebe RGBA já decodificado. Esses tempos não são parcelas do mesmo
+evento e **não devem ser subtraídos** para estimar overhead do Worker. A
+exportação com cache aquecido mede uma situação diferente da recomposição;
+ambos os caminhos produziram o mesmo checksum. Faltam o handoff do preview
+e amostras suficientes para uma cauda p95 robusta.
+
+A sonda foi então ampliada com `benchmarkTimings` opcional no protocolo do
+Worker de estilos; solicitações normais não coletam esses relógios. Uma nova
+execução no mesmo ambiente retornou as seguintes **medianas internas**:
+
+| Etapa do Worker | 512², 5 amostras | 1024², 3 amostras |
+| --- | ---: | ---: |
+| Decodificar padrões (nenhum neste cenário) | 0,0 ms | 0,0 ms |
+| Decodificar fonte e ler Canvas | 5,5 ms | 18,5 ms |
+| Compor raster de estilos | 72,0 ms | 305,6 ms |
+| Escrever Canvas de saída e codificar PNG | 11,2 ms | 30,7 ms |
+| Total dentro do Worker | 88,6 ms | 354,8 ms |
+| Ida e volta vista pelo chamador | 89,4 ms | 356,5 ms |
+
+As medianas de etapas individuais não somam necessariamente à mediana do
+total. A etapa de raster domina **neste cenário sintético**; não extrapolar
+para texto, padrões, outras combinações ou hardware. Continua pendente o
+handoff do preview e a medição em documentos reais.
+
+### Handoff de imagem do preview
+
+`frontend/benchmarks/layerHandoff.html` monta o composable real
+`useLayerImageBuffer` em um componente Vue mínimo com os dois `<img>` do
+buffer. O runner é `npm run benchmark:layer-handoff -- 512 512 5`. Cada amostra
+troca para um PNG diferente, verifica que a imagem anterior continua ativa
+até o callback e que a nova classe ativa aparece no DOM após o callback.
+Geração dos PNGs e duas trocas de aquecimento ficam fora das amostras.
+
+Em 2026-10-01, no mesmo Edge headless/Windows com `--disable-gpu`, foram
+observadas estas medianas:
+
+| Marco desde a troca da fonte | 512², 5 amostras | 1024², 3 amostras |
+| --- | ---: | ---: |
+| Evento `load` | 1,0 ms | 1,0 ms |
+| `image.decode()` concluído | 3,3 ms | 9,3 ms |
+| Callback `imageLoaded` após dois `requestAnimationFrame` | 33,4 ms | 32,8 ms |
+| Classe ativa publicada no DOM | 33,6 ms | 33,0 ms |
+| Próxima oportunidade de frame | 49,8 ms | 49,9 ms |
+
+O intervalo próximo de dois frames é esperado pelo protocolo atual; não é
+isoladamente um gargalo. A sonda **não mede pintura efetiva da GPU**, Wails,
+estilos calculados pelo Worker, exportação nem latência ponta a ponta do
+editor. `data:` URLs já em memória também não representam leitura de arquivo.
+Ainda é necessário validar o handoff visual e FPS com documentos reais no app.
+
+Um segundo smoke agora executa **o próprio editor Wails/WebView2** em um
+executável de produção temporário: `npm run smoke:preview-wails` em
+`frontend/`. Ele usa perfil WebView2 separado, abre um PNG sintético de
+512² como documento por drop, seleciona a camada, espera o preset ficar
+habilitado, aplica “Sombra suave” e observa os dois buffers da camada no DOM.
+O executável/perfil temporários são removidos ao terminar; nenhum projeto é
+salvo. Duas execuções consecutivas passaram em 2026-10-01 no WebView2
+**154.0.4258.48**, Windows, DPR 1, 8 threads:
+
+| Marco após clicar no preset | Execução 1 | Execução 2 |
+| --- | ---: | ---: |
+| Nova fonte publicada no buffer inativo | 203,5 ms | 186,0 ms |
+| Novo buffer ativo | 234,9 ms | 214,4 ms |
+| Intervalo publicação → ativação | 31,4 ms | 28,4 ms |
+
+Não houve momento observado sem buffer ativo. Os tempos de clique até a
+publicação incluem a recomposição do estilo e não são medidas isoladas do
+handoff. O smoke usa imagem simples e **não prova pintura na GPU, FPS nem
+comportamento em documentos reais**. Uma corrida inicial da automação clicou
+num preset ainda desabilitado durante a importação; o runner agora aguarda o
+estado habilitado antes de iniciar a observação.
+
+O mesmo smoke passou a capturar **a região do canvas pelo DevTools WebView2**
+antes e depois de aplicar o estilo, sem salvar screenshots em disco. Três
+execuções adicionais em 2026-10-01 retornaram PNGs de 859 × 859 pixels com
+**3.176 pixels RGB diferentes** (diferença acima de 2 por canal), além de
+confirmarem a continuidade do buffer ativo. Isso confirma uma mudança visível
+na superfície do app, não somente no DOM; não é um golden visual do efeito e
+continua sem medir duração de pintura ou FPS.
+A terceira execução usou o Node fixado **24.14.1**, mas ainda compilou com o
+Go **1.27.0** do PATH. Os dois smokes Wails agora extraem a versão exata de
+`go.mod` e forçam `GOTOOLCHAIN=go1.26.5` sem substituir o Go global. Uma
+quarta execução com Node **24.14.1** e Go **1.26.5** também passou e encontrou
+os mesmos 3.176 pixels alterados; o runner registra ambos na saída.
 
 Há agora 64 arquivos em `frontend/tests/`, incluindo fixtures e benchmarks, e 11
 Workers em `frontend/src/workers/`. Esses totais não medem cobertura de cenários

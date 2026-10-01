@@ -220,9 +220,19 @@ agora cobre três pilhas pequenas, inclusive estilos combinados, e uma rejeiçã
 explícita de efeito incompatível com forma.
 Uma primeira sonda end-to-end de exportação PNG mede agora documentos
 sintéticos de 512² e 1024² no Edge/Windows, com e sem estilos, incluindo
-sondas separadas de decode e leitura em Canvas. O marco C0 segue aberto:
-faltam decompor Worker e handoff do preview, medir documentos maiores/reais,
-mais combinações/erros e repetir nas plataformas alvo.
+sondas separadas de decode e leitura em Canvas. Uma segunda sonda distingue
+estilo em cache de recomposição e mede o Worker real diretamente, sem cache,
+ao lado do núcleo raster puro. Uma instrumentação opcional já separa decode,
+composição e codificação dentro do Worker de estilos, sem coletar esses dados
+nas solicitações normais. Uma sonda isolada do `useLayerImageBuffer` também
+mede a troca entre os dois `<img>` e confirma que o buffer antigo permanece
+ativo até o novo aparecer no DOM. O marco C0 segue aberto: faltam medir o
+preview completo e sua pintura/FPS em Wails com documentos reais, ampliar
+combinações/erros e repetir nas plataformas alvo. Um smoke adicional já percorre
+o editor Wails real com imagem sintética e preset de sombra, sem perder o buffer
+ativo. Capturas da região do canvas via DevTools também confirmaram mudança
+de pixels na superfície apresentada. Ainda não substitui medição de FPS nem
+QA com documentos do usuário.
 
 ### C1 — POC Rust/WASM isolada, sem mudança visual
 
@@ -264,6 +274,22 @@ reais da CI e o teste do instalador distribuível.
 - [x] Fechar dispatch exaustivo de efeitos no TS atual independentemente do
   porte; casos não suportados retornam erro estruturado, nunca somem em silêncio.
 - [ ] Cache/cancelamento/orçamentos com benchmark end-to-end, não apenas kernel.
+
+A POC Rust de opacidade de preenchimento já recebe uma região absoluta e
+devolve um tile compacto. Testes nativos e WASM remontam tiles de borda e
+verificam paridade byte a byte com o raster inteiro; o Worker e o diagnóstico
+explícito também percorrem o protocolo regional. Uma fonte pode agora ser
+preparada uma vez no Worker/WASM e reutilizada por vários tiles, com liberação
+e invalidação explícitas. Uma geração monotônica rejeita uploads atrasados e
+identifica tiles obsoletos; o pedido avulso ainda copia a fonte a cada vez.
+Um gate experimental no consumidor TS confere também o ID do pedido e a
+versão visual por tile antes de aceitar a resposta, sem uso no preview normal.
+Um adaptador puro já classifica mudanças de fonte versus aparência/viewport
+usando as identidades existentes do editor; falta ligá-lo aos eventos reais,
+fornecer revisão da pilha e medir o custo dessa ligação antes de C4.
+Uma sonda isolada mediu a diferença entre esses dois modos, mas ainda faltam
+cache do documento, halo, outros efeitos e benchmark end-to-end do editor.
+Portanto, isto não conclui os passes nem o gate de desempenho de C2.
 
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a

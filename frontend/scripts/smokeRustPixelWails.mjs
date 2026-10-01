@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url'
 if (process.platform !== 'win32') throw new Error('Smoke Wails/WebView2 disponível apenas no Windows.')
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)))
+const declaredGoVersion = /^go (\d+\.\d+\.\d+)\r?$/m.exec(readFileSync(join(repoRoot, 'go.mod'), 'utf8'))?.[1]
+if (!declaredGoVersion) throw new Error('go.mod não declara uma versão Go exata.')
+const goEnvironment = { ...process.env, GOTOOLCHAIN: `go${declaredGoVersion}` }
 const staging = mkdtempSync(join(tmpdir(), 'axia-rust-wails-smoke-'))
 const binary = join(staging, 'axia-rust-poc-smoke.exe')
 const webviewData = join(staging, 'webview-data')
@@ -83,7 +86,7 @@ function evaluator(ws) {
 try {
   const build = spawnSync('go', [
     'build', '-tags', 'production', '-trimpath', '-buildvcs=false', '-o', binary, '.'
-  ], { cwd: repoRoot, windowsHide: true, stdio: 'inherit' })
+  ], { cwd: repoRoot, windowsHide: true, stdio: 'inherit', env: goEnvironment })
   if (build.error) throw build.error
   if (build.status !== 0) throw new Error(`go build falhou: ${build.status}`)
 

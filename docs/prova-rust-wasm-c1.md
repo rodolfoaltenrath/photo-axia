@@ -23,6 +23,7 @@ npm run test:rust-poc
 npm run build
 npm run test:rust-bundle
 npm run benchmark:rust-poc -- 512 10
+npm run benchmark:rust-tiles -- 1024 256 10
 ```
 
 Para o smoke de navegador, execute `npm run preview` em outro terminal e
@@ -38,6 +39,62 @@ ou substitui um instalador/portável existente.
 O teste WASM usa o golden `fill-opacity-rounding` e compara todas as 25.856
 combinações de alfa (0–255) e opacidade inteira (0–100) com
 `composeLayerStyleRaster`. Também verifica rejeição de argumentos inválidos.
+O contrato experimental agora aceita uma região em coordenadas absolutas de um
+raster maior e devolve RGBA compacto. O teste remonta tiles com bordas parciais
+e compara byte a byte com o raster TS inteiro para cinco opacidades, incluindo
+alfa zero. Há validação de limites e sobreposição de buffers antes de escrever.
+O Worker e o diagnóstico explícito também exercitam a nova mensagem
+`render-region`. Esse pedido avulso ainda transfere o raster fonte completo.
+O protocolo experimental `stage-source` transfere e copia a fonte uma vez para
+a memória WASM, devolve um identificador temporário e permite vários pedidos
+`render-staged-region` sem copiar novamente a fonte. `release-source`, troca da
+fonte e `dispose` liberam a alocação; identificadores antigos são rejeitados.
+Cada edição, undo/redo e troca de documento devem avançar uma `generation`
+inteira monotônica na sessão do Worker (não reiniciada por documento). O comando
+`invalidate-source` descarta a fonte anterior antes de os novos pixels ficarem
+prontos; `stage-source` também avança a geração antes de validar/alocar, de
+modo que uma falha não preserve pixels obsoletos. Uploads atrasados com geração
+igual ou menor são rejeitados. A resposta de `render-staged-region` inclui
+`sourceId` e `generation`; o futuro chamador deve compará-los com o estado
+atual antes de publicar o tile, pois um render síncrono já concluído não pode
+ser retirado da fila de respostas.
+Cancelamento do Worker só se aplica a pedidos de renderização; comandos de
+invalidação, preparação e liberação são barreiras de correção e não podem ser
+cancelados. Um `init`/`dispose` ainda encerra a sessão inteira.
+O consumidor experimental `RustPixelPocTileGate` fecha a publicação no lado TS:
+ele invalida tokens imediatamente ao mudar fonte ou parâmetros visuais,
+confere ID do pedido, `sourceId` e `generation` da resposta e aceita somente
+o pedido mais recente por chave de tile. O diagnóstico empacotado percorre
+esse gate; testes puros simulam respostas atrasadas e tiles independentes.
+Ao integrá-lo, a chave do tile deve distinguir região e resolução de saída;
+ela não é uma chave de cache persistente do documento.
+O chamador futuro deverá chamar `beginSourceChange()` no momento da edição
+(antes de esperar o Worker) e `beginViewChange()` quando zoom/estilo mudar.
+Isto ainda não está conectado ao preview normal.
+
+O adaptador experimental `rasterPreviewSnapshot`/`RustPixelPocPreviewObserver`
+classifica os sinais que o editor já possui:
+
+| Mudança observada | Ação conservadora |
+| --- | --- |
+| Documento/camada, `previewUrl`/`sourceUrl`, `editToken` ou dimensões do raster | Avançar geração da fonte; descartar tiles anteriores. Undo/redo que restaure outra fonte também entra aqui. |
+| Estilo/luz global, opacidade, modo/visibilidade, transform, fundo ou `stackKey` | Preservar bytes da fonte; invalidar os tokens de vista. |
+| Escala **visual animada**, DPR, scroll/pan ou tamanho do viewport | Preservar fonte; invalidar os tokens da grade/área visível. |
+
+O mapeamento corresponde aos sinais de `useLayerStyleRaster` (fonte/estilo),
+`useCanvasNavigation` (zoom/pan), `refreshLayerPreview` e
+`applyHistorySteps`/`resetEditorScopeRuntime` (preview/histórico/troca de
+escopo). O `stackKey` deve ser fornecido pelo futuro chamador e mudar quando
+outra camada afetar a composição; o adaptador **não** calcula a pilha.
+Ao conectá-lo a pan/zoom, passar um hash de estilos memoizado e
+atualizar só a identidade do viewport por frame; não recalcular o hash de
+estilos em cada evento de scroll.
+Alterar pixels mantendo URL e dimensões exige mudar `editToken`, ou a troca
+ficaria invisível. Texto/forma ainda não são fontes suportadas por esta POC.
+O diagnóstico usa snapshots sintéticos para exercitar o adaptador no Wails;
+nenhum `watch` adicional foi instalado no `App.vue` ou no caminho quente.
+Há apenas uma fonte preparada por runtime, sem ownership do documento Rust.
+Isto ainda não prova desempenho do compositor real ou estilos combinados.
 O pré-build gera o `.wasm` em `target/`, copia-o para `frontend/src/generated/`
 (ambos ignorados pelo Git) e deixa o Vite emitir um asset local com hash.
 `main.ts` só importa o diagnóstico quando a URL contém `?axiaRustPoc=1`;
@@ -49,6 +106,10 @@ descartar o runtime. O harness Node executa
 o **mesmo módulo de Worker** por uma ponte mínima de mensagens; valida
 transferência dos buffers (a fonte é destacada da thread de origem), erros e
 descarte. O teste de Worker passou 20 execuções consecutivas nesta máquina.
+Em 2026-10-01, o diagnóstico ampliado com `render-region` e fonte reutilizável passou no
+executável Wails/WebView2 temporário, com o Go fixado pelo `go.mod`; o build
+Vite e a integridade do bundle passaram na mesma rodada. Isto continua sendo
+smoke de protocolo, não validação visual/manual do compositor.
 Em 2026-09-30, o build Vite e o diagnóstico em Edge headless servido por
 `vite preview` passaram (`data-axia-rust-poc="passed"`). Um teste anterior
 com `--dump-dom --virtual-time-budget` produziu um timeout artificial do
@@ -92,6 +153,16 @@ duas execuções Node; ele deve ser reutilizado. O p95 de apenas 10 amostras
 é instável. Isto **não** compara rotas equivalentes TS/Rust, não mede WebView,
 Canvas, decode, UI/FPS ou consumo de memória e não autoriza trocar o preview.
 Repetir com Node fixado, hardware alvo e documentos reais antes do gate C1.
+
+Uma sonda separada (`npm run benchmark:rust-tiles -- 1024 256 10`) compara
+pedidos de tile que reenviam a fonte com pedidos que a reutilizam. Em
+2026-10-01, Windows x64/i7-3770/Node fixado 24.14.1, fonte RGBA 1024²,
+tile 256² e 10 amostras após três aquecimentos, a mediana total foi
+2,532 ms com reenvio e 0,717 ms com fonte reutilizada; preparar a fonte
+custou 5,012 ms uma vez. A sonda inclui mensagens do Worker e cópia do
+chamador; não mede Canvas, UI/FPS, invalidação de cache ou documentos reais.
+As amostras são poucas e os modos são executados em sequência fixa; repetir
+em máquinas alvo antes de usar esses números como critério de produto.
 
 Esta comparação prova apenas o passe sem efeitos de opacidade de preenchimento
 em um fundo transparente. Não prova paridade para estilos combinados, Canvas,

@@ -25,6 +25,76 @@ pub fn apply_fill_opacity_in_place(rgba: &mut [u8], fill_opacity: u8) -> Result<
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RasterRegion {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+/// Writes a tightly packed output tile sampled at absolute source coordinates.
+/// Validation happens before the first write, so invalid requests preserve output.
+pub fn apply_fill_opacity_region(
+    source: &[u8],
+    source_width: usize,
+    source_height: usize,
+    region: RasterRegion,
+    output: &mut [u8],
+    fill_opacity: u8,
+) -> Result<(), &'static str> {
+    if fill_opacity > 100 {
+        return Err("invalid-fill-opacity");
+    }
+    let source_bytes = source_width
+        .checked_mul(source_height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("invalid-rgba-length")?;
+    let output_bytes = region
+        .width
+        .checked_mul(region.height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("invalid-rgba-length")?;
+    if source_width == 0
+        || source_height == 0
+        || source.len() != source_bytes
+        || output.len() != output_bytes
+    {
+        return Err("invalid-rgba-length");
+    }
+    if region.width == 0
+        || region.height == 0
+        || region
+            .x
+            .checked_add(region.width)
+            .is_none_or(|right| right > source_width)
+        || region
+            .y
+            .checked_add(region.height)
+            .is_none_or(|bottom| bottom > source_height)
+    {
+        return Err("invalid-region");
+    }
+
+    let fill = f64::from(fill_opacity) / 100.0;
+    for row in 0..region.height {
+        for column in 0..region.width {
+            let source_index = ((region.y + row) * source_width + region.x + column) * 4;
+            let output_index = (row * region.width + column) * 4;
+            let pixel = &source[source_index..source_index + 4];
+            let target = &mut output[output_index..output_index + 4];
+            let alpha = (f64::from(pixel[3]) * fill + 0.5).floor() as u8;
+            if alpha == 0 {
+                target.fill(0);
+            } else {
+                target.copy_from_slice(pixel);
+                target[3] = alpha;
+            }
+        }
+    }
+    Ok(())
+}
+
 const MAX_POC_BYTES: usize = 64 * 1024 * 1024;
 
 /// Allocates a byte buffer for the internal WASM adapter. A zero return means
@@ -71,6 +141,87 @@ pub unsafe extern "C" fn axia_poc_fill_opacity(ptr: *mut u8, len: usize, fill_op
     }
 }
 
+/// Returns 0 on success, 1 for bad length/dimensions, 2 for bad opacity,
+/// 3 for null ptr, 4 for out-of-bounds region, 5 for overlapping buffers.
+/// # Safety
+/// Both pointer/length pairs must be live allocations from `axia_poc_alloc`.
+/// They must be distinct and freed once each by the private JS adapter.
+#[no_mangle]
+pub unsafe extern "C" fn axia_poc_fill_opacity_region(
+    source_ptr: *const u8,
+    source_len: usize,
+    source_width: u32,
+    source_height: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    output_ptr: *mut u8,
+    output_len: usize,
+    fill_opacity: u32,
+) -> u32 {
+    if source_ptr.is_null() || output_ptr.is_null() {
+        return 3;
+    }
+    if source_len == 0
+        || source_len > MAX_POC_BYTES
+        || !source_len.is_multiple_of(4)
+        || output_len == 0
+        || output_len > MAX_POC_BYTES
+        || !output_len.is_multiple_of(4)
+    {
+        return 1;
+    }
+    if fill_opacity > 100 {
+        return 2;
+    }
+    let region = RasterRegion {
+        x: x as usize,
+        y: y as usize,
+        width: width as usize,
+        height: height as usize,
+    };
+    if region.width == 0
+        || region.height == 0
+        || region
+            .x
+            .checked_add(region.width)
+            .is_none_or(|right| right > source_width as usize)
+        || region
+            .y
+            .checked_add(region.height)
+            .is_none_or(|bottom| bottom > source_height as usize)
+    {
+        return 4;
+    }
+    let source_start = source_ptr as usize;
+    let output_start = output_ptr as usize;
+    let Some(source_end) = source_start.checked_add(source_len) else {
+        return 1;
+    };
+    let Some(output_end) = output_start.checked_add(output_len) else {
+        return 1;
+    };
+    if source_start < output_end && output_start < source_end {
+        return 5;
+    }
+    let source = std::slice::from_raw_parts(source_ptr, source_len);
+    let output = std::slice::from_raw_parts_mut(output_ptr, output_len);
+    match apply_fill_opacity_region(
+        source,
+        source_width as usize,
+        source_height as usize,
+        region,
+        output,
+        fill_opacity as u8,
+    ) {
+        Ok(()) => 0,
+        Err("invalid-fill-opacity") => 2,
+        Err("invalid-region") => 4,
+        Err(_) => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +246,57 @@ mod tests {
         assert!(apply_fill_opacity_in_place(&mut rgba, 101).is_err());
         assert_eq!(rgba, [10, 20, 30, 255]);
         assert!(apply_fill_opacity_in_place(&mut rgba[..3], 50).is_err());
+    }
+
+    #[test]
+    fn region_tiles_reassemble_to_the_full_raster() {
+        let mut source = vec![0; 7 * 5 * 4];
+        for (index, pixel) in source.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            pixel.copy_from_slice(&[
+                (index * 17) as u8,
+                (index * 31) as u8,
+                (index * 47) as u8,
+                (index * 19) as u8,
+            ]);
+        }
+        let mut expected = source.clone();
+        apply_fill_opacity_in_place(&mut expected, 37).unwrap();
+        let mut assembled = vec![0; source.len()];
+        for y in (0..5).step_by(2) {
+            for x in (0..7).step_by(3) {
+                let region = RasterRegion {
+                    x,
+                    y,
+                    width: (7 - x).min(3),
+                    height: (5 - y).min(2),
+                };
+                let mut tile = vec![0; region.width * region.height * 4];
+                apply_fill_opacity_region(&source, 7, 5, region, &mut tile, 37).unwrap();
+                for row in 0..region.height {
+                    let destination = ((y + row) * 7 + x) * 4;
+                    let tile_row = row * region.width * 4;
+                    assembled[destination..destination + region.width * 4]
+                        .copy_from_slice(&tile[tile_row..tile_row + region.width * 4]);
+                }
+            }
+        }
+        assert_eq!(assembled, expected);
+    }
+
+    #[test]
+    fn invalid_region_preserves_output() {
+        let source = [10, 20, 30, 255, 40, 50, 60, 0];
+        let mut output = [99, 99, 99, 99];
+        let region = RasterRegion {
+            x: 2,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        assert_eq!(
+            apply_fill_opacity_region(&source, 2, 1, region, &mut output, 50),
+            Err("invalid-region")
+        );
+        assert_eq!(output, [99; 4]);
     }
 }
