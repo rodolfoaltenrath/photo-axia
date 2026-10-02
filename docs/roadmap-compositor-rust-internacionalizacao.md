@@ -318,6 +318,22 @@ linguagem, nem do preview. Detalhes e limites estão na
 responsabilidade do chamador: este passe não implementa sozinho composição
 do documento, grupos, transformações, cache de backdrop ou estilos com halo.
 
+Uma terceira fatia, **Sobreposição de cor**, agora utiliza a mesclagem CPU Rust
+nos seis modos atuais de efeito (normal, multiply, screen, overlay, darken,
+lighten). O contrato distingue a fonte/máscara original preparada do target
+compacto já composto, mantendo o efeito com fill 0% e sem reaplicar preenchimento.
+Um golden isolado, 2.359.296 pixels comparados byte a byte contra TS, tiles de
+borda, efeito interno anterior e passes encadeados passaram. O Worker e o
+diagnóstico Wails/WebView2 também percorrem essa operação, com descarte por
+versão visual e reaproveitamento da fonte. A sonda Node 1024² para fill → cor,
+incluindo cópias intermediárias entre duas chamadas WASM, registrou medianas
+de 158,08 ms no TS e 87,10 ms no adapter Rust. Isso não comprova fluidez no
+editor: o kernel ainda precisa de otimização/agendamento por região antes do
+rollout. Os detalhes estão na [prova Rust/WASM](prova-rust-wasm-c1.md).
+Esse módulo não porta os modos de composição do documento/Canvas nem liga
+Rust ao preview normal. Cache agregado, halos, demais efeitos e gates C2
+continuam abertos; a ABI permanece experimental e sem posse do documento.
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

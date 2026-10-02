@@ -12,6 +12,15 @@
         "rgba": [10, 20, 30, 51, 90, 80, 70, 128] }
     },
     {
+      "id": "color-overlay-partial-fill",
+      "source": { "width": 4, "height": 1, "rgba": [40, 60, 80, 255, 90, 110, 130, 128, 170, 150, 120, 64, 77, 88, 99, 0] },
+      "styles": { "enabled": true, "fillOpacity": 60,
+        "effects": [{ "type": "color-overlay", "id": "color-v1", "color": "#ff8000", "opacity": 75 }] },
+      "globalLight": { "angle": 0, "altitude": 30 }, "resolutionScale": 1,
+      "expected": { "width": 4, "height": 1, "offsetX": 0, "offsetY": 0,
+        "rgba": [219, 117, 13, 229, 200, 122, 43, 144, 222, 137, 47, 79, 0, 0, 0, 0] }
+    },
+    {
       "id": "directional-shadow-with-halo",
       "source": { "width": 1, "height": 1, "rgba": [200, 120, 40, 255] },
       "styles": {

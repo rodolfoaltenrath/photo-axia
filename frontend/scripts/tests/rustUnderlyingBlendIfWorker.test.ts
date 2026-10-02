@@ -81,12 +81,38 @@ test('Worker Blend If transfere backdrop, reutiliza fonte e protege publicação
       region, backdrop: new ArrayBuffer(12), blendIf: { ...blendIf, shadows: [0, 0] } })
     assert.ok(recovered.type === 'rendered-staged-region')
     assert.deepEqual([...new Uint8Array(recovered.rgba)], [10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 0])
+    const target = new Uint8Array(12) // Zero fill; original mask remains in the staged source.
+    const effect = { color: [200, 120, 40, 255] as [number, number, number, number],
+      opacity: 50, blendMode: 'normal' as const }
+    const colorRequest = send({ type: 'color-overlay-staged-region', sourceId: staged.sourceId,
+      region, target: target.buffer, effect }, [target.buffer])
+    assert.equal(target.byteLength, 0, 'target transferido, sem reenviar a máscara original')
+    const colorToken = gate.captureTile('color', colorRequest.id)
+    assert.ok(colorToken)
+    const colored = await colorRequest
+    assert.ok(colorToken.isCurrent(colored))
+    assert.equal(colored.sourceId, staged.sourceId)
+    assert.equal(colored.generation, generation)
+    assert.deepEqual([...new Uint8Array(colored.rgba)], [200, 120, 40, 128, 200, 120, 40, 128, 0, 0, 0, 0])
+    gate.beginViewChange() // Appearance changed, but the original source is reusable.
+    assert.equal(colorToken.isCurrent(colored), false)
+    const invalidColor = await send({ type: 'color-overlay-staged-region', sourceId: staged.sourceId,
+      region, target: new ArrayBuffer(12), effect: { ...effect, opacity: -1 } })
+    assert.deepEqual(invalidColor, { type: 'error', id: invalidColor.id, code: 'invalid-input' })
+    const recoveredColor = await send({ type: 'color-overlay-staged-region', sourceId: staged.sourceId,
+      region, target: new ArrayBuffer(12), effect: { ...effect, opacity: 100 } })
+    assert.ok(recoveredColor.type === 'rendered-staged-region')
+    assert.deepEqual([...new Uint8Array(recoveredColor.rgba)],
+      [200, 120, 40, 255, 200, 120, 40, 255, 0, 0, 0, 0])
     const invalidated = await send({ type: 'invalidate-source', generation: gate.beginSourceChange() })
     assert.equal(invalidated.type, 'source-invalidated')
     assert.equal(currentToken.isCurrent(updated), false)
     const stale = await send({ type: 'blend-if-staged-region', sourceId: staged.sourceId,
       region, backdrop: new ArrayBuffer(12), blendIf })
     assert.deepEqual(stale, { type: 'error', id: stale.id, code: 'invalid-input' })
+    const staleColor = await send({ type: 'color-overlay-staged-region', sourceId: staged.sourceId,
+      region, target: new ArrayBuffer(12), effect })
+    assert.deepEqual(staleColor, { type: 'error', id: staleColor.id, code: 'invalid-input' })
     assert.equal((await send({ type: 'dispose' })).type, 'disposed')
   } finally {
     for (const entry of pending.values()) clearTimeout(entry.timeout)

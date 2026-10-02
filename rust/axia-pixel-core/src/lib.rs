@@ -2,6 +2,8 @@
 //! The caller owns the copied input buffer and must free it after use.
 
 pub mod blend_if;
+pub mod color_overlay;
+pub mod composite;
 
 /// Matches the current TS fill-only pass on a transparent target. A source
 /// pixel whose scaled alpha rounds to zero does not contribute hidden RGB.

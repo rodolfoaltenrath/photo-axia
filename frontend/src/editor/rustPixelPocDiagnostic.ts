@@ -76,6 +76,16 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     if (staged.type !== 'source-staged' || !gate.adoptSource(staged)) {
       throw new Error('Worker Rust não carregou a fonte reutilizável atual.')
     }
+    const target = new Uint8Array(8)
+    const colorRequest = send({ type: 'color-overlay-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 }, target: target.buffer,
+      effect: { color: [200, 120, 40, 255], opacity: 50, blendMode: 'normal' } }, [target.buffer])
+    const colorToken = gate.captureTile('sobreposição-direita', colorRequest.id)
+    const colored = await colorRequest
+    if (!colorToken?.isCurrent(colored) || target.byteLength !== 0 ||
+        [...new Uint8Array(colored.rgba)].join(',') !== '200,120,40,128,0,0,0,0') {
+      throw new Error('Worker Rust produziu Sobreposição de cor diferente do golden.')
+    }
     const backdrop = new Uint8Array([75, 0, 0, 255, 100, 0, 0, 0])
     const blendRequest = send({ type: 'blend-if-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, backdrop: backdrop.buffer,

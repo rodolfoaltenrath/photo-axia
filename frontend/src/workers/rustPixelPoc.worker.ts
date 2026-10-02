@@ -54,7 +54,8 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
   const runtime = runtimePromise
   // Source lifecycle commands are correctness barriers, never cancellable.
   const isRender = request.type === 'render' || request.type === 'render-region' ||
-    request.type === 'render-staged-region' || request.type === 'blend-if-staged-region'
+    request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
+    request.type === 'color-overlay-staged-region'
   if (isRender) pending.add(request.id)
   void runtime.then((engine) => {
     if (current !== generation || cancelled.has(request.id)) {
@@ -77,11 +78,24 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
       reply({ type: 'source-released', id: request.id, sourceId: request.sourceId })
       return
     }
-    if (request.type === 'render-staged-region' || request.type === 'blend-if-staged-region') {
-      const { rgba, timings, generation: sourceGeneration } = request.type === 'blend-if-staged-region'
-        ? engine.blendIfStagedRegion(request.sourceId, request.region,
-          new Uint8Array(request.backdrop), request.blendIf)
-        : engine.renderStagedRegion(request.sourceId, request.region, request.fillOpacity)
+    if (request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
+        request.type === 'color-overlay-staged-region') {
+      const result = (() => {
+        switch (request.type) {
+          case 'blend-if-staged-region':
+            return engine.blendIfStagedRegion(request.sourceId, request.region,
+              new Uint8Array(request.backdrop), request.blendIf)
+          case 'color-overlay-staged-region':
+            return engine.colorOverlayStagedRegion(request.sourceId, request.region,
+              new Uint8Array(request.target), request.effect)
+          case 'render-staged-region':
+            return engine.renderStagedRegion(request.sourceId, request.region, request.fillOpacity)
+          default:
+            request satisfies never
+            throw new RustPixelPocError('invalid-input')
+        }
+      })()
+      const { rgba, timings, generation: sourceGeneration } = result
       reply({ type: 'rendered-staged-region', id: request.id, rgba: rgba.buffer as ArrayBuffer,
         width: request.region.width, height: request.region.height, sourceId: request.sourceId,
         generation: sourceGeneration, timings }, [rgba.buffer])

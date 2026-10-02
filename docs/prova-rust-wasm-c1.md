@@ -250,3 +250,92 @@ GPU, cache da pilha e documentos reais estão fora desta sonda.
 A feature normal de Mesclar se continua utilizando TS/Canvas. C0/C1/C2 seguem
 abertos até os gates de paridade, memória, plataformas e pacote distribuível;
 este segundo passe só roda na prova/diagnóstico explícitos.
+
+## Terceira fatia: Sobreposição de cor e mesclagem de efeitos — C2 parcial
+
+Em 2026-10-02, `color_overlay.rs` passou a reproduzir o passe puro de
+Sobreposição de cor. `composite.rs` fornece mesclagem de efeito com RGBA8 reto
+nos seis modos já suportados: normal, multiply, screen, overlay, darken e
+lighten. A ordem de operações f64 e os arredondamentos positivos equivalentes
+a `Math.round` foram mantidos. Isso **não** é ainda a composição das camadas
+do documento, nem prova equivalência com `globalCompositeOperation` do Canvas.
+
+Contrato da ABI interna `axia_poc_color_overlay_region`:
+
+- Fonte RGBA original preparada, dimensões e região absoluta de origem.
+  Seu alfa é a máscara do efeito; não usar o alfa pós-preenchimento/estilos.
+- Target RGBA compacto com a aparência já composta no estágio de sobreposições;
+  mesmo tamanho/densidade da região. Ele pode incluir fill opacity e efeitos
+  internos anteriores. O passe não repete esses estágios.
+- Cor RGBA com quatro bytes, opacidade finita **fracionária** de 0 a 100 e
+  modo inteiro 0=normal, 1=multiply, 2=screen, 3=overlay, 4=darken, 5=lighten.
+  Parsing/normalização de cor e documento continuam no chamador TS; a prova
+  de fill opacity anterior ainda aceita apenas preenchimentos inteiros.
+- Saída distinta com os mesmos bytes do target quando o efeito não contribui,
+  preservando inclusive RGB oculto. Fonte e target não são modificados.
+- Status 0=sucesso, 1=dimensões/comprimentos inválidos, 2=efeito inválido,
+  3=ponteiro nulo, 5=saída sobreposta a uma entrada. Validar antes de escrever.
+
+O Worker aceita `color-overlay-staged-region` e transfere somente o target do
+tile, reutilizando a fonte original preparada. Retorna `rendered-staged-region`
+com ID/geração e timings do adapter. Alterar parâmetros do efeito exige avançar
+a versão visual do gate, mesmo sem trocar a fonte; uma resposta anterior não
+pode substituir o efeito mais recente. Cancelamento segue limitado a pedidos
+pendentes, nunca interrompe um kernel WASM síncrono.
+
+São passes pontuais alinhados na grade de entrada: sem reamostragem, halo ou
+transformação. Cada buffer tem limite individual de 64 MiB, **não** orçamento
+agregado fechado. A ABI continua confiando em pares ponteiro/comprimento
+alocados pelo adapter, sem validação nativa de handles. O runtime guarda uma
+fonte: encadear Mesclar se subjacente exige preparar os pixels **já estilizados**,
+enquanto múltiplas sobreposições precisam manter a máscara **original**. Os testes
+exercitam essa distinção; não existe ainda executor de pilha/batch para ocultá-la.
+
+Validação desta fatia:
+
+- **13 testes nativos Rust**, Clippy sem avisos e formatação verificada.
+- **480 testes frontend** e typecheck das novas suítes/benchmark.
+- **29 testes WASM/Worker**: 16 anteriores e 13 novos. Seis matrizes cobrem
+  256 alfas × 256 valores RGB × seis configurações de preenchimento/cor/opacidade
+  × seis modos = **2.359.296 pixels comparados byte a byte**. Não é uma
+  enumeração de todas as possíveis cores RGBA; inclui limiares RGB 127/128,
+  fill 0/1/37,5/60/100, opacidade fracionária e alfa da cor 1/128/255.
+- Novo golden fixo `color-overlay-partial-fill` no corpus compartilhado,
+  preservando os demais esperados; tiles de borda em raster 7×5 após efeito
+  interno, duas sobreposições usando a máscara original e sequência
+  fill → sobreposição → Mesclar se. Nenhuma tolerância nesses testes puros.
+- Transparência, RGB oculto, entradas somente leitura, fonte reaproveitada,
+  limites/overlap/NaN/cor incompleta ou esparsa, erro seguido de recuperação e
+  geração invalidada. O teste Worker existente também cobre o novo comando,
+  transferência do target e mudança visual sem reenviar a fonte.
+- Build/bundle íntegros, WASM **28.642 bytes**, e diagnóstico explícito no
+  executável temporário de produção Wails/WebView2 passaram, incluindo a cor.
+  Não foi produzido/validado instalador nesta fatia.
+
+O benchmark `npm run benchmark:rust-color-overlay -- 1024 20` compara o
+compositor TS atual com fill + um efeito e duas chamadas do adapter Rust para
+a mesma saída. **Inclui** alocações, cópia do preenchimento WASM → JS, reenvio
+do target JS → WASM e cópia final; preparar a fonte ocorre uma vez, à parte.
+Alterna ordem, faz três aquecimentos e confere bytes fora da janela medida.
+Windows 10.0.26200/i7-3770/Node fixado 24.14.1, RGBA sintético 1024²,
+fill 60%, cor `#cb47958f`, opacidade 73,5%, modo overlay:
+
+| Etapa | Mediana | p95 amostral (20 amostras) |
+| --- | ---: | ---: |
+| Compositor TS atual, preenchimento + sobreposição | 158,081 ms | 174,552 ms |
+| Adapter Rust/WASM, ambas as chamadas e cópias | 87,099 ms | 103,977 ms |
+| Soma dos dois kernels Rust por amostra | 83,955 ms | 100,891 ms |
+| Cópia do target para WASM | 0,574 ms | 1,056 ms |
+| Cópias de saída, intermediária + final | 2,124 ms | 3,548 ms |
+
+Preparar a fonte custou **1,512 ms** uma vez. Medianas de componentes não se
+somam para reconstruir a mediana total. O TS passa pelo seu pipeline atual
+(máscara/insets/normalização/alocação); Rust usa configurações já convertidas
+e fonte preparada. A sonda compara implementações, não ganho isolado de
+linguagem/SIMD. São tempos de CPU/adapter em Node: não incluem Worker/mensagens,
+Canvas, encode/decode, UI, GPU, memória de pico ou documentos reais. Um passe
+de ~87 ms em 1024² não autoriza declarar interação fluida; região/agendamento,
+batch sem cópias intermediárias e profiling dos kernels ainda são trabalho futuro.
+
+O preview normal continua em TS/Canvas/DOM. C0/C1/C2 não foram encerrados e
+o novo passe permanece restrito aos testes e diagnóstico explícito.
