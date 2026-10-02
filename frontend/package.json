@@ -33,6 +33,8 @@
     "benchmark:rust-tiles": "node --experimental-strip-types benchmarks/rustPixelTileReuse.mjs",
     "prebenchmark:rust-blend-if": "node scripts/buildRustPixelPoc.mjs",
     "benchmark:rust-blend-if": "node --experimental-strip-types benchmarks/rustUnderlyingBlendIf.ts",
+    "prebenchmark:rust-this-layer-blend-if": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-this-layer-blend-if": "node --experimental-strip-types benchmarks/rustThisLayerBlendIf.ts",
     "prebenchmark:rust-color-overlay": "node scripts/buildRustPixelPoc.mjs",
     "benchmark:rust-color-overlay": "node --experimental-strip-types benchmarks/rustColorOverlay.ts",
     "prebenchmark:rust-pattern-overlay": "node scripts/buildRustPixelPoc.mjs",

@@ -457,3 +457,108 @@ passo ao preview. Os quatro buffers têm limite **individual**, não teto agrega
 do compositor; liberar alocações não encolhe a memória linear do WASM.
 O contrato de ponteiros continua confiando nas alocações do adapter, sem
 validação nativa de handles. C0/C1/C2 seguem abertos e o preview normal não mudou.
+
+## Quinta fatia: Mesclar se — Esta camada — C2 parcial
+
+Em 2026-10-02, `blend_if.rs` passou a executar também o filtro da própria camada,
+que no TS é o último passe de `composeLayerStyleRaster`. Reutiliza a mesma
+matemática de canal/faixas da fatia subjacente, sem consultar backdrop. O tipo
+Rust comum agora é `BlendIfConfig`; `UnderlyingBlendIf` permanece como alias
+de compatibilidade. No adapter TS, `RustPixelPocBlendIf` compartilha configuração
+e validação; `RustPixelPocUnderlyingBlendIf` também permanece como alias.
+O passe anterior e seus testes não mudaram de semântica.
+
+Contrato de `axia_poc_blend_if_this_layer_region`:
+
+- Raster RGBA8 reto **já composto/estilizado**, dimensões e região absoluta na
+  grade preparada, saída distinta. Sem buffer de máscara/backdrop adicional.
+- Canal 0=cinza, 1=R, 2=G, 3=B; pares normalizados de sombras/highlights com
+  quatro marcadores inteiros de 0 a 255 e ordenação global. A mesma validação
+  Rust dos dois passes rejeita canal/faixas inválidos antes de escrever.
+- Filtra alfa conforme o RGB **desse próprio raster**. O canal cinza mantém
+  `R * 0.2126 + G * 0.7152 + B * 0.0722`, sem arredondar luma intermediária.
+  Marcadores rígidos mantêm comparações estritas; divididos mantêm a rampa TS.
+- Copia/preserva RGB, inclusive oculto; pixels com alfa zero continuam zero.
+  Reduzir alfa a zero não limpa RGB, ao contrário do fill sobre transparência.
+- Status 0=sucesso, 1=dimensões/comprimentos/região inválidos, 2=canal/faixas,
+  3=ponteiro nulo, 5=saída sobreposta à fonte, inclusive overlap parcial.
+
+O Worker aceita `blend-if-this-layer-staged-region`, reutiliza a fonte e retorna
+`rendered-staged-region` com ID/geração/timings. Alterações **só** de faixas/canal
+podem reutilizar o raster preparado, mas exigem avançar a versão visual do gate.
+Mudanças no conteúdo, preenchimento, efeito, resolução ou padding que alterem
+o raster estilizado exigem **outra fonte/geração**, não só nova vista.
+
+Consequência para o futuro cache/observador: o `sourceKey` desse estágio deve
+identificar o raster derivado com seus estilos/fill/halo/densidade. A chave da
+imagem/máscara original usada pelas sobreposições não basta. O observador
+experimental ainda não foi ligado a esse estágio no editor; não reaproveitar
+automaticamente sua classificação de alterações da máscara como contrato de
+fonte estilizada. O futuro executor de estágios deve guardar essa distinção.
+
+Ordem preservada: fill/efeitos → Esta camada → transformação para documento
+→ Camada abaixo. Os testes de encadeamento usam entradas alinhadas na mesma
+grade, **sem transformar/reamostrar**; não provam a fronteira de transformação.
+No POC há uma única fonte preparada: para encadear operações, testes/chamador
+preparam o raster estilizado e depois a saída filtrada. Não existe ainda um
+executor nativo de pilha/batch/cache que gerencie esses estágios.
+
+Os filtros de Esta camada e Camada abaixo precisam conservar arredondamentos
+separados. Exemplo: alfa 1 e duas opacidades 0,5 produzem
+`round(round(1 * 0.5) * 0.5) = 1`; fundir em `round(1 * 0.25)` produziria 0.
+O teste nativo, a sequência WASM e o pipeline TS fixam esse contrato.
+
+Validação desta fatia:
+
+- **19 testes Rust**, Clippy sem avisos e formatação verificada.
+- **481 testes frontend** e typecheck das novas suítes/benchmark.
+- **56 testes WASM/Worker**: 43 anteriores e 13 novos. As quatro matrizes
+  comparam 256 alfas × 256 valores/canal × oito faixas = **2.097.152 pixels**,
+  incluindo luma fracionária, extremos e marcadores coincidentes/divididos.
+- Novo golden congelado `blend-if-this-layer-red-channel`; comparador
+  independente confirma os **13 casos** do corpus, sem regenerar os anteriores.
+  A matriz usa o helper TS real de opacidade e o mesmo laço de alfa do passe
+  privado; golden e combinações também confrontam o compositor TS público.
+- Tiles 7×5, fonte somente leitura, RGB oculto e todos os 256 alfas na
+  sequência dos dois filtros. Cor → padrão → Esta camada → Camada abaixo
+  foi confrontada com o pipeline TS completo nos quatro canais.
+- Sombra externa preparada por TS demonstra que o filtro usa a aparência
+  estilizada expandida, inclusive halo; não a máscara/RGB original. Isso não
+  porta sombra/halo para Rust nem autoriza apagar o compositor TS.
+- ABI/adapter rejeitam overlap parcial, comprimentos, região, canal, pares
+  incompletos/esparsos, NaN/Infinity, valores fracionários e faixas fora da ordem.
+  Erro seguido de recuperação, invalidação/dispose e preservação da fonte passaram.
+- Worker real cobre alteração de faixas sem reupload, pedidos ultrapassados,
+  fonte substituída/liberada e encadeamento do alfa filtrado no passe subjacente.
+  O novo passe tem `copyInMs = 0` depois de preparar a fonte.
+- Build/bundle íntegros com WASM **35.950 bytes** e diagnóstico explícito no
+  executável temporário Wails/WebView2 passaram, incluindo Esta camada.
+  Nenhum instalador novo foi produzido/validado nesta fatia.
+
+A sonda `npm run benchmark:rust-this-layer-blend-if -- 1024 20` compara o laço
+TS de referência que chama `layerStyleBlendIfOpacity` com o adapter Rust sobre
+fonte preparada. Usa três aquecimentos, alterna a ordem e confere bytes fora
+da janela medida. Não executa o compositor TS inteiro: fill/efeitos/Canvas
+estão fora dos dois modos. Inclui cópia da fonte no TS e alocação/cópia de
+saída/liberação no adapter Rust; preparação da fonte é custo separado.
+Windows 10.0.26200/i7-3770/Node fixado 24.14.1, raster sintético 1024², canal
+cinza, sombras [50,100] e highlights [180,240]:
+
+| Etapa | Mediana | p95 amostral (20 amostras) |
+| --- | ---: | ---: |
+| Laço TS de referência + helper atual + cópia da fonte | 132,412 ms | 139,968 ms |
+| Adapter Rust/WASM, fonte preparada + saída | 19,543 ms | 31,390 ms |
+| Kernel Rust dentro do adapter | 18,255 ms | 29,002 ms |
+| Cópia de saída de WASM | 1,037 ms | 1,271 ms |
+
+Preparar a fonte custou **1,589 ms** uma vez. Não somar medianas dos componentes.
+O helper TS normaliza a configuração por pixel; Rust valida marcadores uma vez
+por pedido. A comparação não isola linguagem/SIMD e não é uma medição de FPS:
+não inclui Worker/mensagens, cache do documento, fontes/efeitos anteriores,
+transformação, Canvas/GPU, encode/decode ou pico de memória.
+
+Fonte e saída têm limite individual de 64 MiB; orçamento agregado e handles
+nativos seguros seguem abertos. Cancelamento só interrompe pedidos pendentes,
+nunca o kernel WASM síncrono. Esta camada, Camada abaixo, preenchimento,
+sobreposição de cor e padrão estão disponíveis na prova isolada, **não** no
+renderizador normal. C0/C1/C2 não foram concluídos.

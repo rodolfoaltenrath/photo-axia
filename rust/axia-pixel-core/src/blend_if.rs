@@ -1,5 +1,5 @@
-//! Underlying-layer Blend If pass on aligned straight-alpha RGBA8 buffers.
-//! The backdrop is a compact tile of the already-composed lower layers.
+//! Blend If passes on aligned straight-alpha RGBA8 buffers. This-layer filtering
+//! reads styled pixels; underlying-layer filtering reads a compact backdrop.
 
 use crate::{validate_raster_region, RasterRegion, MAX_POC_BYTES};
 
@@ -26,13 +26,16 @@ impl TryFrom<u32> for BlendIfChannel {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct UnderlyingBlendIf {
+pub struct BlendIfConfig {
     pub channel: BlendIfChannel,
     pub shadows: [u8; 2],
     pub highlights: [u8; 2],
 }
 
-impl UnderlyingBlendIf {
+/// Compatibility name for the first experimental pass.
+pub type UnderlyingBlendIf = BlendIfConfig;
+
+impl BlendIfConfig {
     fn validate(self) -> Result<(), &'static str> {
         if self.shadows[0] > self.shadows[1]
             || self.shadows[1] > self.highlights[0]
@@ -43,17 +46,17 @@ impl UnderlyingBlendIf {
         Ok(())
     }
 
-    fn opacity(self, backdrop: &[u8]) -> f64 {
+    fn opacity(self, pixel: &[u8]) -> f64 {
         // Keep TS's evaluation order and f64 precision, including gray luma.
         let value = match self.channel {
             BlendIfChannel::Gray => {
-                f64::from(backdrop[0]) * 0.2126
-                    + f64::from(backdrop[1]) * 0.7152
-                    + f64::from(backdrop[2]) * 0.0722
+                f64::from(pixel[0]) * 0.2126
+                    + f64::from(pixel[1]) * 0.7152
+                    + f64::from(pixel[2]) * 0.0722
             }
-            BlendIfChannel::Red => f64::from(backdrop[0]),
-            BlendIfChannel::Green => f64::from(backdrop[1]),
-            BlendIfChannel::Blue => f64::from(backdrop[2]),
+            BlendIfChannel::Red => f64::from(pixel[0]),
+            BlendIfChannel::Green => f64::from(pixel[1]),
+            BlendIfChannel::Blue => f64::from(pixel[2]),
         }
         .clamp(0.0, 255.0);
         let mut opacity: f64 = 1.0;
@@ -76,6 +79,140 @@ impl UnderlyingBlendIf {
             });
         }
         opacity.clamp(0.0, 1.0)
+    }
+}
+
+/// Filters the already-styled source by its own RGB, preserving hidden RGB.
+/// Fill/effects must have run before this pass; this does not filter their mask.
+pub fn apply_this_layer_region(
+    source: &[u8],
+    source_width: usize,
+    source_height: usize,
+    region: RasterRegion,
+    output: &mut [u8],
+    config: BlendIfConfig,
+) -> Result<(), &'static str> {
+    config.validate()?;
+    validate_raster_region(
+        source.len(),
+        source_width,
+        source_height,
+        region,
+        output.len(),
+    )?;
+    for row in 0..region.height {
+        for column in 0..region.width {
+            let source_index = ((region.y + row) * source_width + region.x + column) * 4;
+            let offset = (row * region.width + column) * 4;
+            let pixel = &source[source_index..source_index + 4];
+            let target = &mut output[offset..offset + 4];
+            target.copy_from_slice(pixel);
+            if pixel[3] != 0 {
+                target[3] = (f64::from(pixel[3]) * config.opacity(pixel) + 0.5).floor() as u8;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn decode_config(
+    channel: u32,
+    shadows: [u32; 2],
+    highlights: [u32; 2],
+) -> Result<BlendIfConfig, &'static str> {
+    let channel = BlendIfChannel::try_from(channel)?;
+    if shadows
+        .into_iter()
+        .chain(highlights)
+        .any(|value| value > 255)
+    {
+        return Err("invalid-blend-if-range");
+    }
+    let config = BlendIfConfig {
+        channel,
+        shadows: [shadows[0] as u8, shadows[1] as u8],
+        highlights: [highlights[0] as u8, highlights[1] as u8],
+    };
+    config.validate()?;
+    Ok(config)
+}
+
+/// 0=success, 1=lengths/region, 2=config, 3=null pointer, 5=output overlap.
+/// # Safety
+/// Pointer/length pairs must identify live `axia_poc_alloc` allocations.
+/// The private adapter owns/free these; output must not overlap the source.
+#[no_mangle]
+pub unsafe extern "C" fn axia_poc_blend_if_this_layer_region(
+    source_ptr: *const u8,
+    source_len: usize,
+    source_width: u32,
+    source_height: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    output_ptr: *mut u8,
+    output_len: usize,
+    channel: u32,
+    shadow_start: u32,
+    shadow_end: u32,
+    highlight_start: u32,
+    highlight_end: u32,
+) -> u32 {
+    if source_ptr.is_null() || output_ptr.is_null() {
+        return 3;
+    }
+    if [source_len, output_len]
+        .iter()
+        .any(|len| *len == 0 || *len > MAX_POC_BYTES || !len.is_multiple_of(4))
+    {
+        return 1;
+    }
+    let Ok(config) = decode_config(
+        channel,
+        [shadow_start, shadow_end],
+        [highlight_start, highlight_end],
+    ) else {
+        return 2;
+    };
+    let region = RasterRegion {
+        x: x as usize,
+        y: y as usize,
+        width: width as usize,
+        height: height as usize,
+    };
+    if validate_raster_region(
+        source_len,
+        source_width as usize,
+        source_height as usize,
+        region,
+        output_len,
+    )
+    .is_err()
+    {
+        return 1;
+    }
+    let source_start = source_ptr as usize;
+    let Some(source_end) = source_start.checked_add(source_len) else {
+        return 1;
+    };
+    let output_start = output_ptr as usize;
+    let Some(output_end) = output_start.checked_add(output_len) else {
+        return 1;
+    };
+    if source_start < output_end && output_start < source_end {
+        return 5;
+    }
+    match apply_this_layer_region(
+        std::slice::from_raw_parts(source_ptr, source_len),
+        source_width as usize,
+        source_height as usize,
+        region,
+        std::slice::from_raw_parts_mut(output_ptr, output_len),
+        config,
+    ) {
+        Ok(()) => 0,
+        Err(_) => 1,
     }
 }
 
@@ -153,23 +290,13 @@ pub unsafe extern "C" fn axia_poc_blend_if_underlying_region(
     {
         return 1;
     }
-    let Ok(channel) = BlendIfChannel::try_from(channel) else {
-        return 2;
-    };
-    if [shadow_start, shadow_end, highlight_start, highlight_end]
-        .iter()
-        .any(|value| *value > 255)
-    {
-        return 2;
-    }
-    let config = UnderlyingBlendIf {
+    let Ok(config) = decode_config(
         channel,
-        shadows: [shadow_start as u8, shadow_end as u8],
-        highlights: [highlight_start as u8, highlight_end as u8],
-    };
-    if config.validate().is_err() {
+        [shadow_start, shadow_end],
+        [highlight_start, highlight_end],
+    ) else {
         return 2;
-    }
+    };
     let region = RasterRegion {
         x: x as usize,
         y: y as usize,
@@ -230,6 +357,81 @@ mod tests {
         width: 3,
         height: 1,
     };
+
+    #[test]
+    fn this_layer_filters_styled_rgb_and_preserves_hidden_rgb() {
+        let source = [
+            50, 20, 30, 255, 75, 20, 30, 101, 100, 20, 30, 255, 77, 88, 99, 0,
+        ];
+        let mut output = [0; 16];
+        apply_this_layer_region(
+            &source,
+            4,
+            1,
+            RasterRegion { width: 4, ..REGION },
+            &mut output,
+            CONFIG,
+        )
+        .unwrap();
+        assert_eq!(
+            output,
+            [50, 20, 30, 0, 75, 20, 30, 51, 100, 20, 30, 255, 77, 88, 99, 0]
+        );
+    }
+
+    #[test]
+    fn sequential_ranges_keep_each_alpha_rounding() {
+        let mut this_output = [0; 4];
+        apply_this_layer_region(
+            &[75, 20, 30, 1],
+            1,
+            1,
+            RasterRegion { width: 1, ..REGION },
+            &mut this_output,
+            CONFIG,
+        )
+        .unwrap();
+        let mut underlying_output = [0; 4];
+        apply_underlying_region(
+            &this_output,
+            1,
+            1,
+            RasterRegion { width: 1, ..REGION },
+            &[75, 0, 0, 255],
+            &mut underlying_output,
+            CONFIG,
+        )
+        .unwrap();
+        assert_eq!(underlying_output, [75, 20, 30, 1]); // round(round(1 * .5) * .5), not round(1 * .25).
+    }
+
+    #[test]
+    fn invalid_this_layer_config_or_region_preserves_output() {
+        let mut output = [99; 4];
+        let region = RasterRegion { width: 1, ..REGION };
+        assert!(apply_this_layer_region(
+            &[0; 4],
+            1,
+            1,
+            region,
+            &mut output,
+            BlendIfConfig {
+                shadows: [100, 50],
+                ..CONFIG
+            }
+        )
+        .is_err());
+        assert!(apply_this_layer_region(
+            &[0; 4],
+            1,
+            1,
+            RasterRegion { x: 1, ..region },
+            &mut output,
+            CONFIG
+        )
+        .is_err());
+        assert_eq!(output, [99; 4]);
+    }
 
     #[test]
     fn existing_golden_and_hidden_rgb_are_preserved() {

@@ -55,6 +55,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
   // Source lifecycle commands are correctness barriers, never cancellable.
   const isRender = request.type === 'render' || request.type === 'render-region' ||
     request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
+    request.type === 'blend-if-this-layer-staged-region' ||
     request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region'
   if (isRender) pending.add(request.id)
   void runtime.then((engine) => {
@@ -79,9 +80,12 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
       return
     }
     if (request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
+        request.type === 'blend-if-this-layer-staged-region' ||
         request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region') {
       const result = (() => {
         switch (request.type) {
+          case 'blend-if-this-layer-staged-region':
+            return engine.blendIfThisLayerStagedRegion(request.sourceId, request.region, request.blendIf)
           case 'blend-if-staged-region':
             return engine.blendIfStagedRegion(request.sourceId, request.region,
               new Uint8Array(request.backdrop), request.blendIf)

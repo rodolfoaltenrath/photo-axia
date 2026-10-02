@@ -17,6 +17,10 @@ interface RustPixelPocExports {
     width: number, height: number, backdropPointer: number, backdropLength: number,
     outputPointer: number, outputLength: number, channel: number, shadowStart: number,
     shadowEnd: number, highlightStart: number, highlightEnd: number): number
+  axia_poc_blend_if_this_layer_region(sourcePointer: number, sourceLength: number,
+    sourceWidth: number, sourceHeight: number, x: number, y: number, width: number, height: number,
+    outputPointer: number, outputLength: number, channel: number, shadowStart: number,
+    shadowEnd: number, highlightStart: number, highlightEnd: number): number
   axia_poc_color_overlay_region(sourcePointer: number, sourceLength: number,
     sourceWidth: number, sourceHeight: number, x: number, y: number, width: number, height: number,
     targetPointer: number, targetLength: number, outputPointer: number, outputLength: number,
@@ -30,11 +34,12 @@ interface RustPixelPocExports {
 
 export interface RustPixelPocRegion { x: number; y: number; width: number; height: number }
 /** Caller must normalize document thresholds once before dispatch. */
-export interface RustPixelPocUnderlyingBlendIf {
+export interface RustPixelPocBlendIf {
   channel: 'gray' | 'red' | 'green' | 'blue'
   shadows: [number, number]
   highlights: [number, number]
 }
+export type RustPixelPocUnderlyingBlendIf = RustPixelPocBlendIf
 
 export interface RustPixelPocColorOverlay {
   color: [number, number, number, number]
@@ -58,6 +63,7 @@ const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
 
 type TilePass =
   | { type: 'blend-if'; pointer: number; length: number; config: RustPixelPocUnderlyingBlendIf }
+  | { type: 'blend-if-this-layer'; config: RustPixelPocBlendIf }
   | { type: 'color-overlay'; pointer: number; length: number; effect: RustPixelPocColorOverlay }
   | { type: 'pattern-overlay'; pointer: number; length: number; patternPointer: number;
       patternLength: number; patternWidth: number; patternHeight: number;
@@ -84,6 +90,7 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_fill_opacity !== 'function' ||
       typeof candidate.axia_poc_fill_opacity_region !== 'function' ||
       typeof candidate.axia_poc_blend_if_underlying_region !== 'function' ||
+      typeof candidate.axia_poc_blend_if_this_layer_region !== 'function' ||
       typeof candidate.axia_poc_color_overlay_region !== 'function' ||
       typeof candidate.axia_poc_pattern_overlay_region !== 'function') {
     throw new RustPixelPocError('wasm-unavailable')
@@ -162,6 +169,12 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
           outputPointer, outputLength, fillOpacity)
       } else {
         switch (pass.type) {
+          case 'blend-if-this-layer':
+            status = exports.axia_poc_blend_if_this_layer_region(sourcePointer, sourceLength,
+              sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+              outputPointer, outputLength, BLEND_IF_CHANNELS[pass.config.channel],
+              ...pass.config.shadows, ...pass.config.highlights)
+            break
           case 'blend-if':
             status = exports.axia_poc_blend_if_underlying_region(sourcePointer, sourceLength,
               sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
@@ -205,6 +218,19 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         copyOutMs: copiedOut - computed,
         releaseMs: released - copiedOut
       }
+    }
+  }
+
+  function validateBlendIfConfig(config: RustPixelPocBlendIf) {
+    if (!config || !Object.hasOwn(BLEND_IF_CHANNELS, config.channel) ||
+        !Array.isArray(config.shadows) || config.shadows.length !== 2 ||
+        !Array.isArray(config.highlights) || config.highlights.length !== 2) {
+      throw new RustPixelPocError('invalid-input')
+    }
+    const thresholds = [...config.shadows, ...config.highlights]
+    if (thresholds.some((value, index) => !Number.isSafeInteger(value) || value < 0 || value > 255 ||
+        (index > 0 && value < thresholds[index - 1]!))) {
+      throw new RustPixelPocError('invalid-input')
     }
   }
 
@@ -309,20 +335,22 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
         region, fillOpacity, 0, 0), generation: staged.generation }
     },
+    /** The staged source must be the styled raster, not the original effect mask. */
+    blendIfThisLayerStagedRegion(sourceId: number, region: RustPixelPocRegion, config: RustPixelPocBlendIf) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
+      validateRegion(region, staged.width, staged.height, 100)
+      validateBlendIfConfig(config)
+      return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
+        region, 100, 0, 0, { type: 'blend-if-this-layer', config }), generation: staged.generation }
+    },
     blendIfStagedRegion(sourceId: number, region: RustPixelPocRegion, backdrop: Uint8Array,
       config: RustPixelPocUnderlyingBlendIf) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
       const length = validateRegion(region, staged.width, staged.height, 100)
-      if (!config || !Object.hasOwn(BLEND_IF_CHANNELS, config.channel) ||
-          !Array.isArray(config.shadows) || config.shadows.length !== 2 ||
-          !Array.isArray(config.highlights) || config.highlights.length !== 2) {
-        throw new RustPixelPocError('invalid-input')
-      }
-      const thresholds = [...config.shadows, ...config.highlights]
-      if (backdrop.byteLength !== length || thresholds.some((value, index) =>
-        !Number.isSafeInteger(value) || value < 0 || value > 255 ||
-        (index > 0 && value < thresholds[index - 1]!))) {
+      validateBlendIfConfig(config)
+      if (backdrop.byteLength !== length) {
         throw new RustPixelPocError('invalid-input')
       }
       const started = performance.now()

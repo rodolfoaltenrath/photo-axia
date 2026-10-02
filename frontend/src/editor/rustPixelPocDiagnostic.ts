@@ -109,6 +109,15 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         [...new Uint8Array(blended.rgba)].join(',') !== '40,50,60,128,7,8,9,0') {
       throw new Error('Worker Rust produziu Mesclar se diferente do golden.')
     }
+    const thisLayerRequest = send({ type: 'blend-if-this-layer-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 },
+      blendIf: { channel: 'red', shadows: [20, 60], highlights: [255, 255] } })
+    const thisLayerToken = gate.captureTile('esta-camada-direita', thisLayerRequest.id)
+    const filtered = await thisLayerRequest
+    if (!thisLayerToken?.isCurrent(filtered) || filtered.timings.copyInMs !== 0 ||
+        [...new Uint8Array(filtered.rgba)].join(',') !== '40,50,60,128,7,8,9,0') {
+      throw new Error('Worker Rust produziu Mesclar se — Esta camada diferente do golden.')
+    }
     const pendingTile = send({ type: 'render-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, fillOpacity: 50 })
     const tileToken = gate.captureTile('coluna-direita', pendingTile.id)

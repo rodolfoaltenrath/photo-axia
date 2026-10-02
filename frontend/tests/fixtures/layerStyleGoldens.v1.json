@@ -12,6 +12,15 @@
         "rgba": [10, 20, 30, 51, 90, 80, 70, 128] }
     },
     {
+      "id": "blend-if-this-layer-red-channel",
+      "source": { "width": 3, "height": 1, "rgba": [50, 20, 30, 255, 75, 20, 30, 101, 100, 20, 30, 255] },
+      "styles": { "enabled": true, "fillOpacity": 100, "effects": [],
+        "blendIf": { "channel": "red", "thisLayer": { "shadows": [50, 100], "highlights": [255, 255] } } },
+      "globalLight": { "angle": 0, "altitude": 30 }, "resolutionScale": 1,
+      "expected": { "width": 3, "height": 1, "offsetX": 0, "offsetY": 0,
+        "rgba": [50, 20, 30, 0, 75, 20, 30, 51, 100, 20, 30, 255] }
+    },
+    {
       "id": "color-overlay-partial-fill",
       "source": { "width": 4, "height": 1, "rgba": [40, 60, 80, 255, 90, 110, 130, 128, 170, 150, 120, 64, 77, 88, 99, 0] },
       "styles": { "enabled": true, "fillOpacity": 60,

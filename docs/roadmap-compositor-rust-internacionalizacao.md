@@ -351,6 +351,21 @@ halo e âncora seguem sob responsabilidade do chamador. O preview normal não
 foi alterado e nenhum gate C0/C1/C2 foi encerrado. Detalhes na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
+Uma quinta fatia completa o passe puro **Mesclar se — Esta camada**, nos quatro
+canais e por região. Reutiliza regras de luma/faixas em Rust, mas lê RGB/alfa
+do raster **já estilizado**, inclusive efeitos externos, não da máscara original.
+O golden fixo, 2.097.152 pixels comparados, tiles 7×5 e sequência cor → padrão
+→ Esta camada → Camada abaixo passaram byte a byte, com arredondamento separado
+em cada filtro. Worker/gate/diagnóstico WebView2 cobrem o novo comando sem
+backdrop ou reupload da fonte entre alterações de faixas. A sonda Node 1024²
+mediu 132,41 ms no laço TS de referência com o helper atual e 19,54 ms no adapter
+Rust com fonte preparada. O helper TS normaliza por pixel; isso não isola
+linguagem nem mede fluidez do editor. A chave do raster preparado precisa incluir
+estilos/fill/halo/resolução; reusar a chave da máscara original produziria fonte
+obsoleta. Faltam executor de estágios/batch, transformação/reamostragem,
+cache/orçamento e os demais efeitos; preview normal e gates continuam intocados.
+Detalhes e limites na [prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

@@ -24,6 +24,7 @@ assert.ok(diagnostic.includes(wasmName), 'O diagnóstico deve apontar ao WASM co
 assert.ok(diagnostic.includes(workerName), 'O diagnóstico deve apontar ao Worker com hash')
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_fill_opacity'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_blend_if_underlying_region'))
+assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_blend_if_this_layer_region'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_color_overlay_region'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_pattern_overlay_region'))
 assert.ok(names.some((name) => name.startsWith('index-') && name.endsWith('.js') &&

@@ -1,5 +1,5 @@
 // Experimental C1 protocol. No document or UI code depends on this worker yet.
-import type { RustPixelPocColorOverlay, RustPixelPocPatternOverlay,
+import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
   | { type: 'init'; id: number; wasm: ArrayBuffer }
@@ -13,6 +13,8 @@ export type RustPixelPocRequest =
       region: { x: number; y: number; width: number; height: number }; fillOpacity: number }
   | { type: 'blend-if-staged-region'; id: number; sourceId: number;
       region: RustPixelPocRegion; backdrop: ArrayBuffer; blendIf: RustPixelPocUnderlyingBlendIf }
+  | { type: 'blend-if-this-layer-staged-region'; id: number; sourceId: number;
+      region: RustPixelPocRegion; blendIf: RustPixelPocBlendIf }
   | { type: 'color-overlay-staged-region'; id: number; sourceId: number;
       region: RustPixelPocRegion; target: ArrayBuffer; effect: RustPixelPocColorOverlay }
   | { type: 'pattern-overlay-staged-region'; id: number; sourceId: number;
