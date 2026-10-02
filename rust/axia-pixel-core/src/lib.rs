@@ -1,6 +1,8 @@
 //! Experimental C1 pixel kernel. This is not the document-compositor ABI.
 //! The caller owns the copied input buffer and must free it after use.
 
+pub mod blend_if;
+
 /// Matches the current TS fill-only pass on a transparent target. A source
 /// pixel whose scaled alpha rounds to zero does not contribute hidden RGB.
 pub fn apply_fill_opacity_in_place(rgba: &mut [u8], fill_opacity: u8) -> Result<(), &'static str> {
@@ -10,7 +12,6 @@ pub fn apply_fill_opacity_in_place(rgba: &mut [u8], fill_opacity: u8) -> Result<
     if fill_opacity > 100 {
         return Err("invalid-fill-opacity");
     }
-
     let fill = f64::from(fill_opacity) / 100.0;
     for pixel in rgba.as_chunks_mut::<4>().0 {
         // JS Math.round rounds non-negative halves upward. Keep the same
@@ -46,6 +47,39 @@ pub fn apply_fill_opacity_region(
     if fill_opacity > 100 {
         return Err("invalid-fill-opacity");
     }
+    validate_raster_region(
+        source.len(),
+        source_width,
+        source_height,
+        region,
+        output.len(),
+    )?;
+    let fill = f64::from(fill_opacity) / 100.0;
+    for row in 0..region.height {
+        for column in 0..region.width {
+            let source_index = ((region.y + row) * source_width + region.x + column) * 4;
+            let output_index = (row * region.width + column) * 4;
+            let pixel = &source[source_index..source_index + 4];
+            let target = &mut output[output_index..output_index + 4];
+            let alpha = (f64::from(pixel[3]) * fill + 0.5).floor() as u8;
+            if alpha == 0 {
+                target.fill(0);
+            } else {
+                target.copy_from_slice(pixel);
+                target[3] = alpha;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_raster_region(
+    source_len: usize,
+    source_width: usize,
+    source_height: usize,
+    region: RasterRegion,
+    output_len: usize,
+) -> Result<(), &'static str> {
     let source_bytes = source_width
         .checked_mul(source_height)
         .and_then(|pixels| pixels.checked_mul(4))
@@ -57,8 +91,8 @@ pub fn apply_fill_opacity_region(
         .ok_or("invalid-rgba-length")?;
     if source_width == 0
         || source_height == 0
-        || source.len() != source_bytes
-        || output.len() != output_bytes
+        || source_len != source_bytes
+        || output_len != output_bytes
     {
         return Err("invalid-rgba-length");
     }
@@ -76,22 +110,6 @@ pub fn apply_fill_opacity_region(
         return Err("invalid-region");
     }
 
-    let fill = f64::from(fill_opacity) / 100.0;
-    for row in 0..region.height {
-        for column in 0..region.width {
-            let source_index = ((region.y + row) * source_width + region.x + column) * 4;
-            let output_index = (row * region.width + column) * 4;
-            let pixel = &source[source_index..source_index + 4];
-            let target = &mut output[output_index..output_index + 4];
-            let alpha = (f64::from(pixel[3]) * fill + 0.5).floor() as u8;
-            if alpha == 0 {
-                target.fill(0);
-            } else {
-                target.copy_from_slice(pixel);
-                target[3] = alpha;
-            }
-        }
-    }
     Ok(())
 }
 

@@ -24,6 +24,7 @@ npm run build
 npm run test:rust-bundle
 npm run benchmark:rust-poc -- 512 10
 npm run benchmark:rust-tiles -- 1024 256 10
+npm run benchmark:rust-blend-if -- 1024 20
 ```
 
 Para o smoke de navegador, execute `npm run preview` em outro terminal e
@@ -168,3 +169,84 @@ Esta comparação prova apenas o passe sem efeitos de opacidade de preenchimento
 em um fundo transparente. Não prova paridade para estilos combinados, Canvas,
 transformações, texto, exportação, preview ou gargalos de interação. O restante
 do C0 permanece aberto, conforme o roadmap.
+
+## Segunda fatia: Mesclar se da camada abaixo — C2 parcial
+
+Em 2026-10-02, `rust/axia-pixel-core/src/blend_if.rs` passou a executar o
+mesmo passe puro de `applyLayerStyleBlendIfUnderlying`, separado da modelagem
+do documento. A ABI experimental `axia_poc_blend_if_underlying_region` recebe
+raster fonte, dimensões/posição absoluta da região, backdrop compacto alinhado
+com a região, saída distinta, canal (0=cinza, 1=R, 2=G, 3=B) e quatro
+marcadores inteiros normalizados. Pares devem estar ordenados e entre 0 e 255;
+o chamador TS normaliza o documento antes do envio. Rust rejeita canal/faixas,
+dimensões, comprimento ou overlap inválidos antes de escrever a saída.
+
+O passe altera somente alfa e preserva RGB oculto, inclusive quando o novo
+alfa fica zero. Isso é diferente do passe de fill opacity sobre transparência,
+que zera RGB quando o pixel deixa de contribuir. O canal cinza segue a ordem
+`R * 0.2126 + G * 0.7152 + B * 0.0722` em f64; transições rígidas usam
+comparações estritas e transições divididas usam os mesmos fatores/arredondamento
+do TS. O algoritmo atual consulta RGB do backdrop **independentemente de seu
+alfa**. Essa semântica foi preservada e testada, não reinterpretada no porte.
+
+O comando Worker `blend-if-staged-region` reutiliza a fonte preparada e
+transfere somente o backdrop da região. A resposta `rendered-staged-region`
+identifica `sourceId`/`generation` e é verificada pelo mesmo gate de tiles.
+Editar camada inferior deve mudar a revisão de pilha/vista imediatamente;
+manter a geração da fonte não torna válido um tile calculado com outro backdrop.
+O teste de integração exercita essa invalidação e confirma que não precisa
+reenviar a fonte. O comando é cancelável quando pendente, sob a mesma limitação
+das outras chamadas WASM síncronas; não interrompe um kernel já em execução.
+
+O backdrop deve ser o raster **já composto** das camadas inferiores no estágio
+e nas coordenadas corretas. O Rust deste POC não o calcula e não aplica
+automaticamente fill opacity/estilos antes desse passe. As entradas são RGBA8
+reto na mesma densidade; não há transformação/reamostragem, perfil ICC/P3 ou
+halo neste passe pontual. Fonte, backdrop e saída têm limite individual de
+64 MiB; o orçamento agregado/temporários do compositor ainda precisa de gate.
+Liberar alocações não reduz automaticamente o tamanho da memória linear WASM.
+
+Validação desta fatia:
+
+- **8 testes nativos Rust** e Clippy sem avisos, incluindo os cinco testes
+  anteriores de fill opacity.
+- **479 testes frontend** e typecheck; as duas suítes novas da prova WASM
+  também são verificadas por `test:types`, mas executadas por `test:rust-poc`
+  após seu prebuild, evitando depender de WASM gerado em `npm test`.
+- **16 testes na prova WASM/Worker**: os seis anteriores mais dez novos.
+  Os quatro testes de canais usam 256 alfas × 256 valores de backdrop × oito
+  configurações = **2.097.152 pixels comparados**, com luma fracionária no cinza.
+  Incluem extremos, marcadores coincidentes, RGB oculto e backdrop transparente.
+- Tiles de borda de um raster 7×5 recompostos contra o passe TS inteiro nos
+  quatro canais; fonte e backdrop somente leitura. Uma sequência fill opacity
+  → Blend If confirma que os dois arredondamentos são mantidos.
+- Erros de ABI/adapter, fonte invalidada e recuperação depois de pedido inválido;
+  Worker real com transferência do backdrop e gate de publicação por vista.
+- Build local/bundle íntegro (WASM **25.461 bytes**) e diagnóstico explícito
+  em executável temporário Wails/WebView2 passaram, agora também com Blend If.
+
+O benchmark `npm run benchmark:rust-blend-if -- 1024 20` alterna a ordem dos
+dois modos depois de três aquecimentos, compara cada saída fora da janela
+medida e registra preparação da fonte uma vez. Em Windows 10.0.26200,
+i7-3770/Node fixado 24.14.1, com canal cinza e RGBA sintético 1024²:
+
+| Etapa | Mediana | p95 amostral (20 amostras) |
+| --- | ---: | ---: |
+| TS atual, cópia da fonte + passe puro | 137,647 ms | 153,573 ms |
+| Adapter Rust/WASM, backdrop + saída + kernel | 21,796 ms | 24,903 ms |
+| Kernel Rust dentro do adapter | 19,156 ms | 20,369 ms |
+| Cópia do backdrop para WASM | 0,604 ms | 1,198 ms |
+| Cópia da saída de WASM | 1,319 ms | 2,956 ms |
+
+Preparar a fonte custou **1,931 ms** uma vez. As medianas dos componentes
+não devem ser somadas para reconstruir a mediana total. O TS preserva a fonte
+com uma cópia por pedido; Rust a mantém preparada e aloca a saída/backdrop.
+Além disso, o TS atual normaliza a configuração dentro da função de opacidade
+para cada pixel; Rust valida marcadores uma vez por pedido. Logo, o resultado
+compara **as implementações atuais**, não isola linguagem, compilador ou SIMD.
+Não houve medição de ganho visual: Worker/mensagens, decode/encode, Canvas,
+GPU, cache da pilha e documentos reais estão fora desta sonda.
+
+A feature normal de Mesclar se continua utilizando TS/Canvas. C0/C1/C2 seguem
+abertos até os gates de paridade, memória, plataformas e pacote distribuível;
+este segundo passe só roda na prova/diagnóstico explícitos.

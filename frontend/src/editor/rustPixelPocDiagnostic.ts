@@ -76,6 +76,16 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     if (staged.type !== 'source-staged' || !gate.adoptSource(staged)) {
       throw new Error('Worker Rust não carregou a fonte reutilizável atual.')
     }
+    const backdrop = new Uint8Array([75, 0, 0, 255, 100, 0, 0, 0])
+    const blendRequest = send({ type: 'blend-if-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 }, backdrop: backdrop.buffer,
+      blendIf: { channel: 'red', shadows: [50, 100], highlights: [255, 255] } }, [backdrop.buffer])
+    const blendToken = gate.captureTile('blend-if-direita', blendRequest.id)
+    const blended = await blendRequest
+    if (!blendToken?.isCurrent(blended) || backdrop.byteLength !== 0 ||
+        [...new Uint8Array(blended.rgba)].join(',') !== '40,50,60,128,7,8,9,0') {
+      throw new Error('Worker Rust produziu Mesclar se diferente do golden.')
+    }
     const pendingTile = send({ type: 'render-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, fillOpacity: 50 })
     const tileToken = gate.captureTile('coluna-direita', pendingTile.id)

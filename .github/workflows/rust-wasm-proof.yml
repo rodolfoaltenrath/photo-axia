@@ -86,8 +86,9 @@ jobs:
         working-directory: frontend
         run: npm run smoke:rust-wails
 
-      - name: Smoke actual Wails preview handoff and screenshot
+      - name: Probe actual Wails preview handoff, screenshot and frame cadence
         if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
         shell: bash
         working-directory: frontend
-        run: npm run smoke:preview-wails
+        # Diagnostic numbers, not performance thresholds on a hosted runner.
+        run: npm run benchmark:preview-wails -- --size=512 --cycles=2

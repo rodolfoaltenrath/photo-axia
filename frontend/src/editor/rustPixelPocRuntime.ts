@@ -10,9 +10,24 @@ interface RustPixelPocExports {
     sourceWidth: number, sourceHeight: number, x: number, y: number,
     width: number, height: number, outputPointer: number, outputLength: number,
     opacity: number): number
+  axia_poc_blend_if_underlying_region(sourcePointer: number, sourceLength: number,
+    sourceWidth: number, sourceHeight: number, x: number, y: number,
+    width: number, height: number, backdropPointer: number, backdropLength: number,
+    outputPointer: number, outputLength: number, channel: number, shadowStart: number,
+    shadowEnd: number, highlightStart: number, highlightEnd: number): number
 }
 
 export interface RustPixelPocRegion { x: number; y: number; width: number; height: number }
+/** Caller must normalize document thresholds once before dispatch. */
+export interface RustPixelPocUnderlyingBlendIf {
+  channel: 'gray' | 'red' | 'green' | 'blue'
+  shadows: [number, number]
+  highlights: [number, number]
+}
+
+const BLEND_IF_CHANNELS: Readonly<Record<RustPixelPocUnderlyingBlendIf['channel'], number>> = {
+  gray: 0, red: 1, green: 2, blue: 3
+}
 
 export class RustPixelPocError extends Error {
   readonly code: 'wasm-unavailable' | 'invalid-input' | 'wasm-failure'
@@ -29,7 +44,8 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_alloc !== 'function' ||
       typeof candidate.axia_poc_free !== 'function' ||
       typeof candidate.axia_poc_fill_opacity !== 'function' ||
-      typeof candidate.axia_poc_fill_opacity_region !== 'function') {
+      typeof candidate.axia_poc_fill_opacity_region !== 'function' ||
+      typeof candidate.axia_poc_blend_if_underlying_region !== 'function') {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -82,7 +98,8 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
 
   function renderFromPointer(sourcePointer: number, sourceLength: number, sourceWidth: number,
     sourceHeight: number, region: RustPixelPocRegion, fillOpacity: number,
-    sourceAllocationMs: number, sourceCopyInMs: number) {
+    sourceAllocationMs: number, sourceCopyInMs: number,
+    blendIf?: { pointer: number; length: number; config: RustPixelPocUnderlyingBlendIf }) {
     const outputLength = region.width * region.height * 4
     const allocationStarted = performance.now()
     const outputPointer = exports.axia_poc_alloc(outputLength)
@@ -98,9 +115,15 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
           outputPointer + outputLength > exports.memory.buffer.byteLength) {
         throw new RustPixelPocError('wasm-failure')
       }
-      if (exports.axia_poc_fill_opacity_region(sourcePointer, sourceLength,
-        sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
-        outputPointer, outputLength, fillOpacity) !== 0) {
+      const status = blendIf
+        ? exports.axia_poc_blend_if_underlying_region(sourcePointer, sourceLength,
+          sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+          blendIf.pointer, blendIf.length, outputPointer, outputLength,
+          BLEND_IF_CHANNELS[blendIf.config.channel], ...blendIf.config.shadows, ...blendIf.config.highlights)
+        : exports.axia_poc_fill_opacity_region(sourcePointer, sourceLength,
+          sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+          outputPointer, outputLength, fillOpacity)
+      if (status !== 0) {
         throw new RustPixelPocError('wasm-failure')
       }
       computed = performance.now()
@@ -222,6 +245,37 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       validateRegion(region, staged.width, staged.height, fillOpacity)
       return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
         region, fillOpacity, 0, 0), generation: staged.generation }
+    },
+    blendIfStagedRegion(sourceId: number, region: RustPixelPocRegion, backdrop: Uint8Array,
+      config: RustPixelPocUnderlyingBlendIf) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
+      const length = validateRegion(region, staged.width, staged.height, 100)
+      if (!config || !Object.hasOwn(BLEND_IF_CHANNELS, config.channel) ||
+          !Array.isArray(config.shadows) || config.shadows.length !== 2 ||
+          !Array.isArray(config.highlights) || config.highlights.length !== 2) {
+        throw new RustPixelPocError('invalid-input')
+      }
+      const thresholds = [...config.shadows, ...config.highlights]
+      if (backdrop.byteLength !== length || thresholds.some((value, index) =>
+        !Number.isSafeInteger(value) || value < 0 || value > 255 ||
+        (index > 0 && value < thresholds[index - 1]!))) {
+        throw new RustPixelPocError('invalid-input')
+      }
+      const started = performance.now()
+      const pointer = exports.axia_poc_alloc(length)
+      if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+      try {
+        if (pointer + length > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+        const allocated = performance.now()
+        new Uint8Array(exports.memory.buffer, pointer, length).set(backdrop)
+        const copiedIn = performance.now()
+        return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
+          region, 100, allocated - started, copiedIn - allocated, { pointer, length, config }),
+          generation: staged.generation }
+      } finally {
+        exports.axia_poc_free(pointer, length)
+      }
     },
     releaseSource(sourceId: number) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')

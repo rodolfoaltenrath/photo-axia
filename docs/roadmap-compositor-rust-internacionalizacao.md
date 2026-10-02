@@ -1,7 +1,7 @@
 # Roadmap: compositor único em Rust e Axia multilíngue
 
-Estado: **C0/I0 iniciados; C1 com POC isolada; nenhuma migração visual ou de compositor ativada**.
-Atualizado em 2026-09-30.
+Estado: **C0/I0 iniciados; C1/C2 com passes Rust isolados; nenhuma migração visual ou de compositor ativada**.
+Atualizado em 2026-10-02.
 
 Este plano tem duas trilhas independentes, com contratos compartilhados: (A) unificar
 preview e exportação em um compositor de documento, introduzindo Rust/WASM onde
@@ -234,6 +234,17 @@ ativo. Capturas da região do canvas via DevTools também confirmaram mudança
 de pixels na superfície apresentada. Ainda não substitui medição de FPS nem
 QA com documentos do usuário.
 
+O runner `benchmark:preview-wails` agora acrescenta uma janela de referência
+ociosa, trocas repetidas entre três presets, zoom animado por wheel e pan por
+scroll no próprio editor Wails. Registra cadência de callbacks `rAF`, tarefas
+longas da thread da interface e latência da troca visual; verifica movimento
+real/restauração do viewport e continuidade do buffer. As primeiras medições
+512²/1024² foram registradas no baseline. Cadência `rAF` **não é FPS apresentado
+pela GPU**. A medição usa imagem sintética, uma camada e eventos automatizados;
+documentos reais, muitas camadas, pintura/GPU e memória continuam pendentes.
+O workflow manual coleta a mesma sonda sem aplicar um limiar de performance
+dependente do hardware do runner. Isso ainda não fecha o marco C0.
+
 ### C1 — POC Rust/WASM isolada, sem mudança visual
 
 - [ ] Criar crate puro e adaptador WASM separados; CI compila, testa, empacota
@@ -290,6 +301,22 @@ fornecer revisão da pilha e medir o custo dessa ligação antes de C4.
 Uma sonda isolada mediu a diferença entre esses dois modos, mas ainda faltam
 cache do documento, halo, outros efeitos e benchmark end-to-end do editor.
 Portanto, isto não conclui os passes nem o gate de desempenho de C2.
+
+Em 2026-10-02 foi portado um segundo passe puro para Rust: **Mesclar se —
+camada abaixo**, com canal cinza/R/G/B e marcadores rígidos ou divididos.
+O Worker aceita fonte preparada + região + backdrop compacto já composto,
+retorna o tile com a mesma geração e preserva os bytes da fonte. Goldens,
+2.097.152 combinações de alfa/canal/faixa, tiles adjacentes e sequência
+fill opacity → Blend If passaram byte a byte contra o TS. O teste do Worker
+também cobre alteração do backdrop sem reupload da fonte e invalidação do
+tile anterior; o diagnóstico incorporado passou no Wails/WebView2.
+Uma comparação Node 1024² registrou 137,65 ms de mediana no TS atual contra
+21,80 ms no adaptador Rust/WASM com fonte preparada. Parte da diferença vem
+da normalização por pixel no TS atual; não é uma medida isolada do ganho de
+linguagem, nem do preview. Detalhes e limites estão na
+[prova Rust/WASM](prova-rust-wasm-c1.md). A pilha/backdrop continuam sob
+responsabilidade do chamador: este passe não implementa sozinho composição
+do documento, grupos, transformações, cache de backdrop ou estilos com halo.
 
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a

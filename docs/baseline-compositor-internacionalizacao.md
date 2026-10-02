@@ -211,10 +211,77 @@ Go **1.27.0** do PATH. Os dois smokes Wails agora extraem a versão exata de
 quarta execução com Node **24.14.1** e Go **1.26.5** também passou e encontrou
 os mesmos 3.176 pixels alterados; o runner registra ambos na saída.
 
-Há agora 64 arquivos em `frontend/tests/`, incluindo fixtures e benchmarks, e 11
-Workers em `frontend/src/workers/`. Esses totais não medem cobertura de cenários
-de composição. Falta executar os mesmos checks com o Go/Node fixados, em Linux,
-e medir tempo/RAM/FPS em hardware identificado.
+### Cadência da interface no preview Wails
+
+O runner ampliado tem um modo de benchmark explícito. Em `frontend/`, com
+Node 24.14.1 no PATH, executar:
+
+```powershell
+npm run benchmark:preview-wails -- --size=512 --cycles=2
+npm run benchmark:preview-wails -- --size=1024 --cycles=2
+```
+
+O prebuild recompila frontend/WASM; o runner compila um executável de produção
+temporário com Go 1.26.5 e abre o editor real. Além do smoke de screenshot/handoff,
+o modo observa uma janela ociosa de 1 segundo, aplica Contorno escuro → Brilho
+suave → Sombra suave em dois ciclos e mede zoom animado/pan. A sombra inicial
+do smoke já aqueceu esse preset; contorno e brilho estreiam no primeiro ciclo.
+As fases rápidas têm janela de observação de pelo menos 500 ms. A latência da
+operação é registrada separadamente e inclui espera por buffer decodificado,
+publicação no DOM e dois callbacks de estabilização; **não é tempo puro CPU**.
+
+A sonda registra timestamps dos callbacks `requestAnimationFrame` na thread
+da interface, mediana/p95 de intervalos, maior intervalo sem callback (incluindo
+início/fim da janela) e tarefas `longtask` acima de 50 ms quando essa API existe.
+Ausência da API produz `null`, não zero. Uma fase sem callbacks também expõe
+a lacuna inteira, em vez de parecer fluida. As métricas têm testes de limites
+de janela e relógios inválidos. Ocultar a janela invalida a execução; nenhum
+limiar de FPS/performance é imposto no smoke ou na CI.
+
+Em 2026-10-02, duas execuções sequenciais, sem a suíte de testes concorrendo,
+passaram no Windows 10.0.26200/i7-3770, 17.061.695.488 bytes de RAM física,
+WebView2 154.0.4258.48, DPR 1, Node 24.14.1 e Go 1.26.5:
+
+| Medição | Documento 512² | Documento 1024² |
+| --- | ---: | ---: |
+| Latência da primeira aplicação de contorno | 183,2 ms | 266,3 ms |
+| Latência da primeira aplicação de brilho | 201,0 ms | 299,5 ms |
+| Latência do segundo contorno/brilho | 116,7 / 116,8 ms | 116,7 / 133,4 ms |
+| p95 de intervalos `rAF`, ocioso | 16,8 ms | 16,8 ms |
+| Maior p95 entre as seis fases de estilo | 16,9 ms | 17,8 ms |
+| p95 de intervalos `rAF`, zoom animado | 17,1 ms | 17,8 ms |
+| p95 de intervalos `rAF`, pan | 18,7 ms | 18,0 ms |
+| Maior intervalo sem callback em qualquer fase | 20,7 ms | 21,4 ms |
+| Lacunas acima de 50 ms / tarefas longas observadas | 0 / 0 | 0 / 0 |
+
+Todas as fases mantiveram imagem ativa. O zoom realmente mudou a escala em
+cerca de 77% e voltou ao valor inicial; o pan deslocou 80 px e restaurou o
+scroll. O smoke também confirmou 3.176/6.961 pixels RGB alterados no screenshot
+após a sombra inicial. A mediana dos intervalos ficou próxima de 16,7 ms;
+isso indica disponibilidade regular dos callbacks durante esses cenários,
+**não comprova FPS apresentado/pintura da GPU**, nem ausência de gargalos
+fora das amostras. A espera inicial por estilo ainda é perceptível apesar
+de a thread da interface ter continuado disponível.
+
+Os tamanhos acima são do documento importado; o preview ajusta densidade
+à tela. O buffer da sombra inicial teve largura 545/859 px, incluindo efeito,
+logo esta sonda não equivale ao benchmark CPU em resolução integral 1024².
+O wheel é um evento sintético entregue ao handler real do editor; o pan muda
+o scroll nativo e exercita sua atualização de viewport, mas não simula captura
+do botão central do mouse. É apenas uma imagem/camada, com poucos ciclos;
+continuam pendentes documentos reais, muitas camadas, seleção/texto/PDF,
+memória de trabalho/pico, cauda robusta de latências e pintura GPU. A CI manual
+foi configurada para a mesma sonda; resultado hospedado ainda não observado.
+
+Após esta fatia, **479/479 testes frontend**, typecheck e build passaram,
+incluindo três testes novos das métricas. O renderer normal não foi alterado;
+as sondas e observadores Rust seguem experimentais. O marco C0 permanece aberto.
+
+O inventário anterior contava 64 arquivos em `frontend/tests/`, incluindo
+fixtures e benchmarks, e 11 Workers em `frontend/src/workers/`; a sonda de
+cadência acrescentou mais uma suíte TS. Esses totais não medem cobertura de
+cenários de composição. Falta repetir os checks em Linux com toolchains fixadas
+e ampliar as medições de memória/FPS apresentado em hardware identificado.
 
 ## Caminhos de renderização a unificar
 

@@ -10,6 +10,7 @@
     "src/**/*.ts",
     "src/**/*.d.ts",
     "tests/**/*.ts",
-    "benchmarks/**/*.ts"
+    "benchmarks/**/*.ts",
+    "scripts/tests/**/*.ts"
   ]
 }

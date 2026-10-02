@@ -2,11 +2,22 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { cpus, release, tmpdir } from 'node:os'
+import { cpus, release, tmpdir, totalmem } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { runPreviewWailsProbe, summarizePreviewFrames } from '../benchmarks/previewWailsProbe.ts'
 
 if (process.platform !== 'win32') throw new Error('Smoke do preview Wails/WebView2 disponível apenas no Windows.')
+
+const benchmarkMode = process.argv.includes('--benchmark')
+const sizeArgument = process.argv.find((argument) => argument.startsWith('--size='))
+const cyclesArgument = process.argv.find((argument) => argument.startsWith('--cycles='))
+const imageSize = sizeArgument ? Number(sizeArgument.slice('--size='.length)) : 512
+const cycles = cyclesArgument ? Number(cyclesArgument.slice('--cycles='.length)) : 2
+if (!Number.isSafeInteger(imageSize) || imageSize < 64 || imageSize > 4096 ||
+    !Number.isSafeInteger(cycles) || cycles < 1 || cycles > 10) {
+  throw new Error('Use --size=64..4096 e --cycles=1..10.')
+}
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const declaredGoVersion = /^go (\d+\.\d+\.\d+)\r?$/m.exec(readFileSync(join(repoRoot, 'go.mod'), 'utf8'))?.[1]
@@ -77,7 +88,7 @@ function evaluator(ws) {
     const timeout = setTimeout(() => {
       pending.delete(id)
       reject(new Error('DevTools WebView2 não respondeu.'))
-    }, 10_000)
+    }, benchmarkMode ? 30_000 + cycles * 30_000 : 10_000)
     pending.set(id, { resolve, reject, timeout })
     ws.send(JSON.stringify({ id, method: 'Runtime.evaluate',
       params: { expression, returnByValue: true, awaitPromise: true } }))
@@ -155,13 +166,13 @@ try {
 
   const dropped = await evaluate(`(async () => {
     const canvas = document.createElement('canvas')
-    canvas.width = 512
-    canvas.height = 512
+    canvas.width = ${imageSize}
+    canvas.height = ${imageSize}
     const context = canvas.getContext('2d')
     context.fillStyle = '#2468a0'
-    context.fillRect(0, 0, 512, 512)
+    context.fillRect(0, 0, canvas.width, canvas.height)
     context.fillStyle = '#f4d36a'
-    context.fillRect(64, 64, 384, 384)
+    context.fillRect(canvas.width / 8, canvas.height / 8, canvas.width * 3 / 4, canvas.height * 3 / 4)
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
     if (!blob) throw new Error('PNG sintético não foi criado.')
     const transfer = new DataTransfer()
@@ -320,10 +331,17 @@ try {
     return { width: before.width, height: before.height, changedPixels }
   })()`)
   assert.ok(visual.changedPixels > 100, 'O estilo não mudou pixels visíveis no screenshot do canvas.')
+  const frameSamples = benchmarkMode
+    ? await evaluate(`(${runPreviewWailsProbe.toString()})(${JSON.stringify(layerId)}, ${cycles})`)
+    : null
+  const frameMetrics = frameSamples?.map(summarizePreviewFrames)
   process.stdout.write(`${JSON.stringify({ status: 'pass', browser: browserVersion,
     platform: process.platform, osRelease: release(), cpu: cpus()[0]?.model,
-    node: process.version, go: goVersion, ...environment, imageBytes: dropped.bytes,
-    ...observed.result, screenshot: visual })}\n`)
+    node: process.version, go: goVersion, totalMemoryBytes: totalmem(), ...environment, imageBytes: dropped.bytes,
+    ...observed.result, screenshot: visual,
+    ...(benchmarkMode ? { benchmark: { imageSize, cycles, minimumSampleWindowMs: 500,
+      measurement: 'rAF callback cadence, not presented GPU FPS',
+      input: 'synthetic wheel and native viewport scroll', samples: frameMetrics } } : {}) })}\n`)
 } finally {
   socket?.close()
   if (app && app.exitCode === null) {
