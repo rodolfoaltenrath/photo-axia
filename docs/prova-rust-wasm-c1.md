@@ -339,3 +339,121 @@ batch sem cópias intermediárias e profiling dos kernels ainda são trabalho fu
 
 O preview normal continua em TS/Canvas/DOM. C0/C1/C2 não foram encerrados e
 o novo passe permanece restrito aos testes e diagnóstico explícito.
+
+## Quarta fatia: Sobreposição de padrão — C2 parcial
+
+Em 2026-10-02, `pattern_overlay.rs` passou a executar o passe puro de
+Sobreposição de padrão, reutilizando `composite.rs` para os seis modos de
+mesclagem. Mantém o alfa original da camada como máscara, aceita target já
+composto e preserva todos os bytes quando o efeito não contribui. Usa a mesma
+amostragem nearest-neighbor/repetição e a mesma ordem de aritmética e
+arredondamento do TS. Não adiciona filtragem nova ou muda a aparência do efeito.
+
+Contrato da ABI interna `axia_poc_pattern_overlay_region`:
+
+- Fonte/máscara RGBA original preparada, dimensões, região absoluta e target
+  compacto na mesma grade; saída distinta. `x/y` da região são usados para
+  amostrar o padrão, nunca substituídos por coordenadas locais ao tile.
+- Padrão **já decodificado** em RGBA8 reto, ponteiro/comprimento e dimensões
+  positivas inteiras. Cada eixo tem limite de 8.192 e o raster até 64 MiB,
+  conforme os limites atuais de estilo. Rust não lê URLs nem arquivos.
+- Cosseno/seno f64, fator de escala e opacidade finita de 0 a 100, inclusive
+  fracionária; modos 0=normal, 1=multiply, 2=screen, 3=overlay, 4=darken, 5=lighten.
+  Coeficientes são finitos, no intervalo [-1,1] e formam rotação unitária
+  (erro de norma até 1e-12); fator de escala no intervalo [0,01,10].
+- O adapter TS recebe ângulo **normalizado [-180,180)** e escala **[1,1000]%**.
+  Calcula `radians = -angle * Math.PI / 180`, `Math.cos`, `Math.sin` e
+  `Math.max(0.01, scale / 100)` uma vez por pedido. Rust faz o laço de pixels;
+  não troca a função trigonométrica da referência por outra implementação.
+- A repetição segue `floor(((coordenada % tamanho) + tamanho) % tamanho)`,
+  preservando o duplo resto e suas decisões próximas de zero/período.
+  Simplificar para outro wrap pode mudar pixels em rotações de 90°/180°.
+- Status 0=sucesso, 1=dimensões/comprimentos inválidos, 2=efeito inválido,
+  3=ponteiro nulo, 5=saída sobreposta à fonte, target ou textura. Validação
+  ocorre antes da escrita; entradas permanecem somente leitura.
+
+Para manter paridade com o compositor existente, a âncora é a origem **da grade
+preparada**, que pode incluir o padding de estilos externos. Não é ainda uma
+âncora global de documento: se houver halo, o chamador precisa preparar a
+máscara original com o mesmo padding da aparência e manter offsets/grade nos
+pedidos. O teste com sombra valida essa montagem usando TS para produzir o
+efeito externo. Não porta blur/sombra, geração de halo nem transforma camadas.
+O `linkWithLayer` atual não altera a amostragem no passe TS puro; o porte
+preserva isso, sem implementar posicionamento independente do documento.
+
+O comando `pattern-overlay-staged-region` transfere o target e a textura,
+reutilizando a fonte original. A textura ainda é copiada para WASM **por pedido**,
+sem cache/handle persistente de asset. Ao mudar padrão/ângulo/escala/opacidade,
+o chamador deve avançar a versão visual do gate mesmo se a máscara não mudou.
+IDs ultrapassados e gerações antigas não podem publicar. Cancelamento é de
+pedidos pendentes, não interrupção do kernel síncrono.
+
+O POC exige padrão decodificado e rejeita raster ausente/incompleto. No pipeline
+de produto, efeito sem asset selecionado continua sendo um no-op no TS; asset
+selecionado mas não decodificado continua retornando `LayerStylePatternMissingError`.
+Essa distinção ainda precisará ser preservada pelo futuro chamador Rust, não
+convertida em fallback silencioso. A nova ABI é interna, não API pública.
+
+Validação desta fatia:
+
+- **16 testes Rust**, Clippy sem avisos e formatação verificada.
+- **480 testes frontend** e typecheck, incluindo benchmark e harness Worker TS.
+- **43 testes WASM/Worker**: 29 anteriores e 14 novos. As seis matrizes usam
+  256 alfas de máscara × 256 posições de textura × seis configurações × seis
+  modos = **2.359.296 pixels comparados byte a byte**. A configuração de ângulo
+  0/escala 100 percorre todos os pares de alfa máscara/textura em cada modo;
+  outras configurações cobrem preenchimento/opacidade fracionários, rotações
+  negativas, 90°/próximas de 180°, escalas 1/37,5/99,9999/101,25/1000%.
+- O golden fixo `pattern-overlay-tiling` foi reaproveitado sem modificar
+  esperados. Tiles de um raster 17×11 com padrão 3×2 cobrem oito ângulos × seis
+  escalas, incluindo 0,1°, repetição negativa e bordas ímpares. O raster inteiro
+  TS e os tiles remontados têm os mesmos bytes, sem tolerância.
+- Combinação sombra externa + cor + padrão nos seis modos, preservando origem
+  de amostragem e offsets; cor → dois padrões com fill 0%, máscara original e
+  arredondamento entre estágios; textura transparente e RGB oculto.
+- ABI/adapter rejeitam dimensões, limites, NaN/Infinity, rotação inválida,
+  região fora da fonte e overlap parcial da saída com as três entradas.
+  Pedido inválido seguido de recuperação e fonte liberada foram verificados.
+- Worker real transfere target/textura, mantém ID/geração da máscara e rejeita
+  publicação após troca de aparência, pedido mais recente ou invalidação.
+  O harness TS agora é compartilhado com a suíte Blend If/cor e libera timers
+  e pendências também se a thread encerrar ou `postMessage` falhar.
+- Build/bundle íntegros com WASM **34.233 bytes** e diagnóstico explícito em
+  executável temporário de produção Wails/WebView2 passaram, incluindo padrão.
+  Nenhum instalador novo foi produzido ou validado nesta fatia.
+- Corrigida a métrica `wasmBytes` do diagnóstico: capturar o tamanho antes de
+  transferir o buffer ao Worker, pois após transferência o buffer é detached e
+  reportava zero. O smoke Wails agora exige tamanho igual ao artefato gerado;
+  o smoke Edge também verifica tamanho positivo. Não altera o kernel/preview.
+
+O comando `npm run benchmark:rust-pattern-overlay -- 1024 20` alterna TS/Rust
+depois de três aquecimentos e confere cada saída fora da janela medida. A sonda
+compara fill + padrão no compositor TS atual com duas chamadas do adapter Rust,
+**incluindo** cópias intermediárias, alocações, upload da textura por pedido e
+cópia final. Fonte/padrão já estão decodificados; preparar a fonte é custo separado.
+Windows 10.0.26200/i7-3770/Node fixado 24.14.1, fonte RGBA sintética 1024²,
+padrão 31×17 (2.108 bytes), fill 60%, ângulo normalizado -33,333°, escala 175,5%,
+opacidade 73,5% e modo overlay:
+
+| Etapa | Mediana | p95 amostral (20 amostras) |
+| --- | ---: | ---: |
+| Compositor TS atual, preenchimento + padrão | 295,777 ms | 325,142 ms |
+| Adapter Rust/WASM, ambas as chamadas e cópias | 163,597 ms | 201,000 ms |
+| Soma dos dois kernels Rust por amostra | 159,624 ms | 197,681 ms |
+| Cópia do target + padrão para WASM | 0,600 ms | 1,190 ms |
+| Cópias de saída, intermediária + final | 2,318 ms | 3,675 ms |
+
+Preparar a fonte custou **1,621 ms** uma vez. Não somar medianas dos componentes.
+A comparação mede implementações atuais: TS usa seu pipeline e calcula
+trigonometria no amostrador por pixel; o adapter Rust calcula coeficientes uma
+vez e reutiliza a fonte. Não isola linguagem/SIMD e não garante o mesmo resultado
+de desempenho com texturas grandes. Worker/mensagens, UI, GPU, Canvas,
+decode/encode e pico de memória não estão incluídos.
+
+~164 ms para um raster inteiro 1024² continua acima de um orçamento interativo.
+Profiling do kernel, regiões sujas, cache de textura, batch sem cópias
+intermediárias e orçamento agregado precisam ser avaliados antes de ligar esse
+passo ao preview. Os quatro buffers têm limite **individual**, não teto agregado
+do compositor; liberar alocações não encolhe a memória linear do WASM.
+O contrato de ponteiros continua confiando nas alocações do adapter, sem
+validação nativa de handles. C0/C1/C2 seguem abertos e o preview normal não mudou.

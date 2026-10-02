@@ -334,6 +334,23 @@ Esse módulo não porta os modos de composição do documento/Canvas nem liga
 Rust ao preview normal. Cache agregado, halos, demais efeitos e gates C2
 continuam abertos; a ABI permanece experimental e sem posse do documento.
 
+Uma quarta fatia, **Sobreposição de padrão**, agora amostra a textura RGBA
+decodificada e usa a mesma mesclagem Rust dos efeitos. Coordenadas são absolutas
+na grade preparada: tiles não reiniciam a repetição. Os coeficientes de rotação
+são calculados uma vez pelo adapter TS com a mesma trigonometria da referência,
+evitando mudança de texel em fronteiras por diferenças de biblioteca matemática.
+O golden existente, 2.359.296 pixels comparados, 48 combinações de rotação/escala
+em tiles de borda, transparência e combinação com raster expandido por sombra
+passaram byte a byte. O Worker transfere target/textura e reutiliza a máscara,
+com proteção contra respostas ultrapassadas; o diagnóstico passou no WebView2.
+Uma sonda Node 1024² registrou 295,78 ms no TS e 163,60 ms no adapter Rust para
+fill → padrão, incluindo cópias intermediárias e upload do padrão por pedido.
+Ainda faltam cache de assets/batch, profiling, orçamento agregado e benchmark
+end-to-end. A expansão da sombra foi produzida pelo TS no teste, não portada;
+halo e âncora seguem sob responsabilidade do chamador. O preview normal não
+foi alterado e nenhum gate C0/C1/C2 foi encerrado. Detalhes na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

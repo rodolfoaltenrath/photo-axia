@@ -114,11 +114,13 @@ try {
   const evaluate = evaluator(socket)
   let result
   for (let attempt = 0; attempt < 300; attempt++) {
-    result = await evaluate('({ status: document.documentElement.dataset.axiaRustPoc, error: document.documentElement.dataset.axiaRustPocError })')
+    result = await evaluate('({ status: document.documentElement.dataset.axiaRustPoc, error: document.documentElement.dataset.axiaRustPocError, wasmBytes: Number(document.documentElement.dataset.axiaRustPocWasmBytes) })')
     if (result?.status) break
     await delay(100)
   }
   assert.equal(result?.status, 'passed', `Diagnóstico Wails/WebView2 falhou: ${result?.error ?? 'sem resultado'}`)
+  assert.equal(result.wasmBytes, readFileSync(join(repoRoot, 'frontend', 'src', 'generated', 'axia_pixel_core.wasm')).length,
+    'O diagnóstico deve reportar o tamanho do WASM carregado antes da transferência')
   process.stdout.write('Smoke Wails/WebView2: Worker/WASM incorporados ao executável passaram.\n')
 } finally {
   socket?.close()

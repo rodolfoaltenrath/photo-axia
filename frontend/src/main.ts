@@ -16,6 +16,7 @@ async function bootstrap() {
     void import('./editor/rustPixelPocDiagnostic.ts')
       .then(({ runRustPixelPocDiagnostic }) => runRustPixelPocDiagnostic())
       .then((result) => {
+        document.documentElement.dataset.axiaRustPocWasmBytes = String(result.wasmBytes)
         document.documentElement.dataset.axiaRustPoc = 'passed'
         console.info('Axia Rust POC:', result)
       })

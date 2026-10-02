@@ -35,6 +35,8 @@
     "benchmark:rust-blend-if": "node --experimental-strip-types benchmarks/rustUnderlyingBlendIf.ts",
     "prebenchmark:rust-color-overlay": "node scripts/buildRustPixelPoc.mjs",
     "benchmark:rust-color-overlay": "node --experimental-strip-types benchmarks/rustColorOverlay.ts",
+    "prebenchmark:rust-pattern-overlay": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-pattern-overlay": "node --experimental-strip-types benchmarks/rustPatternOverlay.ts",
     "test:types": "tsc --project tsconfig.test.json",
     "benchmark:quick-selection": "node --experimental-strip-types benchmarks/quickSelection4k.mjs"
   },

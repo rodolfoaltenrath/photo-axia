@@ -12,6 +12,7 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
   if (!response.ok) throw new Error(`WASM indisponível (HTTP ${response.status}).`)
   const wasm = await response.arrayBuffer()
   if (!wasm.byteLength) throw new Error('WASM vazio no pacote.')
+  const wasmBytes = wasm.byteLength // The buffer is detached after transfer to the Worker.
 
   const worker = new Worker(new URL('../workers/rustPixelPoc.worker.ts', import.meta.url), { type: 'module' })
   let nextId = 0
@@ -86,6 +87,18 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         [...new Uint8Array(colored.rgba)].join(',') !== '200,120,40,128,0,0,0,0') {
       throw new Error('Worker Rust produziu Sobreposição de cor diferente do golden.')
     }
+    const patternTarget = new Uint8Array(8)
+    const pattern = new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255])
+    const patternRequest = send({ type: 'pattern-overlay-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 }, target: patternTarget.buffer,
+      pattern: { rgba: pattern.buffer, width: 2, height: 1 },
+      effect: { angle: 0, scale: 100, opacity: 100, blendMode: 'normal' } }, [patternTarget.buffer, pattern.buffer])
+    const patternToken = gate.captureTile('padrão-direita', patternRequest.id)
+    const patterned = await patternRequest
+    if (!patternToken?.isCurrent(patterned) || patternTarget.byteLength !== 0 || pattern.byteLength !== 0 ||
+        [...new Uint8Array(patterned.rgba)].join(',') !== '0,0,255,255,0,0,0,0') {
+      throw new Error('Worker Rust produziu Sobreposição de padrão diferente do golden.')
+    }
     const backdrop = new Uint8Array([75, 0, 0, 255, 100, 0, 0, 0])
     const blendRequest = send({ type: 'blend-if-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, backdrop: backdrop.buffer,
@@ -133,7 +146,7 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     }
     const disposed = await send({ type: 'dispose' })
     if (disposed.type !== 'disposed') throw new Error('Worker Rust não descartou o estado.')
-    return { elapsedMs: performance.now() - started, wasmBytes: wasm.byteLength }
+    return { elapsedMs: performance.now() - started, wasmBytes }
   } finally {
     worker.terminate()
   }

@@ -1,40 +1,12 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { Worker } from 'node:worker_threads'
-import type { RustPixelPocRequest, RustPixelPocResponse } from '../../src/editor/rustPixelPocProtocol.ts'
 import { RustPixelPocTileGate } from '../../src/editor/rustPixelPocTileGate.ts'
-
-type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
+import { createRustPixelWorkerHarness } from './support/rustPixelWorkerHarness.ts'
 
 test('Worker Blend If transfere backdrop, reutiliza fonte e protege publicação após mudança inferior', async () => {
-  const worker = new Worker(new URL('../rustPixelPoc.node-worker.mjs', import.meta.url))
-  const pending = new Map<number, { resolve: (value: RustPixelPocResponse) => void;
-    reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }>()
-  let nextId = 0
-  worker.on('message', (message: RustPixelPocResponse) => {
-    const entry = pending.get(message.id)
-    if (!entry) return
-    clearTimeout(entry.timeout)
-    pending.delete(message.id)
-    entry.resolve(message)
-  })
-  worker.on('error', (error) => {
-    for (const entry of pending.values()) { clearTimeout(entry.timeout); entry.reject(error) }
-    pending.clear()
-  })
-  function send(request: WithoutId<RustPixelPocRequest>, transfers: ArrayBuffer[] = []) {
-    const id = ++nextId
-    const promise = new Promise<RustPixelPocResponse>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pending.delete(id)
-        reject(new Error(`Worker sem resposta: ${id}`))
-      }, 5000)
-      pending.set(id, { resolve, reject, timeout })
-      worker.postMessage({ ...request, id }, transfers)
-    })
-    return Object.assign(promise, { id })
-  }
+  const harness = createRustPixelWorkerHarness()
+  const { send } = harness
   try {
     const wasm = Uint8Array.from(readFileSync(new URL(
       '../../../rust/axia-pixel-core/target/wasm32-unknown-unknown/release/axia_pixel_core.wasm', import.meta.url
@@ -115,7 +87,6 @@ test('Worker Blend If transfere backdrop, reutiliza fonte e protege publicação
     assert.deepEqual(staleColor, { type: 'error', id: staleColor.id, code: 'invalid-input' })
     assert.equal((await send({ type: 'dispose' })).type, 'disposed')
   } finally {
-    for (const entry of pending.values()) clearTimeout(entry.timeout)
-    await worker.terminate()
+    await harness.close()
   }
 })

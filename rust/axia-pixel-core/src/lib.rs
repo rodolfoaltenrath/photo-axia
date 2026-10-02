@@ -4,6 +4,7 @@
 pub mod blend_if;
 pub mod color_overlay;
 pub mod composite;
+pub mod pattern_overlay;
 
 /// Matches the current TS fill-only pass on a transparent target. A source
 /// pixel whose scaled alpha rounds to zero does not contribute hidden RGB.

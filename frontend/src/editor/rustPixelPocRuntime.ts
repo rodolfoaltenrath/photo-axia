@@ -21,6 +21,11 @@ interface RustPixelPocExports {
     sourceWidth: number, sourceHeight: number, x: number, y: number, width: number, height: number,
     targetPointer: number, targetLength: number, outputPointer: number, outputLength: number,
     red: number, green: number, blue: number, colorAlpha: number, opacity: number, blendMode: number): number
+  axia_poc_pattern_overlay_region(sourcePointer: number, sourceLength: number,
+    sourceWidth: number, sourceHeight: number, x: number, y: number, width: number, height: number,
+    targetPointer: number, targetLength: number, outputPointer: number, outputLength: number,
+    patternPointer: number, patternLength: number, patternWidth: number, patternHeight: number,
+    cosine: number, sine: number, scaleFactor: number, opacity: number, blendMode: number): number
 }
 
 export interface RustPixelPocRegion { x: number; y: number; width: number; height: number }
@@ -37,6 +42,16 @@ export interface RustPixelPocColorOverlay {
   blendMode: LayerBlendMode
 }
 
+/** A decoded RGBA8 texture, not a URL or document asset handle. */
+export interface RustPixelPocPatternRaster { rgba: Uint8Array; width: number; height: number }
+/** Caller supplies normalized layer-style parameters, not unbounded UI values. */
+export interface RustPixelPocPatternOverlay {
+  angle: number
+  scale: number
+  opacity: number
+  blendMode: LayerBlendMode
+}
+
 const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
   normal: 0, multiply: 1, screen: 2, overlay: 3, darken: 4, lighten: 5
 }
@@ -44,6 +59,9 @@ const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
 type TilePass =
   | { type: 'blend-if'; pointer: number; length: number; config: RustPixelPocUnderlyingBlendIf }
   | { type: 'color-overlay'; pointer: number; length: number; effect: RustPixelPocColorOverlay }
+  | { type: 'pattern-overlay'; pointer: number; length: number; patternPointer: number;
+      patternLength: number; patternWidth: number; patternHeight: number;
+      cosine: number; sine: number; scaleFactor: number; effect: RustPixelPocPatternOverlay }
 
 const BLEND_IF_CHANNELS: Readonly<Record<RustPixelPocUnderlyingBlendIf['channel'], number>> = {
   gray: 0, red: 1, green: 2, blue: 3
@@ -66,7 +84,8 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_fill_opacity !== 'function' ||
       typeof candidate.axia_poc_fill_opacity_region !== 'function' ||
       typeof candidate.axia_poc_blend_if_underlying_region !== 'function' ||
-      typeof candidate.axia_poc_color_overlay_region !== 'function') {
+      typeof candidate.axia_poc_color_overlay_region !== 'function' ||
+      typeof candidate.axia_poc_pattern_overlay_region !== 'function') {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -154,6 +173,13 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
               sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
               pass.pointer, pass.length, outputPointer, outputLength, ...pass.effect.color,
               pass.effect.opacity, BLEND_MODES[pass.effect.blendMode])
+            break
+          case 'pattern-overlay':
+            status = exports.axia_poc_pattern_overlay_region(sourcePointer, sourceLength,
+              sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+              pass.pointer, pass.length, outputPointer, outputLength,
+              pass.patternPointer, pass.patternLength, pass.patternWidth, pass.patternHeight,
+              pass.cosine, pass.sine, pass.scaleFactor, pass.effect.opacity, BLEND_MODES[pass.effect.blendMode])
             break
           default:
             pass satisfies never
@@ -338,6 +364,51 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
           region, 100, allocated - started, copiedIn - allocated, { type: 'color-overlay', pointer, length, effect }),
           generation: staged.generation }
       } finally {
+        exports.axia_poc_free(pointer, length)
+      }
+    },
+    patternOverlayStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array,
+      pattern: RustPixelPocPatternRaster, effect: RustPixelPocPatternOverlay) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
+      const length = validateRegion(region, staged.width, staged.height, 100)
+      if (!effect || !Object.hasOwn(BLEND_MODES, effect.blendMode) ||
+          !Number.isFinite(effect.opacity) || effect.opacity < 0 || effect.opacity > 100 ||
+          !Number.isFinite(effect.angle) || effect.angle < -180 || effect.angle >= 180 ||
+          !Number.isFinite(effect.scale) || effect.scale < 1 || effect.scale > 1000 ||
+          target.byteLength !== length || !pattern || !(pattern.rgba instanceof Uint8Array) ||
+          pattern.width > 8192 || pattern.height > 8192) {
+        throw new RustPixelPocError('invalid-input')
+      }
+      validateSource(pattern.rgba, pattern.width, pattern.height)
+      // Same trig engine/order as the reference TS pass, computed once per job.
+      // A different libm can select a different texel at nearest-neighbor boundaries.
+      const radians = -effect.angle * Math.PI / 180
+      const cosine = Math.cos(radians), sine = Math.sin(radians)
+      const scaleFactor = Math.max(0.01, effect.scale / 100)
+      const started = performance.now()
+      const pointer = exports.axia_poc_alloc(length)
+      if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+      let patternPointer = 0
+      try {
+        patternPointer = exports.axia_poc_alloc(pattern.rgba.byteLength)
+        if (!Number.isSafeInteger(patternPointer) || patternPointer <= 0 ||
+            pointer + length > exports.memory.buffer.byteLength ||
+            patternPointer + pattern.rgba.byteLength > exports.memory.buffer.byteLength) {
+          throw new RustPixelPocError('wasm-failure')
+        }
+        const allocated = performance.now()
+        new Uint8Array(exports.memory.buffer, pointer, length).set(target)
+        new Uint8Array(exports.memory.buffer, patternPointer, pattern.rgba.byteLength).set(pattern.rgba)
+        const copiedIn = performance.now()
+        return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
+          region, 100, allocated - started, copiedIn - allocated, { type: 'pattern-overlay', pointer, length,
+            patternPointer, patternLength: pattern.rgba.byteLength, patternWidth: pattern.width,
+            patternHeight: pattern.height, cosine, sine, scaleFactor, effect }), generation: staged.generation }
+      } finally {
+        if (Number.isSafeInteger(patternPointer) && patternPointer > 0) {
+          exports.axia_poc_free(patternPointer, pattern.rgba.byteLength)
+        }
         exports.axia_poc_free(pointer, length)
       }
     },

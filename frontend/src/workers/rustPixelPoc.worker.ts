@@ -55,7 +55,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
   // Source lifecycle commands are correctness barriers, never cancellable.
   const isRender = request.type === 'render' || request.type === 'render-region' ||
     request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
-    request.type === 'color-overlay-staged-region'
+    request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region'
   if (isRender) pending.add(request.id)
   void runtime.then((engine) => {
     if (current !== generation || cancelled.has(request.id)) {
@@ -79,7 +79,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
       return
     }
     if (request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
-        request.type === 'color-overlay-staged-region') {
+        request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region') {
       const result = (() => {
         switch (request.type) {
           case 'blend-if-staged-region':
@@ -88,6 +88,10 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
           case 'color-overlay-staged-region':
             return engine.colorOverlayStagedRegion(request.sourceId, request.region,
               new Uint8Array(request.target), request.effect)
+          case 'pattern-overlay-staged-region':
+            return engine.patternOverlayStagedRegion(request.sourceId, request.region,
+              new Uint8Array(request.target), { rgba: new Uint8Array(request.pattern.rgba),
+                width: request.pattern.width, height: request.pattern.height }, request.effect)
           case 'render-staged-region':
             return engine.renderStagedRegion(request.sourceId, request.region, request.fillOpacity)
           default:

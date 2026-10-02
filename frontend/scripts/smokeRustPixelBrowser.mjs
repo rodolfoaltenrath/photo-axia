@@ -93,11 +93,13 @@ try {
   const evaluate = evaluator(socket)
   let result
   for (let attempt = 0; attempt < 200; attempt++) {
-    result = await evaluate('({ status: document.documentElement.dataset.axiaRustPoc, error: document.documentElement.dataset.axiaRustPocError })')
+    result = await evaluate('({ status: document.documentElement.dataset.axiaRustPoc, error: document.documentElement.dataset.axiaRustPocError, wasmBytes: Number(document.documentElement.dataset.axiaRustPocWasmBytes) })')
     if (result?.status) break
     await delay(100)
   }
   assert.equal(result?.status, 'passed', `Diagnóstico Edge falhou: ${result?.error ?? 'sem resultado'}`)
+  assert.ok(Number.isSafeInteger(result.wasmBytes) && result.wasmBytes > 0,
+    'O tamanho reportado do WASM deve ser capturado antes da transferência')
   process.stdout.write('Smoke Edge real-time: Worker/WASM empacotados passaram.\n')
 } finally {
   socket?.close()
