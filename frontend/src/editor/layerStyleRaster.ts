@@ -200,7 +200,7 @@ function boxBlurVertical(source: Uint8ClampedArray, width: number, height: numbe
   return output
 }
 
-function spreadAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number) {
+export function spreadAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number) {
   return radius > 0
     ? maxFilterVertical(maxFilterHorizontal(source, width, height, radius), width, height, radius)
     : new Uint8ClampedArray(source)
@@ -264,7 +264,7 @@ function erodeAlpha(source: Uint8ClampedArray, width: number, height: number, ra
     : new Uint8ClampedArray(source)
 }
 
-function blurAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number, precise: boolean) {
+export function blurAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number, precise: boolean) {
   if (radius <= 0) return new Uint8ClampedArray(source)
   const passes = precise ? [radius] : [
     Math.floor(radius / 3),
@@ -454,7 +454,7 @@ function offsetAlpha(
   return shifted
 }
 
-function renderDropShadow(
+export function renderDropShadow(
   target: Uint8ClampedArray,
   sourceAlpha: Uint8ClampedArray,
   width: number,

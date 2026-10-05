@@ -117,6 +117,25 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         throw new Error(`Worker Rust produziu gradiente ${type} diferente do golden.`)
       }
     }
+    const shadowTarget = new Uint8Array(8)
+    const shadowRequest = send({ type: 'drop-shadow-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 }, target: shadowTarget.buffer,
+      shadow: { spreadRadius: 0, blurRadius: 1, offsetX: 0, offsetY: 0, color: [51, 102, 153, 255],
+        opacity: 75, blendMode: 'multiply', noise: 0, seed: 0, knockout: true,
+        contour: { preset: 'linear', points: [] } } }, [shadowTarget.buffer])
+    const shadowToken = gate.captureTile('sombra-direita', shadowRequest.id), shadowResult = await shadowRequest
+    if (!shadowToken?.isCurrent(shadowResult) || shadowTarget.byteLength !== 0 ||
+        [...new Uint8Array(shadowResult.rgba)].join(',') !== '0,0,0,0,51,102,153,64') {
+      throw new Error('Worker Rust produziu sombra externa diferente da referência fixa.')
+    }
+    const maskRequest = send({ type: 'alpha-mask-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 }, config: { spreadRadius: 0, blurRadius: 1, precise: false } })
+    const maskToken = gate.captureTile('máscara-direita', maskRequest.id)
+    const maskResult = await maskRequest
+    if (!maskToken?.isCurrent(maskResult) || maskResult.timings.copyInMs !== 0 ||
+        [...new Uint8Array(maskResult.rgba)].join(',') !== '0,0,0,85,0,0,0,85') {
+      throw new Error('Worker Rust produziu máscara com halo diferente da referência fixa.')
+    }
     const batchRequest = send({ type: 'local-batch-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, plan: { fillOpacity: 0, effects: [
         { type: 'color-overlay', effect: { color: [255, 0, 0, 255], opacity: 50, blendMode: 'normal' } },

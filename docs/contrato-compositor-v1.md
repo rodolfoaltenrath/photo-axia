@@ -10,6 +10,14 @@ O [lote local experimental](contrato-lote-local-v1.md) tem ABI própria para
 fill/overlays/filtro terminal. Ainda não implementa a pilha ou transformações
 documentais especificadas aqui.
 
+A [máscara alfa regional](contrato-mascara-alfa-v1.md) tem ABI experimental
+separada para spread/blur com contexto. Ainda não implementa sombras/brilhos
+completos nem a expansão documental de camadas.
+
+A [sombra externa regional](contrato-sombra-externa-v1.md) já calcula esse
+efeito sobre máscara/target preparados, em ABI separada. Não resolve a pilha
+do documento nem integra o lote local/preview normal.
+
 ## 1. Vocabulário e unidades
 
 - Documento: espaço contínuo em pixels documentais, origem `(0, 0)` no canto

@@ -57,7 +57,8 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
     request.type === 'blend-if-this-layer-staged-region' ||
     request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
-    request.type === 'gradient-overlay-staged-region' || request.type === 'local-batch-staged-region'
+    request.type === 'gradient-overlay-staged-region' || request.type === 'local-batch-staged-region' ||
+    request.type === 'alpha-mask-staged-region' || request.type === 'drop-shadow-staged-region'
   if (isRender) pending.add(request.id)
   void runtime.then((engine) => {
     if (current !== generation || cancelled.has(request.id)) {
@@ -83,9 +84,14 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     if (request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
         request.type === 'blend-if-this-layer-staged-region' ||
         request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
-        request.type === 'gradient-overlay-staged-region' || request.type === 'local-batch-staged-region') {
+        request.type === 'gradient-overlay-staged-region' || request.type === 'local-batch-staged-region' ||
+        request.type === 'alpha-mask-staged-region' || request.type === 'drop-shadow-staged-region') {
       const result = (() => {
         switch (request.type) {
+          case 'drop-shadow-staged-region':
+            return engine.dropShadowStagedRegion(request.sourceId, request.region, new Uint8Array(request.target), request.shadow)
+          case 'alpha-mask-staged-region':
+            return engine.alphaMaskStagedRegion(request.sourceId, request.region, request.config)
           case 'local-batch-staged-region':
             return engine.localBatchStagedRegion(request.sourceId, request.region, request.plan)
           case 'blend-if-this-layer-staged-region':

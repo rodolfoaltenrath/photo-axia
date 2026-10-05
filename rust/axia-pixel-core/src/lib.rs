@@ -1,9 +1,11 @@
 //! Experimental pixel ABI; not the document compositor.
 
+pub mod alpha_mask;
 pub mod batch;
 pub mod blend_if;
 pub mod color_overlay;
 pub mod composite;
+pub mod drop_shadow;
 pub mod gradient_overlay;
 pub mod pattern_overlay;
 

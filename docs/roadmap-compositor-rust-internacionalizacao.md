@@ -414,6 +414,32 @@ predominam os kernels. Isso não mede FPS nem conclui C0/C1/C2. Contrato,
 cobertura e limites na [ABI do lote local](contrato-lote-local-v1.md) e na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
+Uma décima fatia porta os primitivos de **expansão quadrada e desfoque da
+máscara alfa** para Rust. Calcula suporte spread + blur, processa o contexto
+do tile e recorta ao fim, preservando arredondamento por eixo e zero nas bordas.
+Worker/adapter reutilizam a fonte e verificam 96 MiB por job incluindo duas
+máscaras e fila. Isso prepara sombras/brilhos, mas não porta cor, deslocamento,
+contorno, ruído ou a composição desses efeitos; o lote local não foi ampliado.
+Matrizes, tiles e casos comparados com a sombra TS passaram byte a byte.
+A sonda isolada 1024² mediu 106,10 ms no TS e 82,42 ms no adapter Rust; um tile
+512² com contexto 544² levou 20,27 ms. Não é medição de FPS. Preview normal,
+exportação e gates C0/C1/C2 permanecem inalterados. Detalhes na
+[ABI da máscara alfa](contrato-mascara-alfa-v1.md) e na [prova Rust/WASM](prova-rust-wasm-c1.md).
+
+Uma décima primeira fatia porta a **sombra externa**: deslocamento resolvido
+no TS, spread/blur em Rust, knockout, cor/alfa, seis contornos, ruído e seis
+modos de mesclagem, sobre fonte original com padding e target compacto.
+Preserva índice global, hash UTF-16, ruído assinado e cauda dos contornos
+customizados da referência. Golden existente, matrizes, tiles e cadeia de
+sombras/overlay/Mesclar se passaram byte a byte. O orçamento por job soma os
+buffers da sombra aos filtros; não é LRU/global. A sonda Node 1024² mediu
+243,04 ms no TS e 158,96 ms no adapter Rust; tile 512² com contexto 544² levou
+39,24 ms. Ainda não mede fluidez do editor. Fonte ampliada/insets, executor
+externo integrado ao lote, demais efeitos, cache/transformações e gates
+C0/C1/C2 seguem pendentes. Preview normal, exportação e `.axia` não mudaram.
+Detalhes na [ABI da sombra externa](contrato-sombra-externa-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

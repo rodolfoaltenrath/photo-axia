@@ -43,6 +43,10 @@
     "benchmark:rust-gradient-overlay": "node --experimental-strip-types benchmarks/rustGradientOverlay.ts",
     "prebenchmark:rust-local-batch": "node scripts/buildRustPixelPoc.mjs",
     "benchmark:rust-local-batch": "node --experimental-strip-types benchmarks/rustLocalBatch.ts",
+    "prebenchmark:rust-alpha-mask": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-alpha-mask": "node --experimental-strip-types benchmarks/rustAlphaMask.ts",
+    "prebenchmark:rust-drop-shadow": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-drop-shadow": "node --experimental-strip-types benchmarks/rustDropShadow.ts",
     "test:types": "tsc --project tsconfig.test.json",
     "benchmark:quick-selection": "node --experimental-strip-types benchmarks/quickSelection4k.mjs"
   },

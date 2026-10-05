@@ -942,3 +942,190 @@ Próximos passos: demais estágios e halo, cache/assets e orçamento agregado,
 transformação/reamostragem, medição end-to-end e validação multiplataforma.
 Os gates C0/C1/C2 continuam abertos. Preview normal, exportação, texto, modelo
 do documento e `.axia` permanecem inalterados.
+
+## Décima fatia: spread/blur da máscara alfa com contexto
+
+Implementada em 2026-10-05. Rust calcula a expansão quadrada e o blur da
+máscara alfa, primitivos usados por sombras/brilhos. Não é porte completo de
+um efeito: deslocamento, cor, contorno, knockout, ruído/seed, paint e mistura
+final ainda ficam no TS. Não inclui expansão circular do traçado nem amplia
+o lote local anterior. Nenhum consumidor visual normal mudou.
+
+### Semântica e fronteira espacial
+
+O [contrato da máscara alfa V1](contrato-mascara-alfa-v1.md) registra a ABI de
+13 argumentos, raios inteiros 0..4096 e saída RGBA8 preta com alfa filtrado.
+RGB/fill não participam da máscara. O chamador resolve tamanho/escala na grade
+preparada; não aplicar raios documentais diretamente a uma fonte de preview.
+
+- Spread: máximos horizontal/vertical em O(n), usando fila monotônica u32.
+  Preserva a expansão quadrada atual, não muda o algoritmo do traçado.
+- Blur: médias móveis com divisor fixo e zero fora da fonte. Arredonda cada
+  eixo antes do seguinte; preciso usa um raio e suave divide o raio em três
+  pares, como `blurAlpha` atual. Não aproxima com uma gaussiana diferente.
+- Contexto: halo igual à soma spread + blur. Expande o tile, intersecta com
+  a fonte preparada, executa os passes e recorta somente ao fim. Não lê somente
+  o tile de saída nem reinicia o filtro na emenda entre tiles.
+- A expansão externa da camada, sua origem/insets e o deslocamento de sombra
+  não são resolvidos aqui. O chamador ainda prepara padding transparente na
+  grade correta; resultados fora dessa fonte não são solicitáveis por esta ABI.
+
+TS/Rust verificam 96 MiB por job somando fonte/saída, duas máscaras u8 do
+contexto e fila u32. Overflow e `try_reserve_exact` falham sem publicar saída;
+status 6 vira `memory-limit`. Não é limite global, LRU, RSS ou medição de pico.
+As máscaras são reutilizadas entre eixos; não há alocação/chamada WASM por pixel.
+Fonte preparada fica intacta. Ponteiros privados continuam unsafe; cancelamento
+não interrompe o kernel síncrono. Nenhuma dependência/toolchain foi alterada.
+
+### Validação
+
+- **33 testes Rust**, Clippy sem avisos e formatação verificada.
+- **501 testes frontend**, typechecks e **125 testes WASM/Worker** passaram.
+- Matriz de **3.670.016 pixels**, todos os valores de alfa, quatro spreads,
+  sete raios de blur e as duas técnicas, comparando byte a byte com as funções
+  `spreadAlpha`/`blurAlpha` reais do TS, agora exportadas sem alteração de lógica.
+- Tiles 7×5 em 192 configurações/geometrias, incluindo dimensões 1×N, N×1 e
+  1×1, raios 4096 e fontes menores que o filtro. Cada tile equivale ao recorte
+  do cálculo TS integral, incluindo as bordas.
+- Mais 90 combinações de máscaras transparentes/opacas, cantos, xadrez e
+  ruído determinístico, com regiões centrais/de borda e ambos os blurs.
+- Quinze combinações size/spread conferem a máscara contra a **sombra TS
+  completa** com distância zero, cor preta, fill zero, sem knockout/ruído e
+  contorno padrão. Padding e origem são preparados pelo teste, não pelo Rust.
+  Isso não valida os parâmetros ainda não portados da sombra.
+- Referências fixas de blur/alfa, uso de vizinhos fora do tile, source/generation
+  preservados, rejeição de configuração e assinatura antiga, orçamento
+  virtual, falhas de allocator/kernel com limpeza/recuperação e ABI com saída
+  sentinela/overlap. Falha de reserva interna é simulada no adapter; não foi
+  provocada exaustão real da memória do sistema.
+- Worker real transfere fonte/saída e testa fonte reutilizada, alteração de
+  técnica, view gate, rejeição de plano inválido, invalidação e dispose.
+- Os 17 goldens existentes permanecem idênticos; nenhum foi regenerado.
+  Diagnóstico de bytes fixos passou no executável temporário Wails/WebView2,
+  junto dos passes anteriores, build e integridade do bundle. WASM de
+  **55.063 bytes**. Não foi gerado novo instalador/portável nem validado Linux.
+
+### Medição isolada
+
+Executar `npm run benchmark:rust-alpha-mask -- 1024 20`. Sonda isolada no
+Windows/i7-3770/Node 24.14.1, três aquecimentos, vinte amostras, spread 4 e
+blur suave 12. Ordem TS/Rust integral alternada; tile Rust medido separadamente
+após o par. Comparações byte a byte ficam fora das janelas cronometradas.
+
+| Caminho | Mediana / p95 |
+| --- | ---: |
+| TS integral 1024² | 106,100 / 128,512 ms |
+| Adapter Rust integral 1024² | 82,418 / 90,075 ms |
+| Kernel Rust integral | 80,872 / 88,754 ms |
+| Adapter Rust tile 512² + contexto 544² | 20,274 / 21,917 ms |
+| Kernel Rust desse tile | 19,908 / 21,537 ms |
+
+Fonte preparada uma vez em 1,553 ms, fora da janela. O total TS inclui extração
+do alfa, filtros e embalagem RGBA; o Rust inclui validação, temporários,
+processamento e cópia final, sem reupload da fonte. Não soma medianas/p95 nem
+isola efeito de linguagem/SIMD. O tile produz um quarto da área de saída,
+não o documento inteiro mais rápido. Fórmula de buffers: integral 10.489.856
+bytes; tile 5.836.928 bytes, ambos incluindo a fonte inteira preparada. Isso é
+contabilidade de buffers, não memória medida. Não mede sombra completa,
+Worker, Canvas, zoom/FPS, GPU, RSS ou performance do editor.
+
+Próximos passos: construir efeitos externos/halo completos sobre esses
+primitivos, incorporar estágios ao executor, cache/orçamento agregado e
+transformação/reamostragem, antes da integração visual. C0/C1/C2 continuam
+abertos; preview normal, exportação, texto e `.axia` ficam no caminho existente.
+
+## Décima primeira fatia: sombra externa regional
+
+Implementada em 2026-10-05. O kernel Rust agora executa deslocamento, spread,
+blur suave, knockout, seis contornos, cor/opacidade/ruído e seis modos de
+mesclagem de uma sombra externa sobre target compacto. O chamador ainda prepara
+a fonte ampliada/insets; o efeito não entra no lote local nem no editor normal.
+O [contrato da sombra V1](contrato-sombra-externa-v1.md) especifica essa fronteira.
+
+### Compatibilidade e execução
+
+- Adapter TS resolve luz local/global, escala e `Math.round` dos offsets/raios;
+  a seed usa unidades UTF-16 do ID, não bytes UTF-8. Rust recebe parâmetros
+  resolvidos no pacote `SHD1` com header de 64 bytes e até 32 pontos f64.
+- Fonte/máscara original permanece separada do target estilizado. A leitura
+  deslocada consulta pixels além do tile e respeita o limite da fonte inteira
+  antes de filtrar. Reutiliza os filtros da décima fatia, sem criar RGBA ou
+  máscara deslocada inteira intermediária. Suporte = spread + blur.
+- Knockout subtrai o alfa original na posição de saída. Ruído consulta o índice
+  global da grade preparada. O XOR final é **assinado**, como no TS atual;
+  negativos podem elevar o alfa acima de 255 antes da mesclagem. Não limitar
+  prematuramente nem trocar o PRNG durante o porte.
+- Contornos customizados preservam pontos coincidentes, interpolação e o
+  retorno ao primeiro Y após o último X. Não corrigir essa cauda implicitamente.
+  Ring usa `sin` em Rust; testes na stack fixada não garantem igualdade universal
+  de libm/runtime e precisam acompanhar trocas de plataforma/toolchain.
+- ABI privada `axia_poc_drop_shadow_region`, **14 argumentos**, exige pares
+  vivos do allocator e saída sem overlap com fonte/target/pacote. Adapter/bundle
+  rejeitam assinatura incompatível. Não é um registro de alocações seguro.
+- Limite de 96 MiB por job inclui fonte, target, pacote, saída, duas máscaras
+  u8 do contexto, fila u32 e 512 bytes para pontos do contorno. TS valida antes
+  das alocações WASM; Rust antes das máscaras. Validação/reservas precedem
+  escrita da saída. RAII/finally liberam temporários em falha, mantendo a fonte.
+  Não é LRU/orçamento global, RSS, overhead do allocator ou pico medido.
+
+Nenhuma crate/dependência/toolchain mudou. No caminho TS de produção, somente
+foi exportada a função real `renderDropShadow` para o oráculo; a lógica atual
+de sombra não foi alterada. O Worker experimental mantém transferência,
+geração, barreiras, view gate e descarte; WASM síncrono não é interrompível.
+
+### Validação
+
+- **37 testes Rust**, Clippy sem avisos e formatação verificada.
+- **505 testes frontend**, typechecks e **142 testes WASM/Worker** passaram.
+- Golden `directional-shadow-with-halo` reproduzido sem regenerar expectativas,
+  com dimensões/offsets e knockout. Os 17 casos do corpus continuam idênticos.
+- Matriz de **7.077.888 pixels**, seis modos × seis contornos × três níveis de
+  ruído, atravessando todos os alfas da máscara/target e cores distintas.
+- Tiles 7×5 em 288 configurações/geometrias, incluindo fontes estreitas/1×1,
+  deslocamentos em direções diferentes, spread/blur, knockout e índice global.
+- Cor RGBA zero/plena, opacidade 100 e ruído 100 com alfa potencialmente maior
+  que 255; contornos ring/custom com knockout, até 32 pontos e intervalos 1e-14.
+- Luz global/local, escala 0,125/1,375/8, quatro ângulos e efeito nos limites
+  size 250/distância 1000. Não significa que uma fonte expandida enorme caiba.
+- Duas sombras encadeadas na mesma máscara → overlay com fill zero → Esta
+  camada → Camada abaixo, comparadas com o compositor TS completo; o filtro
+  lê a fonte estilizada preparada depois dos efeitos, não a máscara original.
+- Pacote, overflow/count, raios, offsets, NaN, pontos e geometrias inválidas,
+  ponteiro null/overlap e saída sentinela; três falhas de alocação externas e
+  falha de orçamento nativo simulada verificam recuperação/liberação.
+- Worker real transfere target e fonte, altera luz/ruído/seed sem reupload,
+  rejeita pedidos ultrapassados/inválidos, invalida e descarta. Diagnóstico de
+  bytes fixos passou no executável temporário Wails/WebView2 junto dos passes
+  anteriores; build/integridade passaram. WASM de **66.006 bytes**. Não foi
+  gerado instalador/portável nem validado Linux nesta fatia.
+
+### Medição isolada
+
+`npm run benchmark:rust-drop-shadow -- 1024 20`: Windows/i7-3770/Node 24.14.1,
+três aquecimentos, vinte amostras, sem builds/testes concorrentes. Efeito:
+size 16, spread 25%, distância 11,25, ângulo -77,75, cor `#33669980`, multiply,
+opacidade 73,5%, ruído 37,5%, contorno linear, sem knockout. Target preparado
+contém RGBA variado. Alterna TS/Rust integral; mede tile central em separado.
+Cada resultado é comparado byte a byte fora da janela cronometrada.
+
+| Caminho | Mediana / p95 |
+| --- | ---: |
+| TS integral 1024² | 243,038 / 295,560 ms |
+| Adapter Rust integral | 158,956 / 172,691 ms |
+| Kernel Rust integral | 156,977 / 169,603 ms |
+| Adapter Rust tile 512² + contexto 544² | 39,242 / 43,419 ms |
+| Kernel Rust desse tile | 38,710 / 42,042 ms |
+
+Cópia de entrada Rust integral: 0,598 / 0,746 ms; saída: 1,053 / 1,810 ms.
+Preparar a fonte uma vez: 1,552 ms, fora da janela. TS inclui extração da
+máscara/target e execução do efeito; Rust inclui serialização, upload de
+target/pacote, temporários, kernel, readback e liberações. Não soma medianas/
+p95 nem atribui a diferença somente à linguagem/SIMD. Contabilidade de buffers:
+14.684.736 bytes integral e 6.886.080 bytes no tile; não é memória medida.
+Tile retorna um quarto da área de saída, não o documento inteiro mais rápido.
+Não mede preparação/padding do documento, Worker, Canvas, FPS/zoom, GPU ou RSS.
+
+Próximos passos: demais efeitos externos/internos, executor com estágios e
+halo integrado ao lote, cache/assets e orçamento agregado, transformação e
+medição end-to-end antes do rollout. C0/C1/C2 continuam abertos; preview
+normal, exportação, texto e `.axia` permanecem no caminho existente.
