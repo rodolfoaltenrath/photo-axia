@@ -1,6 +1,7 @@
-//! External shadow on a prepared padded mask; not document composition.
+//! Shadow passes on a prepared mask; not document composition.
 use crate::alpha_mask::{filtered_alpha_context, AlphaMask, AlphaMaskJob};
 use crate::composite::{composite_pixel_values, BlendMode};
+use crate::effect_math::{contour_value, random_at};
 use crate::{validate_raster_region, RasterRegion, MAX_POC_BYTES};
 
 const HEADER: usize = 64;
@@ -25,15 +26,33 @@ struct Shadow {
     seed: u32,
     opacity: f64,
     noise: f64,
+    choke: Option<f64>,
 }
 
 fn parse(packet: &[u8]) -> Result<Shadow, u32> {
-    if packet.len() < HEADER || packet.len() > HEADER + 32 * 16 || !packet.len().is_multiple_of(8) {
+    if packet.len() < HEADER
+        || packet.len() > HEADER + 8 + 32 * 16
+        || !packet.len().is_multiple_of(8)
+    {
         return Err(1);
     }
-    if integer(packet, 0) != 0x31444853 || integer(packet, 4) != 1 {
+    let inner = match integer(packet, 0) {
+        0x31444853 => false,
+        0x31494853 => true,
+        _ => return Err(2),
+    };
+    if integer(packet, 4) != 1 {
         return Err(2);
     }
+    let header = HEADER + if inner { 8 } else { 0 };
+    if packet.len() < header {
+        return Err(1);
+    }
+    let choke = if inner {
+        Some(double(packet, HEADER))
+    } else {
+        None
+    };
     let spread = integer(packet, 8) as usize;
     let blur = integer(packet, 12) as usize;
     let offset_x = integer(packet, 16) as i32;
@@ -55,10 +74,12 @@ fn parse(packet: &[u8]) -> Result<Shadow, u32> {
         || !(0.0..=100.0).contains(&opacity)
         || !noise.is_finite()
         || !(0.0..=100.0).contains(&noise)
+        || choke.is_some_and(|value| !value.is_finite() || !(0.0..=100.0).contains(&value))
+        || (inner && (spread != 0 || knockout != 0))
     {
         return Err(2);
     }
-    if count > 32 || packet.len() != HEADER + count * 16 {
+    if count > 32 || packet.len() != header + count * 16 {
         return Err(1);
     }
     if (contour == 5 && !(2..=32).contains(&count)) || (contour != 5 && count != 0) {
@@ -67,7 +88,7 @@ fn parse(packet: &[u8]) -> Result<Shadow, u32> {
     let mut points = Vec::new();
     points.try_reserve_exact(count).map_err(|_| 6u32)?;
     let mut previous = 0.0;
-    for point in packet[HEADER..].as_chunks::<16>().0 {
+    for point in packet[header..].as_chunks::<16>().0 {
         let x = double(point, 0);
         let y = double(point, 8);
         if !x.is_finite()
@@ -96,45 +117,47 @@ fn parse(packet: &[u8]) -> Result<Shadow, u32> {
         seed: integer(packet, 40),
         opacity,
         noise,
+        choke,
     })
 }
 
-fn contour_value(effect: &Shadow, value: f64) -> f64 {
-    let x = value.clamp(0.0, 1.0);
-    match effect.contour {
-        1 => (1.0 - (x * 2.0 - 1.0).abs()).clamp(0.0, 1.0),
-        2 => (x * 2.0 - 1.0).abs().clamp(0.0, 1.0),
-        3 => x * x * (3.0 - 2.0 * x),
-        4 => (x * std::f64::consts::PI).sin().clamp(0.0, 1.0),
-        5 => {
-            // Preserve TS's first-point result after the last custom point too.
-            match effect.points.iter().position(|point| point.0 >= x) {
-                None | Some(0) => effect.points[0].1,
-                Some(right) => {
-                    let (before_x, before_y) = effect.points[right - 1];
-                    let (after_x, after_y) = effect.points[right];
-                    let span = after_x - before_x;
-                    if span <= 0.0 {
-                        after_y
-                    } else {
-                        (before_y + (after_y - before_y) * ((x - before_x) / span)).clamp(0.0, 1.0)
-                    }
-                }
-            }
-        }
-        _ => x,
-    }
-}
-
-fn random_at(seed: u32, index: usize) -> f64 {
-    let mut value = seed ^ (index as u32).wrapping_add(1).wrapping_mul(0x45d9f3b);
-    value ^= value >> 16;
-    value = value.wrapping_mul(0x45d9f3b);
-    // JS's final ^= produces a signed int32, including negative noise values.
-    f64::from((value ^ (value >> 16)) as i32) / 4294967295.0
-}
-
 pub fn apply_drop_shadow_region(
+    source: &[u8],
+    width: usize,
+    height: usize,
+    region: RasterRegion,
+    target: &[u8],
+    packet: &[u8],
+    output: &mut [u8],
+) -> Result<(), u32> {
+    if packet.len() < HEADER {
+        return Err(1);
+    }
+    if integer(packet, 0) != 0x31444853 {
+        return Err(2);
+    }
+    apply_shadow_region(source, width, height, region, target, packet, output)
+}
+
+pub fn apply_inner_shadow_region(
+    source: &[u8],
+    width: usize,
+    height: usize,
+    region: RasterRegion,
+    target: &[u8],
+    packet: &[u8],
+    output: &mut [u8],
+) -> Result<(), u32> {
+    if packet.len() < HEADER + 8 {
+        return Err(1);
+    }
+    if integer(packet, 0) != 0x31494853 {
+        return Err(2);
+    }
+    apply_shadow_region(source, width, height, region, target, packet, output)
+}
+
+fn apply_shadow_region(
     source: &[u8],
     width: usize,
     height: usize,
@@ -173,14 +196,29 @@ pub fn apply_drop_shadow_region(
         for x in 0..region.width {
             let index = (region.y + y) * width + region.x + x;
             let local = (region.y - context.y + y) * context.width + region.x - context.x + x;
-            let mut shadow = f64::from(mask[local]) / 255.0;
-            if effect.knockout {
-                shadow = (shadow - f64::from(source[index * 4 + 3]) / 255.0).max(0.0);
-            }
-            if shadow <= 0.0 {
-                continue;
-            }
-            let contoured = contour_value(&effect, shadow);
+            let original = f64::from(source[index * 4 + 3]) / 255.0;
+            let blurred = f64::from(mask[local]) / 255.0;
+            let contoured = if let Some(choke) = effect.choke {
+                if original <= 0.0 {
+                    continue;
+                }
+                let raw = original * ((1.0 - blurred) * 2.0).clamp(0.0, 1.0);
+                if raw <= 0.0 {
+                    continue;
+                }
+                let choked = (raw / (1.0 - (choke / 100.0).min(0.99)).max(0.01)).clamp(0.0, 1.0);
+                original.min(contour_value(effect.contour, &effect.points, choked))
+            } else {
+                let shadow = if effect.knockout {
+                    (blurred - original).max(0.0)
+                } else {
+                    blurred
+                };
+                if shadow <= 0.0 {
+                    continue;
+                }
+                contour_value(effect.contour, &effect.points, shadow)
+            };
             let noise = if effect.noise > 0.0 {
                 1.0 - random_at(effect.seed ^ 0x9e3779b9, index) * effect.noise / 100.0
             } else {
@@ -201,10 +239,7 @@ pub fn apply_drop_shadow_region(
     Ok(())
 }
 
-/// # Safety
-/// Use live allocator pairs; output must not overlap any input.
-#[no_mangle]
-pub unsafe extern "C" fn axia_poc_drop_shadow_region(
+unsafe extern "C" fn shadow_region_abi(
     source_ptr: *const u8,
     source_len: usize,
     source_width: u32,
@@ -229,7 +264,7 @@ pub unsafe extern "C" fn axia_poc_drop_shadow_region(
     if [source_len, target_len, output_len]
         .iter()
         .any(|length| *length == 0 || *length > MAX_POC_BYTES || !length.is_multiple_of(4))
-        || !(HEADER..=HEADER + 32 * 16).contains(&packet_len)
+        || !(HEADER..=HEADER + 8 + 32 * 16).contains(&packet_len)
     {
         return 1;
     }
@@ -250,7 +285,7 @@ pub unsafe extern "C" fn axia_poc_drop_shadow_region(
             return 5;
         }
     }
-    match apply_drop_shadow_region(
+    match apply_shadow_region(
         std::slice::from_raw_parts(source_ptr, source_len),
         source_width as usize,
         source_height as usize,
@@ -268,6 +303,59 @@ pub unsafe extern "C" fn axia_poc_drop_shadow_region(
         Err(status) => status,
     }
 }
+
+macro_rules! shadow_export {
+    ($name:ident, $magic:expr, $header:expr) => {
+        /// # Safety
+        /// Use live allocator pairs; output must not overlap any input.
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            source_ptr: *const u8,
+            source_len: usize,
+            source_width: u32,
+            source_height: u32,
+            x: u32,
+            y: u32,
+            width: u32,
+            height: u32,
+            target_ptr: *const u8,
+            target_len: usize,
+            packet_ptr: *const u8,
+            packet_len: usize,
+            output_ptr: *mut u8,
+            output_len: usize,
+        ) -> u32 {
+            if packet_ptr.is_null() {
+                return 3;
+            }
+            if !($header..=$header + 32 * 16).contains(&packet_len) {
+                return 1;
+            }
+            let magic = std::ptr::read_unaligned(packet_ptr.cast::<u32>()).to_le();
+            if magic != $magic {
+                return 2;
+            }
+            shadow_region_abi(
+                source_ptr,
+                source_len,
+                source_width,
+                source_height,
+                x,
+                y,
+                width,
+                height,
+                target_ptr,
+                target_len,
+                packet_ptr,
+                packet_len,
+                output_ptr,
+                output_len,
+            )
+        }
+    };
+}
+shadow_export!(axia_poc_drop_shadow_region, 0x31444853, 64);
+shadow_export!(axia_poc_inner_shadow_region, 0x31494853, 72);
 
 #[cfg(test)]
 mod tests {
@@ -356,5 +444,116 @@ mod tests {
         assert!(values
             .iter()
             .all(|value| (-0.500001..=0.500001).contains(value)));
+    }
+
+    fn inner_packet(choke: f64) -> Vec<u8> {
+        let mut bytes = packet();
+        bytes[..4].copy_from_slice(&0x31494853u32.to_le_bytes());
+        bytes.extend_from_slice(&choke.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn inner_shadow_clamps_contour_to_original_alpha() {
+        let mut output = [0; 4];
+        let mut bytes = inner_packet(100.0);
+        bytes[16..20].copy_from_slice(&1i32.to_le_bytes());
+        apply_inner_shadow_region(
+            &[5, 6, 7, 101],
+            1,
+            1,
+            RasterRegion {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            &[0; 4],
+            &bytes,
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(output, [51, 102, 153, 76]);
+    }
+
+    #[test]
+    fn inner_shadow_skips_transparent_and_fully_matching_mask() {
+        let source = [200, 100, 50, 0, 5, 6, 7, 255];
+        let mut output = [99; 8];
+        apply_inner_shadow_region(
+            &source,
+            2,
+            1,
+            RasterRegion {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 1,
+            },
+            &source,
+            &inner_packet(0.0),
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(output, source);
+    }
+
+    #[test]
+    fn shadow_entry_points_reject_the_other_packet_kind() {
+        let region = RasterRegion {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        let mut output = [99; 4];
+        assert_eq!(
+            apply_drop_shadow_region(
+                &[0; 4],
+                1,
+                1,
+                region,
+                &[0; 4],
+                &inner_packet(0.0),
+                &mut output
+            ),
+            Err(2)
+        );
+        let mut external = packet();
+        external.extend_from_slice(&0.0f64.to_le_bytes());
+        assert_eq!(
+            apply_inner_shadow_region(&[0; 4], 1, 1, region, &[0; 4], &external, &mut output),
+            Err(2)
+        );
+        assert_eq!(output, [99; 4]);
+    }
+
+    #[test]
+    fn inner_shadow_rejects_choke_spread_and_knockout_before_writing() {
+        let region = RasterRegion {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        for (offset, value) in [
+            (8, 1u64),
+            (28, 1),
+            (64, f64::NAN.to_bits()),
+            (64, 101.0f64.to_bits()),
+        ] {
+            let mut bytes = inner_packet(0.0);
+            if offset == 64 {
+                bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            } else {
+                bytes[offset..offset + 4].copy_from_slice(&(value as u32).to_le_bytes());
+            }
+            let mut output = [99; 4];
+            assert_eq!(
+                apply_inner_shadow_region(&[0; 4], 1, 1, region, &[0; 4], &bytes, &mut output),
+                Err(2)
+            );
+            assert_eq!(output, [99; 4]);
+        }
     }
 }

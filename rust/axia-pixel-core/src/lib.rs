@@ -6,6 +6,8 @@ pub mod blend_if;
 pub mod color_overlay;
 pub mod composite;
 pub mod drop_shadow;
+mod effect_math;
+pub mod glow;
 pub mod gradient_overlay;
 pub mod pattern_overlay;
 

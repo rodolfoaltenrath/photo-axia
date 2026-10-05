@@ -20,6 +20,8 @@ const bundled = readFileSync(join(assetsRoot, wasmName))
 assert.deepEqual(bundled, generated, 'Vite deve empacotar os bytes gerados pelo Cargo sem alteração')
 const { instance } = await WebAssembly.instantiate(bundled, {})
 assert.equal(instance.exports.axia_poc_drop_shadow_region?.length, 14, 'Assinatura da sombra externa incompatível')
+assert.equal(instance.exports.axia_poc_inner_shadow_region?.length, 14, 'Assinatura da sombra interna incompatível')
+assert.equal(instance.exports.axia_poc_glow_region?.length, 14, 'Assinatura dos brilhos incompatível')
 assert.equal(instance.exports.axia_poc_alpha_mask_region?.length, 13, 'Assinatura da máscara com halo incompatível')
 assert.equal(instance.exports.axia_poc_local_batch_region?.length, 12, 'Assinatura do lote local incompatível')
 assert.equal(instance.exports.axia_poc_gradient_overlay_region?.length, 24,

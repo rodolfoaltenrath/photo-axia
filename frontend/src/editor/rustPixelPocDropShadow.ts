@@ -1,7 +1,7 @@
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { alphaMaskLayout } from './rustPixelPocAlphaMask.ts'
 import type { RustPixelPocRegion } from './rustPixelPocRuntime.ts'
-import type { DropShadowEffect, LayerBlendMode, LayerStyleContour, LayerStyleGlobalLight } from '../types/editor.ts'
+import type { DropShadowEffect, InnerShadowEffect, LayerBlendMode, LayerStyleContour, LayerStyleGlobalLight } from '../types/editor.ts'
 
 const modes = { normal: 0, multiply: 1, screen: 2, overlay: 3, darken: 4, lighten: 5 } as const
 const contours = { linear: 0, cone: 1, 'inverted-cone': 2, gaussian: 3, ring: 4, custom: 5 } as const
@@ -25,26 +25,33 @@ function percent(value: number) { if (!Number.isFinite(value) || value < 0 || va
 
 /** Resolve TS trig, rounding and UTF-16 hashing once per effect. */
 export function prepareRustDropShadow(effect: DropShadowEffect, light: LayerStyleGlobalLight, scale: number): RustPixelPocDropShadow {
-  if (!effect || effect.type !== 'drop-shadow' || !light || !Number.isFinite(scale) || scale <= 0 || scale > 8 ||
+  if (!effect || effect.type !== 'drop-shadow') invalid()
+  return prepareRustShadowParameters(effect, light, scale)
+}
+
+export function prepareRustShadowParameters(effect: DropShadowEffect | InnerShadowEffect, light: LayerStyleGlobalLight,
+  scale: number): RustPixelPocDropShadow {
+  if (!effect || !['drop-shadow', 'inner-shadow'].includes(effect.type) || !light || !Number.isFinite(scale) || scale <= 0 || scale > 8 ||
       typeof effect.id !== 'string' || !effect.id.length || effect.id.length > 128 ||
       !Number.isFinite(effect.size) || effect.size < 0 || effect.size > 250 ||
       !Number.isFinite(effect.distance) || effect.distance < 0 || effect.distance > 1000 ||
       typeof effect.useGlobalLight !== 'boolean' || !/^#[\da-f]{6}([\da-f]{2})?$/i.test(effect.color)) invalid()
-  percent(effect.spread)
+  if (effect.type === 'drop-shadow') percent(effect.spread)
   const angle = effect.useGlobalLight ? light.angle : effect.angle
   if (!Number.isFinite(angle) || angle < -180 || angle >= 180) invalid()
   const radius = Math.max(0, Math.round(effect.size * scale))
-  const spreadRadius = Math.min(radius, Math.round(radius * effect.spread / 100))
+  const spreadRadius = effect.type === 'drop-shadow' ? Math.min(radius, Math.round(radius * effect.spread / 100)) : 0
   const radians = angle * Math.PI / 180, distance = effect.distance * scale
   let seed = 0x811c9dc5
   for (let index = 0; index < effect.id.length; index++) seed = Math.imul(seed ^ effect.id.charCodeAt(index), 0x01000193)
   const color: [number, number, number, number] = [Number.parseInt(effect.color.slice(1, 3), 16),
     Number.parseInt(effect.color.slice(3, 5), 16), Number.parseInt(effect.color.slice(5, 7), 16),
     effect.color.length === 9 ? Number.parseInt(effect.color.slice(7, 9), 16) : 255]
+  const direction = effect.type === 'drop-shadow' ? -1 : 1
   const shadow: RustPixelPocDropShadow = { spreadRadius, blurRadius: radius - spreadRadius,
-    offsetX: Math.round(-Math.cos(radians) * distance), offsetY: Math.round(Math.sin(radians) * distance),
+    offsetX: Math.round(direction * Math.cos(radians) * distance), offsetY: Math.round(-direction * Math.sin(radians) * distance),
     color, opacity: effect.opacity, blendMode: effect.blendMode, noise: effect.noise,
-    seed: seed >>> 0, knockout: effect.layerKnocksOutShadow, contour: effect.contour }
+    seed: seed >>> 0, knockout: effect.type === 'drop-shadow' ? effect.layerKnocksOutShadow : false, contour: effect.contour }
   encodeDropShadow(shadow)
   return shadow
 }

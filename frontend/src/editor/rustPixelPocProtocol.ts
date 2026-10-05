@@ -2,9 +2,15 @@
 import type { RustPixelPocBatchPlan } from './rustPixelPocBatch.ts'
 import type { RustPixelPocAlphaMask } from './rustPixelPocAlphaMask.ts'
 import type { RustPixelPocDropShadow } from './rustPixelPocDropShadow.ts'
+import type { RustPixelPocInnerShadow } from './rustPixelPocInnerShadow.ts'
+import type { RustPixelPocGlow } from './rustPixelPocGlow.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
+  | { type: 'glow-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;
+      target: ArrayBuffer; glow: RustPixelPocGlow }
+  | { type: 'inner-shadow-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;
+      target: ArrayBuffer; shadow: RustPixelPocInnerShadow }
   | { type: 'drop-shadow-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;
       target: ArrayBuffer; shadow: RustPixelPocDropShadow }
   | { type: 'alpha-mask-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion; config: RustPixelPocAlphaMask }

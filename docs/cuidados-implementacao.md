@@ -25,7 +25,7 @@ Esta organização não altera o comportamento do editor.
 | 3 | Ponteiro nulo |
 | 4 | Região fora da fonte, no passe `fill_opacity_region` |
 | 5 | Saída sobreposta a uma entrada, nos passes regionais |
-| 6 | Orçamento/reserva de memória, no lote local, máscara alfa e sombra |
+| 6 | Orçamento/reserva de memória, no lote local, máscara alfa, sombras e brilhos |
 
 - Preservar precisão `f64`, ordem das operações e arredondamento do TS.
   Reassociação ou multiply-add fundido pode alterar os bytes de referência.
@@ -56,6 +56,14 @@ fixo e arredondamento por eixo. Ver [contrato da máscara](contrato-mascara-alfa
 Sombra usa índice global da grade para ruído, XOR assinado do TS, hash UTF-16
 e cauda legada dos contornos customizados. Não limitar alfa antes da mesclagem.
 Ver [contrato da sombra externa](contrato-sombra-externa-v1.md).
+
+Na sombra interna, inverter a direção antes de arredondar, usar a máscara
+original e respeitar o estágio interno anterior aos overlays. Não aplicar
+spread/knockout externo. Ver [contrato interno](contrato-sombra-interna-v1.md).
+
+Brilho interno de raio zero é no-op; externo subtrai alfa antes do contorno.
+O degradê dos brilhos segue intensidade, não XY. Preservar jitter/ruído assinado
+e multiplicação final pela máscara interna. Ver [contrato](contrato-brilhos-v1.md).
 
 ## Preview, texto e seleção
 

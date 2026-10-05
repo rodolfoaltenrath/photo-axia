@@ -488,7 +488,7 @@ export function renderDropShadow(
   }
 }
 
-function renderInnerShadow(
+export function renderInnerShadow(
   target: Uint8ClampedArray,
   sourceAlpha: Uint8ClampedArray,
   width: number,
@@ -524,7 +524,7 @@ function renderInnerShadow(
   }
 }
 
-function renderInnerGlow(
+export function renderInnerGlow(
   target: Uint8ClampedArray,
   sourceAlpha: Uint8ClampedArray,
   width: number,
@@ -572,7 +572,7 @@ function randomAt(seed: number, index: number) {
   return value / 0xffffffff
 }
 
-function renderOuterGlow(
+export function renderOuterGlow(
   target: Uint8ClampedArray,
   sourceAlpha: Uint8ClampedArray,
   width: number,

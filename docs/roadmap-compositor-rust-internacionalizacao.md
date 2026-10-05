@@ -440,6 +440,33 @@ C0/C1/C2 seguem pendentes. Preview normal, exportação e `.axia` não mudaram.
 Detalhes na [ABI da sombra externa](contrato-sombra-externa-v1.md) e na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
+Uma décima segunda fatia porta a **sombra interna**: direção resolvida antes
+do arredondamento, blur com halo, contração, recorte pelo alfa original,
+contornos, ruído, cor e seis modos de mesclagem. Compartilha filtros e núcleo
+de sombras sem alterar SHD1; o pacote SHI1 e o comando Worker são separados.
+Golden existente, 21.233.664 pixels da matriz, tiles e cadeia externa/interna/
+overlay com Fill zero passaram byte a byte. Sonda Node 1024²: mediana 241,19 ms
+no TS e 168,88 ms no adapter Rust; tile 512² com contexto 544²: 41,16 ms.
+Não mede FPS nem encerra gate de desempenho. Demais efeitos, estágios/conteúdo
+no lote, preparação integrada, cache/orçamento agregado e transformação seguem
+pendentes. Preview normal, exportação e `.axia` não mudaram; C0/C1/C2 abertos.
+Detalhes na [ABI interna](contrato-sombra-interna-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
+Uma décima terceira fatia porta os **brilhos externo e interno (borda/centro)**:
+spread/blur com halo, técnica precise/softer, contração, range, contornos,
+jitter/ruído e paint sólido/degradê pela intensidade. GLW1 transporta pontos
+e paradas f64; filtros, contornos e interpolação são compartilhados em Rust,
+sem alterar os contratos das sombras/overlays. Goldens existentes e matrizes
+passaram byte a byte, incluindo 32 paradas estreitas e tiles nas bordas.
+Sonda 1024²: externo sólido 261,47 → 178,86 ms; externo degradê 972,29 →
+197,28 ms no adapter Rust. Tile 512² com contexto 544²: 44,42/49,05 ms.
+Não é FPS nem medição do compositor documental. Ainda faltam traçado, acetinado,
+bisel, conteúdo/estágios no lote, preparação integrada, cache/orçamento global,
+transformação e gates C0/C1/C2. Preview normal/exportação/`.axia` inalterados.
+Detalhes no [contrato dos brilhos](contrato-brilhos-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

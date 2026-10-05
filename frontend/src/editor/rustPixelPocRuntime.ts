@@ -3,12 +3,20 @@ import { RustPixelPocError } from './rustPixelPocError.ts'
 import { encodeLocalBatch, encodeBatchGradient, type RustPixelPocBatchPlan } from './rustPixelPocBatch.ts'
 import { alphaMaskLayout, type RustPixelPocAlphaMask } from './rustPixelPocAlphaMask.ts'
 import { encodeDropShadow, dropShadowLayout, type RustPixelPocDropShadow } from './rustPixelPocDropShadow.ts'
+import { encodeInnerShadow, innerShadowLayout, type RustPixelPocInnerShadow } from './rustPixelPocInnerShadow.ts'
+import { encodeGlow, glowLayout, type RustPixelPocGlow } from './rustPixelPocGlow.ts'
 export { RustPixelPocError } from './rustPixelPocError.ts'
 
 const MAX_POC_BYTES = 64 * 1024 * 1024
 let nextSourceId = 0
 
 interface RustPixelPocExports {
+  axia_poc_glow_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
+    x: number, y: number, width: number, height: number, targetPointer: number, targetLength: number,
+    packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
+  axia_poc_inner_shadow_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
+    x: number, y: number, width: number, height: number, targetPointer: number, targetLength: number,
+    packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
   axia_poc_drop_shadow_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
     x: number, y: number, width: number, height: number, targetPointer: number, targetLength: number,
     packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
@@ -97,7 +105,7 @@ const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
 }
 
 type TilePass =
-  | { type: 'drop-shadow'; pointer: number; length: number; packetPointer: number; packetLength: number }
+  | { type: 'drop-shadow' | 'inner-shadow' | 'glow'; pointer: number; length: number; packetPointer: number; packetLength: number }
   | { type: 'alpha-mask'; config: RustPixelPocAlphaMask }
   | { type: 'local-batch'; pointer: number; length: number }
   | { type: 'blend-if'; pointer: number; length: number; config: RustPixelPocUnderlyingBlendIf }
@@ -129,7 +137,9 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       candidate.axia_poc_gradient_overlay_region.length !== 24 ||
       typeof candidate.axia_poc_local_batch_region !== 'function' || candidate.axia_poc_local_batch_region.length !== 12 ||
       typeof candidate.axia_poc_alpha_mask_region !== 'function' || candidate.axia_poc_alpha_mask_region.length !== 13 ||
-      typeof candidate.axia_poc_drop_shadow_region !== 'function' || candidate.axia_poc_drop_shadow_region.length !== 14) {
+      typeof candidate.axia_poc_drop_shadow_region !== 'function' || candidate.axia_poc_drop_shadow_region.length !== 14 ||
+      typeof candidate.axia_poc_inner_shadow_region !== 'function' || candidate.axia_poc_inner_shadow_region.length !== 14 ||
+      typeof candidate.axia_poc_glow_region !== 'function' || candidate.axia_poc_glow_region.length !== 14) {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -207,8 +217,14 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
           outputPointer, outputLength, fillOpacity)
       } else {
         switch (pass.type) {
+          case 'glow':
+            status = exports.axia_poc_glow_region(sourcePointer, sourceLength,
+              sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+              pass.pointer, pass.length, pass.packetPointer, pass.packetLength, outputPointer, outputLength)
+            break
           case 'drop-shadow':
-            status = exports.axia_poc_drop_shadow_region(sourcePointer, sourceLength,
+          case 'inner-shadow':
+            status = (pass.type === 'inner-shadow' ? exports.axia_poc_inner_shadow_region : exports.axia_poc_drop_shadow_region)(sourcePointer, sourceLength,
               sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
               pass.pointer, pass.length, pass.packetPointer, pass.packetLength, outputPointer, outputLength)
             break
@@ -262,7 +278,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         }
       }
       if (status !== 0) {
-        if ((pass?.type === 'local-batch' || pass?.type === 'alpha-mask' || pass?.type === 'drop-shadow') && status === 6) throw new RustPixelPocError('memory-limit')
+        if ((pass?.type === 'local-batch' || pass?.type === 'alpha-mask' || pass?.type === 'drop-shadow' || pass?.type === 'inner-shadow' || pass?.type === 'glow') && status === 6) throw new RustPixelPocError('memory-limit')
         throw new RustPixelPocError('wasm-failure')
       }
       computed = performance.now()
@@ -294,6 +310,53 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     if (thresholds.some((value, index) => !Number.isSafeInteger(value) || value < 0 || value > 255 ||
         (index > 0 && value < thresholds[index - 1]!))) {
       throw new RustPixelPocError('invalid-input')
+    }
+  }
+
+  function maskedEffectStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array,
+    job: { type: 'drop-shadow'; shadow: RustPixelPocDropShadow } | { type: 'inner-shadow'; shadow: RustPixelPocInnerShadow }
+      | { type: 'glow'; glow: RustPixelPocGlow }) {
+    if (disposed) throw new RustPixelPocError('wasm-unavailable')
+    if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
+    const length = validateRegion(region, staged.width, staged.height, 100)
+    if (!(target instanceof Uint8Array) || target.byteLength !== length) throw new RustPixelPocError('invalid-input')
+    const bytes = (() => {
+      switch (job.type) {
+        case 'glow': {
+          const packet = encodeGlow(job.glow)
+          glowLayout(staged.width, staged.height, region, job.glow, packet.length)
+          return packet
+        }
+        case 'inner-shadow': {
+          const packet = encodeInnerShadow(job.shadow)
+          innerShadowLayout(staged.width, staged.height, region, job.shadow, packet.length)
+          return packet
+        }
+        case 'drop-shadow': {
+          const packet = encodeDropShadow(job.shadow)
+          dropShadowLayout(staged.width, staged.height, region, job.shadow, packet.length)
+          return packet
+        }
+        default: job satisfies never; throw new RustPixelPocError('invalid-input')
+      }
+    })()
+    const started = performance.now(), pointer = exports.axia_poc_alloc(length)
+    if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+    let packetPointer = 0
+    try {
+      packetPointer = exports.axia_poc_alloc(bytes.length)
+      if (!Number.isSafeInteger(packetPointer) || packetPointer <= 0 || pointer + length > exports.memory.buffer.byteLength ||
+          packetPointer + bytes.length > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+      const allocated = performance.now()
+      new Uint8Array(exports.memory.buffer, pointer, length).set(target)
+      new Uint8Array(exports.memory.buffer, packetPointer, bytes.length).set(bytes)
+      const copiedIn = performance.now()
+      return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height, region, 100,
+        allocated - started, copiedIn - allocated, { type: job.type, pointer, length, packetPointer, packetLength: bytes.length }),
+        generation: staged.generation }
+    } finally {
+      if (Number.isSafeInteger(packetPointer) && packetPointer > 0) exports.axia_poc_free(packetPointer, bytes.length)
+      exports.axia_poc_free(pointer, length)
     }
   }
 
@@ -535,30 +598,13 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       }
     },
     dropShadowStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array, shadow: RustPixelPocDropShadow) {
-      if (disposed) throw new RustPixelPocError('wasm-unavailable')
-      if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
-      const length = validateRegion(region, staged.width, staged.height, 100)
-      if (!(target instanceof Uint8Array) || target.byteLength !== length) throw new RustPixelPocError('invalid-input')
-      const bytes = encodeDropShadow(shadow)
-      dropShadowLayout(staged.width, staged.height, region, shadow, bytes.length)
-      const started = performance.now(), pointer = exports.axia_poc_alloc(length)
-      if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
-      let packetPointer = 0
-      try {
-        packetPointer = exports.axia_poc_alloc(bytes.length)
-        if (!Number.isSafeInteger(packetPointer) || packetPointer <= 0 || pointer + length > exports.memory.buffer.byteLength ||
-            packetPointer + bytes.length > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
-        const allocated = performance.now()
-        new Uint8Array(exports.memory.buffer, pointer, length).set(target)
-        new Uint8Array(exports.memory.buffer, packetPointer, bytes.length).set(bytes)
-        const copiedIn = performance.now()
-        return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height, region, 100,
-          allocated - started, copiedIn - allocated, { type: 'drop-shadow', pointer, length, packetPointer, packetLength: bytes.length }),
-          generation: staged.generation }
-      } finally {
-        if (Number.isSafeInteger(packetPointer) && packetPointer > 0) exports.axia_poc_free(packetPointer, bytes.length)
-        exports.axia_poc_free(pointer, length)
-      }
+      return maskedEffectStagedRegion(sourceId, region, target, { type: 'drop-shadow', shadow })
+    },
+    innerShadowStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array, shadow: RustPixelPocInnerShadow) {
+      return maskedEffectStagedRegion(sourceId, region, target, { type: 'inner-shadow', shadow })
+    },
+    glowStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array, glow: RustPixelPocGlow) {
+      return maskedEffectStagedRegion(sourceId, region, target, { type: 'glow', glow })
     },
     alphaMaskStagedRegion(sourceId: number, region: RustPixelPocRegion, config: RustPixelPocAlphaMask) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')

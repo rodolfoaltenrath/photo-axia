@@ -114,3 +114,7 @@ há inserção no lote local nem executor externo completo, composição de cont
 cache/LRU, orçamento global, transformação ou ligação ao renderizador normal.
 Outros efeitos permanecem pendentes. Testes e medições na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
+
+A sombra interna compartilha os filtros/contornos/mesclagem, mas tem entry point
+e pacote SHI1 próprios. SHD1 e seus campos continuam inalterados; os comandos
+não aceitam o pacote do outro tipo. Ver [contrato interno](contrato-sombra-interna-v1.md).

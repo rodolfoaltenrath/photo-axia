@@ -128,6 +128,31 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         [...new Uint8Array(shadowResult.rgba)].join(',') !== '0,0,0,0,51,102,153,64') {
       throw new Error('Worker Rust produziu sombra externa diferente da referência fixa.')
     }
+    const innerTarget = new Uint8Array(8)
+    const innerRequest = send({ type: 'inner-shadow-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 }, target: innerTarget.buffer,
+      shadow: { blurRadius: 1, offsetX: 0, offsetY: 0, color: [51, 102, 153, 255], choke: 37.5,
+        opacity: 75, blendMode: 'multiply', noise: 0, seed: 0, contour: { preset: 'linear', points: [] } } }, [innerTarget.buffer])
+    const innerToken = gate.captureTile('sombra-interna-direita', innerRequest.id), innerResult = await innerRequest
+    if (!innerToken?.isCurrent(innerResult) || innerTarget.byteLength !== 0 ||
+        [...new Uint8Array(innerResult.rgba)].join(',') !== '51,102,153,191,0,0,0,0') {
+      throw new Error('Worker Rust produziu sombra interna diferente da referência fixa.')
+    }
+    for (const [kind, expected] of [['outer', '0,0,0,0,51,102,153,64'],
+      ['inner-edge', '51,102,153,191,0,0,0,0'], ['inner-center', '51,102,153,64,0,0,0,0']] as const) {
+      const glowTarget = new Uint8Array(8)
+      const glowRequest = send({ type: 'glow-staged-region', sourceId: staged.sourceId,
+        region: { x: 1, y: 0, width: 1, height: 2 }, target: glowTarget.buffer, glow: {
+          kind, spreadRadius: 0, blurRadius: 1, precise: true, choke: 0, range: 100, jitter: 0, noise: 0,
+          opacity: 75, blendMode: 'screen', seed: 0, contour: { preset: 'linear', points: [] },
+          paint: { type: 'color', color: [51, 102, 153, 255] }
+        } }, [glowTarget.buffer])
+      const glowToken = gate.captureTile(`brilho-${kind}`, glowRequest.id), glowResult = await glowRequest
+      if (!glowToken?.isCurrent(glowResult) || glowTarget.byteLength !== 0 ||
+          [...new Uint8Array(glowResult.rgba)].join(',') !== expected) {
+        throw new Error(`Worker Rust produziu brilho ${kind} diferente da referência fixa.`)
+      }
+    }
     const maskRequest = send({ type: 'alpha-mask-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, config: { spreadRadius: 0, blurRadius: 1, precise: false } })
     const maskToken = gate.captureTile('máscara-direita', maskRequest.id)

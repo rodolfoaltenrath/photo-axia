@@ -18,6 +18,14 @@ A [sombra externa regional](contrato-sombra-externa-v1.md) já calcula esse
 efeito sobre máscara/target preparados, em ABI separada. Não resolve a pilha
 do documento nem integra o lote local/preview normal.
 
+A [sombra interna regional](contrato-sombra-interna-v1.md) compartilha os
+filtros, mas preserva direção/contração/recorte próprios e o estágio anterior
+aos overlays. Seu pacote separado também não constitui um executor documental.
+
+Os [brilhos regionais](contrato-brilhos-v1.md) externos/internos compartilham
+filtros e interpolação, mas têm recortes/estágios próprios. O degradê segue
+intensidade, não coordenadas do documento; a gestão da pilha continua pendente.
+
 ## 1. Vocabulário e unidades
 
 - Documento: espaço contínuo em pixels documentais, origem `(0, 0)` no canto

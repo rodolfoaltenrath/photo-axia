@@ -47,6 +47,10 @@
     "benchmark:rust-alpha-mask": "node --experimental-strip-types benchmarks/rustAlphaMask.ts",
     "prebenchmark:rust-drop-shadow": "node scripts/buildRustPixelPoc.mjs",
     "benchmark:rust-drop-shadow": "node --experimental-strip-types benchmarks/rustDropShadow.ts",
+    "prebenchmark:rust-inner-shadow": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-inner-shadow": "node --experimental-strip-types benchmarks/rustInnerShadow.ts",
+    "prebenchmark:rust-glow": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-glow": "node --experimental-strip-types benchmarks/rustGlow.ts",
     "test:types": "tsc --project tsconfig.test.json",
     "benchmark:quick-selection": "node --experimental-strip-types benchmarks/quickSelection4k.mjs"
   },

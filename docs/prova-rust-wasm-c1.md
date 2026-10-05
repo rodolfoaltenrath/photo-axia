@@ -1129,3 +1129,196 @@ Próximos passos: demais efeitos externos/internos, executor com estágios e
 halo integrado ao lote, cache/assets e orçamento agregado, transformação e
 medição end-to-end antes do rollout. C0/C1/C2 continuam abertos; preview
 normal, exportação, texto e `.axia` permanecem no caminho existente.
+
+## Décima segunda fatia: sombra interna regional
+
+Em 2026-10-05, o passe CPU Rust passou a calcular sombra interna a partir da
+mesma máscara original e de um target regional independente. O comando
+`inner-shadow-staged-region` é experimental; não habilita o renderizador Rust
+na interface normal. Ver [contrato SHI1](contrato-sombra-interna-v1.md).
+
+### Implementação e limites
+
+- TS resolve luz local/global, escala, direção e arredondamento antes do job.
+  Não negar o offset inteiro da externa: meio pixel exige arredondar depois
+  de escolher a direção. Preserva seed FNV-1a sobre unidades UTF-16.
+- Rust desloca alfa e aplica blur com halo usando as primitivas existentes.
+  Calcula raw/contração, recorta o contorno pelo alfa original e aplica cor,
+  opacidade, ruído assinado e os seis modos de mesclagem existentes.
+- Compartilha filtros, parsing de campos comuns, contornos, ruído e composição
+  com a externa. Mantém SHD1 inalterado; SHI1 tem cabeçalho de 72 bytes com
+  contração f64 e pontos customizados a partir do byte 72. Entry points não
+  aceitam o pacote do outro tipo; campos spread/knockout são zero no interno.
+- Adapter compartilha o ciclo de alocação/liberação das sombras, mas valida
+  ambos os contratos separadamente. Exige nova export/aridade no runtime e
+  no bundle. Falhas liberam target/pacote/saída e preservam a fonte preparada.
+- O orçamento continua 96 MiB/job, contando fonte, target, pacote, saída,
+  duas máscaras contextuais e reserva de contorno. Não há fila de spread
+  para sombra interna. Não equivale a RSS nem a orçamento agregado do editor.
+- `renderInnerShadow` foi exportada apenas para servir de referência nos
+  testes; a aritmética e o despacho do compositor TS não foram alterados.
+- A cadeia respeita externo → conteúdo/Fill → interno → overlay. Esta fatia
+  não implementa composição de conteúdo nem amplia o executor do lote local.
+
+### Verificação
+
+- `cargo test --offline --locked`: 41 testes nativos; `cargo fmt --check` e
+  `cargo clippy --offline --locked --all-targets -- -D warnings` passaram.
+- `npm test`: 509 testes frontend e checagem dos tipos de testes passaram.
+- `npm run test:rust-poc`: 157 testes (5 standalone, 1 Worker básico e 151
+  dos scripts), mantendo as suítes das fatias anteriores verdes.
+- Build de produção, integridade do bundle e `npm run smoke:rust-wails`
+  passaram: o diagnóstico incorporado ao executável verificou SHI1/Worker
+  no WebView2, incluindo target transferido, gate e saída RGBA fixa. O único
+  aviso de build foi o chunk acima de 500 kB já existente. O smoke usa e
+  remove executável temporário; não foi gerado instalador/portável nesta fatia.
+- Golden já versionado `inner-shadow-edge` passou sem regenerar expectativa.
+  O corpus original de 17 goldens continua passando na suíte frontend.
+- Matriz 256² × seis mesclagens × seis contornos × três níveis de ruído ×
+  três contrações: 21.233.664 pixels comparados byte a byte contra a função TS.
+- Tiles 7×5 em quatro geometrias, incluindo 1×N/N×1/1×1: 144 configurações
+  (três tamanhos, três contrações, quatro ângulos), comparando também raster
+  inteiro. Verifica bordas, halos e ruído pelo índice global da grade.
+- Luz local/global, meio pixel, escalas 0,125/1,375/8 e limites de tamanho/
+  distância; contornos com pontos duplicados e 32 paradas estreitas; cores
+  com alfa zero/pleno; máscaras vazias/opacas e RGB oculto preservado.
+- Cadeia externa/interna/overlay com Fill zero contra o compositor TS e
+  recuperação da fonte original. Nenhum passe troca a máscara pelo target.
+- ABI inválida: versão/tipo, choke/NaN, campos reservados, contagem enorme,
+  pontos, regiões/comprimentos/null/overlap, saída sentinela e recuperação.
+  Três falhas de alocação externas e status 6 do kernel são injetados com
+  contagem de pares vivos; dispose termina com zero pares.
+- Worker real transfere source/target, preserva geração, testa parâmetros
+  alterados, pedidos ultrapassados, view change, erro recuperável,
+  invalidate-source e dispose. Cancelamento não interrompe kernel síncrono.
+
+### Sonda isolada Node
+
+`npm run benchmark:rust-inner-shadow -- 1024 20`, Windows, Node 24.14.1,
+Intel i7-3770, WASM release 66.848 bytes; três warmups, 20 amostras e ordem
+TS/Rust alternada. Paridade de cada saída verificada fora da janela medida.
+
+Fonte/target preparados 1024², sombra multiply `#33669980`, size 16, choke
+37,5%, distância 11,25, ângulo local -77,75°, opacidade 73,5%, ruído 37,5%,
+contorno linear. Upload da fonte uma vez: 3,31 ms, fora dos passes.
+
+| Caminho | Mediana (ms) | p95 (ms) |
+| --- | ---: | ---: |
+| TS integral | 241,19 | 263,60 |
+| Adapter Rust integral | 168,88 | 185,75 |
+| Kernel Rust integral | 166,90 | 183,07 |
+| Cópia de entradas do adapter | 0,57 | 1,11 |
+| Cópia da saída integral | 1,14 | 2,54 |
+| Adapter Rust tile 512², contexto 544² | 41,16 | 46,03 |
+| Kernel Rust tile | 40,43 | 44,15 |
+
+Contabilidade: 14.680.648 bytes integral, 6.883.912 bytes no tile; não é
+memória medida. Tile retorna um quarto da saída. A sonda não mede preparação
+do documento, Worker, Canvas, zoom/FPS, GPU nem RSS. P95 não é pior caso;
+a diferença também não isola linguagem/SIMD.
+
+Demais efeitos, preparação/insets e conteúdo/estágios integrados, cache/
+orçamento agregado, transformação e medição end-to-end seguem pendentes.
+Preview normal, exportação e `.axia` inalterados; C0/C1/C2 permanecem abertos.
+
+## Décima terceira fatia: brilhos externos/internos regionais
+
+Em 2026-10-05, o comando experimental `glow-staged-region` passou a calcular
+brilho externo, interno borda e interno centro. Não há ligação ao renderizador
+normal. O [contrato GLW1](contrato-brilhos-v1.md) define parâmetros, paint,
+halos, ordem dos estágios e limites.
+
+### Implementação
+
+- TS prepara raio/spread, cores, paradas e seed UTF-16; Rust calcula spread,
+  blur precise/softer, subtração externa ou recorte interno, contração,
+  range, contorno, jitter, noise e mesclagem. Fonte e target são independentes.
+- Brilho interno com raio arredondado zero é no-op. Raw zero é ignorado antes
+  do contorno. Interno multiplica alfa final pela máscara, sem reutilizar o
+  recorte `min(mask, contour)` da sombra interna. Preserva PRNG assinado,
+  índice global e extrapolações legadas, sem mudança visual durante o porte.
+- Gradiente segue intensidade, não XY/ângulo/tipo geométrico. Inversão,
+  alfa de cor e paradas de opacidade independentes seguem o TS, com valores
+  f64 e RGB arredondado por canal. Não há LUT aproximada.
+- `effect_math.rs` extrai os mesmos contornos/PRNG usados pelas sombras;
+  `sample_gradient` compartilha interpolação com overlays. Nenhuma aritmética
+  existente foi modificada. Referências TS `renderInnerGlow`/`renderOuterGlow`
+  foram apenas exportadas para testes, sem alterar o despacho normal.
+- GLW1 possui cabeçalho 96 bytes e até 32 registros de cada payload: pontos,
+  cores, opacidades. Máximo 1632 bytes, counts limitados antes da aritmética.
+  Campos inválidos/reservados, pontos/paradas e buffers são rejeitados.
+- Adapter reutiliza o ciclo de alocação/liberação de efeitos por máscara,
+  com contrato e export próprios. Orçamento 96 MiB/job conta fonte, target,
+  pacote, saída, duas máscaras, fila quando há spread e reserva 2048 de dados.
+  Não é orçamento global nem memória medida.
+
+### Testes
+
+- `npm test`: 514 testes frontend e checagem de tipos passaram.
+- `npm run test:rust-poc`: 173 testes (5 standalone, 1 Worker básico e 167
+  dos scripts); mantém todas as fatias anteriores verdes.
+- `cargo test --offline --locked`: 45 testes nativos. Fmt/check e
+  clippy/all-targets com `-D warnings` passaram.
+- Build de produção, integridade do bundle e `npm run smoke:rust-wails`
+  passaram. O diagnóstico no WebView2 verificou os três kinds contra RGBA
+  fixo, target transferido e gate válido. Executável temporário removido pelo
+  smoke; não foi gerado instalador/portável. Único aviso de build: chunk
+  acima de 500 kB já existente.
+- Os goldens versionados `outer-glow-halo` e `inner-glow-edge` passaram sem
+  regenerar expectativa. Corpus original de 17 goldens permanece inalterado.
+- Matriz 64² × seis modos × três kinds × duas técnicas × seis contornos ×
+  dois paints × três níveis combinados de noise/jitter: 5.308.416 pixels,
+  equivalência byte a byte contra as funções TS reais.
+- Nove combinações 256² (três kinds, três cores com alfa zero/pleno), contendo
+  todos os pares de alfa máscara/target, com opacidade/ruído máximos.
+- Tiles 7×5 em quatro geometrias, incluindo 1×N/N×1/1×1: 216 configurações
+  com três kinds, duas técnicas, três tamanhos e três spread/choke. Compara
+  raster inteiro e cada tile, mantendo índice global de ruído/jitter.
+- Escalas 0,125/1,375/8; raio arredondado zero; tamanho máximo 250; máscaras
+  vazias; contorno positivo em zero; RGB oculto; range 1/17,5/100; reverse;
+  32 pontos e 32 paradas de cada payload estreitas/duplicadas (pacote máximo).
+- Cadeia externo → internos → overlay, com Fill zero e lista de efeitos em
+  outra ordem, comparada ao compositor TS. IDs distintos preservam os seeds;
+  round trip Fill respeita a limpeza de RGB oculto já existente e verifica
+  separadamente que o alfa original permanece no cache.
+- ABI: magic/versão/kind, counts enormes, NaN/limites, campos reservados,
+  padding de cor, geometria/null/overlap e saída sentinela; recuperação após
+  erro. Injeção de três falhas de alocação e status 6 conta os pares vivos,
+  terminando com zero após dispose; parâmetros inválidos não alocam no WASM.
+- Worker real transfere buffers, exercita os três kinds, mudança de paint/
+  técnica/range/jitter/noise/seed, geração, vista, pedidos ultrapassados,
+  erro recuperável, invalidate-source e dispose. Não interrompe kernel síncrono.
+
+### Sondas isoladas
+
+`node --experimental-strip-types benchmarks/rustGlow.ts 1024 20 KIND PAINT`
+após build release, Windows, Node 24.14.1, Intel i7-3770, WASM 71.806 bytes.
+Três warmups e 20 amostras por caso; ordem TS/Rust alternada e paridade byte
+a byte de cada saída verificada fora da janela medida. Sem outros builds/
+testes em paralelo. Side 16..2048, samples 5..100 são limites do script.
+
+Casos: screen, size 16, softer, range 73,5%, opacity/noise/jitter 73,5/37,5/
+37,5%, contorno linear, cor `#33669980` ou gradiente invertido com três paradas
+de cor e três de opacidade (duplicatas e cobertura parcial). Externo spread
+25%, interno choke 37,5%. Upload da fonte 1,71..1,95 ms, fora dos passes.
+
+| Caso | TS mediana/p95 (ms) | Adapter Rust mediana/p95 (ms) | Kernel Rust mediana/p95 (ms) | Tile Rust mediana/p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Externo sólido | 261,47 / 350,57 | 178,86 / 187,56 | 176,59 / 184,57 | 44,42 / 61,20 |
+| Interno borda sólido | 242,67 / 279,77 | 169,40 / 184,54 | 167,21 / 182,52 | 41,96 / 47,21 |
+| Interno centro sólido | 225,59 / 312,93 | 168,21 / 222,09 | 166,02 / 220,06 | 41,10 / 56,24 |
+| Externo degradê | 972,29 / 1077,96 | 197,28 / 228,43 | 195,07 / 226,48 | 49,05 / 69,32 |
+
+Saída integral 1024²; tile 512², contexto 544², halo 16. Contabilidade de
+buffers integral/tile: externo sólido 14.686.304/6.887.648 bytes; interno
+sólido 14.682.208/6.885.472; externo gradiente 14.686.400/6.887.744.
+Tile não retorna o raster completo; números não são RSS/pico real nem FPS.
+P95 não é pior caso. Sonda não mede preparação/insets, Worker, Canvas,
+interatividade, GPU ou composição do documento. Não atribuir o ganho somente
+à linguagem/SIMD: o caminho TS do gradiente também materializa objetos por pixel.
+
+Faltam traçado, acetinado, bisel, conteúdo/estágios no lote, preparação/insets
+integrada, cache/orçamento agregado, transformação e medições end-to-end/
+multiplataforma. Preview normal, exportação e `.axia` permanecem inalterados;
+C0/C1/C2 continuam abertos. Validação manual da migração vem após integração
+experimental, não é exigida para estes passes isolados.

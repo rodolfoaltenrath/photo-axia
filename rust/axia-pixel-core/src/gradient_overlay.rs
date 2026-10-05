@@ -126,27 +126,35 @@ impl GradientOverlay<'_> {
     }
 
     fn paint(&self, x: f64) -> ([f64; 3], f64) {
-        // Preserve the TS first/last extrapolation after the last stop.
-        let (before, after, amount) = interval(self.colors, |stop| stop.position, x);
-        let first = self.colors[before].color;
-        let last = self.colors[after].color;
-        let color = std::array::from_fn(|channel| {
-            (f64::from(first[channel])
-                + (f64::from(last[channel]) - f64::from(first[channel])) * amount
-                + 0.5)
-                .floor()
-        });
-        let first_alpha = f64::from(first[3]) / 255.0;
-        let last_alpha = f64::from(last[3]) / 255.0;
-        let color_alpha = first_alpha + (last_alpha - first_alpha) * amount;
-        let (before, after, amount) = interval(self.opacities, |stop| stop.position, x);
-        let first = self.opacities[before].opacity;
-        let last = self.opacities[after].opacity;
-        (
-            color,
-            color_alpha * (first + (last - first) * amount) / 100.0,
-        )
+        sample_gradient(self.colors, self.opacities, x)
     }
+}
+
+pub(crate) fn sample_gradient(
+    colors: &[ColorStop],
+    opacities: &[OpacityStop],
+    x: f64,
+) -> ([f64; 3], f64) {
+    // Preserve the TS first/last extrapolation after the last stop.
+    let (before, after, amount) = interval(colors, |stop| stop.position, x);
+    let first = colors[before].color;
+    let last = colors[after].color;
+    let color = std::array::from_fn(|channel| {
+        (f64::from(first[channel])
+            + (f64::from(last[channel]) - f64::from(first[channel])) * amount
+            + 0.5)
+            .floor()
+    });
+    let first_alpha = f64::from(first[3]) / 255.0;
+    let last_alpha = f64::from(last[3]) / 255.0;
+    let color_alpha = first_alpha + (last_alpha - first_alpha) * amount;
+    let (before, after, amount) = interval(opacities, |stop| stop.position, x);
+    let first = opacities[before].opacity;
+    let last = opacities[after].opacity;
+    (
+        color,
+        color_alpha * (first + (last - first) * amount) / 100.0,
+    )
 }
 
 fn interval<T>(stops: &[T], position: fn(&T) -> f64, value: f64) -> (usize, usize, f64) {
