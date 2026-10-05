@@ -12,11 +12,7 @@ export function groupBoundsFromRects(rects: LayerTransform[]): LayerTransform {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY, rotation: 0 }
 }
 
-// All three apply* functions take the state at the START OF THE CURRENT
-// pointer interaction (not the free-transform session's original state), so
-// chaining move/resize/rotate within one Ctrl+T session (drag a handle,
-// release, drag another) builds on the previous interaction's result instead
-// of discarding it.
+// apply* starts from the current pointer interaction, not the initial Ctrl+T state.
 export function applyGroupMove(
   layerIds: string[],
   memberStarts: Record<string, LayerTransform>,

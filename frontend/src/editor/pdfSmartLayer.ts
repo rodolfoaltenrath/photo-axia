@@ -1,10 +1,7 @@
 import { cloneSmartLayerContent } from './smartLayers.ts'
 import type { ImportedImage, LayerItem, SmartLayerContent } from '../types/editor.ts'
 
-/**
- * Troca somente o raster de cache de uma página PDF preservada. A camada
- * externa continua com a mesma transformação física no documento.
- */
+/** Substitui só o cache; preserva o PDF e a transformação externa. */
 export function replacePDFSmartLayerCache(content: SmartLayerContent, image: ImportedImage) {
   if (!content.pdf) throw new Error('Esta camada não possui uma origem PDF preservada.')
   const next = cloneSmartLayerContent(content)

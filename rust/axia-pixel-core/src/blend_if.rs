@@ -1,5 +1,4 @@
-//! Blend If passes on aligned straight-alpha RGBA8 buffers. This-layer filtering
-//! reads styled pixels; underlying-layer filtering reads a compact backdrop.
+//! Blend If on aligned straight-alpha RGBA8 buffers.
 
 use crate::{validate_raster_region, RasterRegion, MAX_POC_BYTES};
 
@@ -32,7 +31,6 @@ pub struct BlendIfConfig {
     pub highlights: [u8; 2],
 }
 
-/// Compatibility name for the first experimental pass.
 pub type UnderlyingBlendIf = BlendIfConfig;
 
 impl BlendIfConfig {
@@ -82,8 +80,7 @@ impl BlendIfConfig {
     }
 }
 
-/// Filters the already-styled source by its own RGB, preserving hidden RGB.
-/// Fill/effects must have run before this pass; this does not filter their mask.
+/// Read styled pixels after fill/effects, not the original mask; preserve hidden RGB.
 pub fn apply_this_layer_region(
     source: &[u8],
     source_width: usize,
@@ -137,10 +134,8 @@ fn decode_config(
     Ok(config)
 }
 
-/// 0=success, 1=lengths/region, 2=config, 3=null pointer, 5=output overlap.
 /// # Safety
-/// Pointer/length pairs must identify live `axia_poc_alloc` allocations.
-/// The private adapter owns/free these; output must not overlap the source.
+/// Use live `axia_poc_alloc` pairs; output must not overlap the source.
 #[no_mangle]
 pub unsafe extern "C" fn axia_poc_blend_if_this_layer_region(
     source_ptr: *const u8,
@@ -216,9 +211,7 @@ pub unsafe extern "C" fn axia_poc_blend_if_this_layer_region(
     }
 }
 
-/// Copies a source region and changes only alpha, matching the existing TS pass.
-/// Hidden RGB is preserved even when alpha becomes zero. Backdrop alpha is not
-/// used by the current algorithm; do not silently change that during the port.
+/// Change alpha only; preserve hidden RGB and ignore backdrop alpha (TS parity).
 pub fn apply_underlying_region(
     source: &[u8],
     source_width: usize,
@@ -256,11 +249,8 @@ pub fn apply_underlying_region(
     Ok(())
 }
 
-/// Returns 0 on success, 1 for invalid lengths/region, 2 for invalid config,
-/// 3 for null pointers, 5 for overlap between output and either input.
 /// # Safety
-/// All pointer/length pairs must be live allocations from `axia_poc_alloc`.
-/// Output must be distinct from both inputs. The private JS adapter owns them.
+/// Use live `axia_poc_alloc` pairs; output must not overlap either input.
 #[no_mangle]
 pub unsafe extern "C" fn axia_poc_blend_if_underlying_region(
     source_ptr: *const u8,

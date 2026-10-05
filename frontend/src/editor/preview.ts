@@ -1,10 +1,6 @@
 import type { ImageAsset } from '../types/editor'
 
-/**
- * Uses the lightweight preview whenever it already contains enough pixels for
- * the current backing canvas. Falling back to the source only improves visual
- * quality when the preview would otherwise need to be enlarged.
- */
+/** Use the preview only when its pixel dimensions cover the requested raster. */
 export function imageSourceForRasterSize(
   asset: ImageAsset,
   requiredWidth: number,
@@ -68,11 +64,7 @@ export interface ViewportPreviewGeometry {
 
 const MAX_VIEWPORT_PREVIEW_PIXELS = 4_194_304
 
-/**
- * Allocates backing pixels only for the visible portion of the document. This
- * keeps one physical canvas pixel per visible device pixel even when the full
- * document is much larger than the viewport.
- */
+/** Allocate only visible pixels, respecting density and pixel budget. */
 export function viewportPreviewGeometry(
   documentWidth: number,
   documentHeight: number,

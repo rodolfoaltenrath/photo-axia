@@ -8,10 +8,7 @@ export function layerCanRasterize(layer?: LayerItem) {
   return Boolean((layer.transform && (layer.image || layer.text || layer.shape)) || (layer.kind === 'background' && !layer.image))
 }
 
-// Raster layers (background/pixel) keep rotation as CSS metadata during
-// a drag, but once a rotated transform commits it gets baked into the pixels
-// and reset to an axis-aligned box — matching how Photoshop settles a Free
-// Transform on an ordinary pixel layer, so the next Ctrl+T starts straight.
+// Bake raster rotation only on commit, never during drag.
 export function layerSupportsRotationBaking(layer?: LayerItem) {
   return Boolean(
     layer?.image &&

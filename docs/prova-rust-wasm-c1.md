@@ -6,6 +6,9 @@ arredondamento, alfa
 transparente e comparação determinística com o código TS; não é o compositor
 de documento nem a ABI V1 definitiva.
 
+Os [cuidados de implementação](cuidados-implementacao.md) concentram as
+explicações de segurança, renderização e desempenho; no código ficam avisos curtos.
+
 O crate `rust/axia-pixel-core` não possui dependências externas. Usa Rust
 1.98.1 e `wasm32-unknown-unknown` fixados em `rust-toolchain.toml`, com
 `Cargo.lock` versionado. No Windows usado nesta prova, o host instalado foi
@@ -54,8 +57,9 @@ Cada edição, undo/redo e troca de documento devem avançar uma `generation`
 inteira monotônica na sessão do Worker (não reiniciada por documento). O comando
 `invalidate-source` descarta a fonte anterior antes de os novos pixels ficarem
 prontos; `stage-source` também avança a geração antes de validar/alocar, de
-modo que uma falha não preserve pixels obsoletos. Uploads atrasados com geração
-igual ou menor são rejeitados. A resposta de `render-staged-region` inclui
+modo que uma falha não preserve pixels obsoletos. A invalidação reserva sua
+geração para um único upload substituto; outras gerações já usadas ou menores
+são rejeitadas. A resposta de `render-staged-region` inclui
 `sourceId` e `generation`; o futuro chamador deve compará-los com o estado
 atual antes de publicar o tile, pois um render síncrono já concluído não pode
 ser retirado da fila de respostas.
@@ -492,9 +496,10 @@ o raster estilizado exigem **outra fonte/geração**, não só nova vista.
 Consequência para o futuro cache/observador: o `sourceKey` desse estágio deve
 identificar o raster derivado com seus estilos/fill/halo/densidade. A chave da
 imagem/máscara original usada pelas sobreposições não basta. O observador
-experimental ainda não foi ligado a esse estágio no editor; não reaproveitar
-automaticamente sua classificação de alterações da máscara como contrato de
-fonte estilizada. O futuro executor de estágios deve guardar essa distinção.
+experimental agora possui um construtor específico para o raster estilizado,
+descrito na sexta fatia abaixo. Ainda não foi ligado ao editor; não reaproveitar
+a classificação de alterações da máscara como contrato de fonte estilizada.
+O futuro executor de estágios deve guardar essa distinção.
 
 Ordem preservada: fill/efeitos → Esta camada → transformação para documento
 → Camada abaixo. Os testes de encadeamento usam entradas alinhadas na mesma
@@ -562,3 +567,182 @@ nativos seguros seguem abertos. Cancelamento só interrompe pedidos pendentes,
 nunca o kernel WASM síncrono. Esta camada, Camada abaixo, preenchimento,
 sobreposição de cor e padrão estão disponíveis na prova isolada, **não** no
 renderizador normal. C0/C1/C2 não foram concluídos.
+
+## Sexta fatia: identidade do raster estilizado e substituição da fonte
+
+Implementada em 2026-10-05, ainda no caminho experimental. Não porta outro
+efeito para Rust nem altera seus kernels; prepara a invalidação correta do
+adaptador para os passes já portados.
+
+`styledRasterPreviewSnapshot` recebe a identidade do raster local **antes dos
+dois filtros Mesclar se**. A fonte é distinta da máscara original e inclui:
+
+- Documento, camada/tipo, identidade da imagem, espaço de cor e DPI.
+- `contentKey`: revisão do conteúdo original, inclusive texto/forma sem imagem.
+- `assetKey`: revisão agregada dos padrões/texturas já decodificados.
+- Dimensões, offsets do halo, `resolutionScale` exato e qualidade.
+- Fill, efeitos ativos em ordem e luz global quando utilizada por um efeito.
+
+A identidade usa o conteúdo JSON normalizado, não um hash de 32 bits ou escala
+quantizada. Os filtros Mesclar se são excluídos dessa chave porque ainda não
+foram aplicados. Seus parâmetros continuam na identidade de aparência.
+
+| Alteração | Invalidação |
+| --- | --- |
+| Conteúdo, fill, efeito ativo, halo, densidade, qualidade ou asset | Fonte/geração |
+| Faixas/canal Mesclar se, pan/zoom ou backdrop | Vista/tokens, mantendo a fonte |
+| Opacidade da camada, visibilidade, modo de mesclagem ou transformação local | Vista, se a identidade do raster não mudar |
+| Raster indisponível | Fonte/geração; bloquear publicação anterior |
+
+O chamador deve atualizar as revisões de conteúdo/assets e a geometria real.
+Zoom/DPR ou redimensionamento que provoquem novo raster devem fornecer nova
+densidade/dimensão/revisão; manter os metadados antigos não detecta alteração
+de bytes por si só. Esta função não calcula halo, rasteriza texto/forma, lê
+buffers, agenda jobs ou implementa LRU. Não serve para raster já filtrado ou
+reamostrado no espaço documental. A normalização deve ser memoizada na futura
+integração reativa; não foi medido um custo por frame do editor.
+
+Foi reproduzida e corrigida uma falha do ciclo de vida: `invalidate-source(N)`
+rejeitava `stage-source(N)`, embora o upload fosse a substituição esperada da
+mesma edição. Agora:
+
+1. Invalidar com uma geração nova libera a fonte e reserva essa geração.
+2. Um upload da geração reservada a consome, inclusive se validar/alocar falhar.
+3. Duplicatas e uploads atrasados são rejeitados sem consumir uma reserva nova.
+4. Uma edição mais recente substitui a reserva; um upload direto de geração
+   nova continua permitido. `release-source` não reabre geração já utilizada.
+
+Uma falha de upload exige nova geração para tentar novamente. O chamador pode
+usar `beginSourceChange()` nessa tentativa; não precisa inventar números fora
+do gate. Gerações continuam monotônicas na sessão, sem reiniciar por documento.
+Nenhuma exceção permite reusar uma geração que já recebeu upload.
+
+Validação:
+
+- Nove testes novos do snapshot: efeitos/fill, ordem, luz, geometria/halo,
+  densidade fracionária, assets, filtros, texto/forma, undo, ausência e dados inválidos.
+- Dois testes do runtime reproduziram a falha antes da correção e passaram
+  depois, cobrindo reserva, duplicatas, erros, atrasos e recuperação.
+- Um teste com o Worker real prepara a sobreposição no TS, envia o raster ao
+  WASM, compara os bytes do filtro e verifica edição durante resposta pendente,
+  invalidação/upload da mesma geração e duas edições rápidas antes do upload.
+- Suítes completas: **490 testes frontend** e **59 WASM/Worker**, com typecheck.
+- O diagnóstico empacotado também exercita a nova identidade, o upload após
+  invalidar e a reutilização da fonte ao mudar somente as faixas. Build de
+  produção, integridade do bundle e smoke Wails/WebView2 passaram.
+- Os **19 testes Rust**, Clippy e formatação continuam passando.
+
+O WASM permanece com 35.950 bytes. Preview normal, exportação e formato `.axia`
+não mudaram. Faltam executor/batch, demais efeitos, cache/orçamento agregado,
+transformações e benchmark end-to-end; os gates C0/C1/C2 permanecem abertos.
+
+## Sétima fatia: sobreposição de gradiente linear, refletido e diamante
+
+Implementada em 2026-10-05, somente no caminho experimental. O novo kernel
+`axia_poc_gradient_overlay_region` e o comando Worker
+`gradient-overlay-staged-region` operam sobre fonte preparada e destino
+compacto. Não são um compositor de documento nem substituem o gradiente da
+ferramenta de preenchimento.
+
+### Escopo e contrato privado
+
+- Três tipos: linear=0, refletido=1 e diamante=2. Radial/angular permanecem no
+  TS e são rejeitados nesta ABI; não são substituídos por uma aproximação.
+- A fonte conserva a máscara original, inclusive quando fill=0. O destino
+  contém a região já composta pelos passes anteriores. RGB oculto no destino
+  é preservado quando a máscara não cobre o pixel ou o efeito tem opacidade zero.
+- Coordenadas absolutas na **grade local completa da fonte**, centro do pixel
+  em `(x+0,5,y+0,5)`. Dimensões do tile não mudam a âncora. Padding fornecido
+  pelo chamador segue a mesma grade do compositor TS. Ainda não existe
+  transformação/reamostragem para espaço documental neste passe.
+- Paradas de cor RGBA8 e de opacidade independentes: 2 a 32 de cada, densas,
+  ordenadas em posições finitas de 0 a 1. Posições iguais são aceitas; paradas
+  nas extremidades não são obrigatórias. Opacidade de parada/efeito: 0 a 100;
+  escala: 1 a 1000; reversão booleana; ângulo normalizado de -180 inclusive a
+  180 exclusivo. Seis modos: normal, multiply, screen, overlay, darken e lighten.
+- Ângulo convertido em seno/cosseno no TS **uma vez por pedido**, mantendo a
+  referência trigonométrica do pipeline atual. Rust valida os coeficientes,
+  amostra/interpola as paradas, calcula alfa e compõe os pixels em `f64`.
+- Compatibilidade deliberada: após a última parada, o TS atual usa o par
+  **primeira/última** e extrapola, em vez de prender a cor à última. O porte
+  conserva essa regra e o arredondamento, inclusive RGB/alfa intermediários
+  fora da faixa e intervalos subnormais. Corrigir essa semântica é mudança
+  separada, não uma otimização silenciosa. Opacidade zero preserva o destino
+  antes de calcular essas interpolações, como um efeito inativo no TS.
+
+A ABI usa registros little-endian de 16 bytes: cor = posição `f64` + quatro
+bytes RGBA + quatro bytes reservados zero; opacidade = posição `f64` + valor
+`f64`. Cada buffer de paradas mede 32 a 512 bytes. Rust decodifica as duas
+listas por pedido, **sem alocar por pixel**. O adaptador envia destino/paradas
+a cada chamada e reutiliza a máscara preparada. O resultado conserva ID e
+geração da fonte; o gate bloqueia respostas de fonte/vista ultrapassadas.
+
+Status: 0=sucesso; 1=comprimentos/dimensões/região; 2=tipo/configuração/paradas;
+3=ponteiro nulo; 5=saída sobreposta a qualquer entrada, inclusive paradas.
+Metadados inválidos são rejeitados antes de modificar a saída. Buffers RGBA
+têm limite individual de 64 MiB. A ABI continua privada, exigindo pares de
+alocações vivas de `axia_poc_alloc`; os testes de overlap não tornam ponteiros
+arbitrários seguros. Handles e orçamento agregado ainda estão pendentes.
+
+### Validação
+
+- **22 testes Rust**, Clippy sem avisos e formatação verificada.
+- **492 testes frontend**, incluindo os dois novos goldens; typechecks passaram.
+- **87 testes WASM/Worker**: 59 anteriores e 28 novos. As matrizes de três
+  tipos × seis modos × quatro configurações × 256 alfas × 256 valores de cor
+  comparam **4.718.592 pixels byte a byte** contra o compositor TS real.
+- Corpus puro com **15 casos**: novos `gradient-reflected-centered` e
+  `gradient-diamond-corners`, além do linear já existente. Entradas anteriores
+  não foram regeneradas; comparador independente confirmou todas as saídas.
+- Tiles 7×5 e 45 configurações de tipo/ângulo/escala, reversão, paradas
+  coincidentes, extremidades ausentes, posições subnormais e opacidade zero.
+  Render inteiro e tiles reconstituídos são idênticos.
+- Sombra externa/interna e padding **preparados pelo TS** validam a grade e a
+  máscara expandida; não demonstram cálculo nativo de halo. O encadeamento
+  fill → cor → gradiente → padrão → Esta camada → Camada abaixo coincide com
+  TS na mesma grade, sem provar transformação ou compositor de pilha.
+- Adapter/ABI rejeitam listas incompletas/esparsas, tipo não suportado,
+  configurações inválidas, bytes reservados não zero e overlap parcial.
+  Recuperação após erro, liberação, fonte somente leitura e limite de 32
+  paradas passaram. Worker real cobre transferências, reutilização da fonte,
+  vista/pedido ultrapassado e invalidação da fonte.
+- WASM final de **41.346 bytes**, build de produção, checagem do bundle e
+  smoke do executável temporário Wails/WebView2 passaram. Diagnóstico explícito
+  confere bytes do gradiente no Worker/WASM incorporados, sem CDN. Nenhum
+  instalador/portável novo foi produzido nesta fatia.
+
+### Medição isolada
+
+`npm run benchmark:rust-gradient-overlay -- 1024 20 linear` executa fill=60 +
+sobreposição de gradiente linear em um raster sintético 1024², com três
+aquecimentos, vinte amostras em ordem alternada e comparação de bytes fora da
+janela medida. Windows 10.0.26200, Intel i7-3770, Node fixado 24.14.1:
+
+| Etapa | Mediana | p95 amostral |
+| --- | ---: | ---: |
+| Compositor TS puro, fill + gradiente | 1.217,179 ms | 1.268,396 ms |
+| Adapter Rust/WASM, duas chamadas + cópias | 122,096 ms | 127,240 ms |
+| Kernels Rust somados dentro do adapter | 118,754 ms | 123,633 ms |
+| Cópias de entrada por amostra | 0,615 ms | 0,978 ms |
+| Cópias de saída por amostra | 2,128 ms | 2,526 ms |
+
+Preparação da máscara custou **1,889 ms** uma vez, fora da janela. A amostra
+Rust inclui saída do fill copiada para JS, reupload como destino do gradiente,
+serialização/alocação de paradas e liberação das alocações temporárias. Não
+somar medianas/p95 dos componentes. Configuração: ângulo normalizado
+33,33299999999997°, escala 175,5, opacidade do efeito 73,5, reversão desligada,
+modo overlay; cores em 0/0,5/1 = [203,71,149,255]/[71,149,203,128]/
+[149,203,71,255], opacidades em 0/0,4/1 = 25/100/50.
+
+A referência TS normaliza/interpola paradas por pixel; o adapter as prepara
+uma vez por pedido. O ganho não isola linguagem nem comprova SIMD. Não há
+Worker/mensagens, texto, Canvas, transformação, GPU, encode/decode, composição
+do documento ou medição de FPS/pico de memória nessa sonda. Cerca de 122 ms
+para uma região de um megapixel ainda não autoriza ativação interativa: tiles,
+executor/batch, cache e medição end-to-end seguem necessários.
+
+Próximos limites: radial/angular com paridade própria, demais efeitos/halos,
+executor de estágios que evite cópias intermediárias, cache/orçamento agregado,
+transformações e integração reativa. Cancelamento não interrompe o kernel
+WASM síncrono. Preview normal, exportação e `.axia` não mudaram; C0/C1/C2
+continuam abertos.

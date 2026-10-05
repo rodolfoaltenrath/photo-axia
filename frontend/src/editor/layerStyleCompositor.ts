@@ -232,12 +232,7 @@ export function composeLayerStyleBase(source: LayerStyleRaster, stylesValue: Lay
   return result
 }
 
-/**
- * O SVG consegue desenhar este subconjunto sem rasterizar texto: o fill segue
- * editável/nítido, e `vector-effect: non-scaling-stroke` mantém o traçado em
- * pixels do documento durante Ctrl+T. Os demais efeitos continuam no
- * compositor, cuja semântica é mais ampla.
- */
+/** Traçado SVG em pixels documentais; demais efeitos usam o compositor. */
 export function nativeTextStrokeEffect(stylesValue: LayerStyleConfig): StrokeEffect | undefined {
   const styles = normalizeLayerStyleConfig(stylesValue)
   if (!styles.enabled || !layerStyleBlendIfIsDefault(styles.blendIf)) return undefined

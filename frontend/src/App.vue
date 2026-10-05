@@ -2069,18 +2069,10 @@ function moveLayerTransforms(updates: Array<{ layerId: string; transform: LayerT
   statusText.value = items.length === 1 ? 'Camada movida' : `${items.length} camadas movidas`
 }
 
-// Bakes run one at a time: a multi-layer group rotate (Ctrl+T with several
-// layers selected) commits each member synchronously in the same tick, and
-// bakeLayerRotation shares global mutable state (isBusy, transientObjectUrls,
-// preview bookkeeping) that isn't safe for overlapping runs.
+// Serialize rotation bakes: they share mutable editor state.
 let rotationBakeQueue: Promise<boolean> = Promise.resolve(true)
 
-// Tracked on rasterMutationBarrier so undo/redo/export (which already wait
-// on that barrier before touching layers.value) also wait for an in-flight
-// bake instead of racing history navigation against it. Also chains onto
-// whatever the barrier is already tracking (e.g. a brush stroke still
-// committing) so that unrelated pending work isn't silently dropped from
-// tracking when rasterMutationBarrier.track() below overwrites it.
+// Preserve pending mutations; undo/redo/export must wait for this bake too.
 function queueLayerRotationBake(layer: LayerItem, previous: LayerTransform | undefined, transform: LayerTransform) {
   const waitForOtherPendingMutation = rasterMutationBarrier.isPending
     ? rasterMutationBarrier.wait()
@@ -2090,9 +2082,7 @@ function queueLayerRotationBake(layer: LayerItem, previous: LayerTransform | und
   rasterMutationBarrier.track(rotationBakeQueue)
 }
 
-// Bakes a committed rotation into the layer's pixels, resetting the
-// transform to an axis-aligned box (rotation 0) so the next Ctrl+T session
-// starts straight, the same way Photoshop settles a rotated pixel layer.
+// Bake committed rotation into pixels; reset the transform to rotation 0.
 async function bakeLayerRotation(
   layer: LayerItem,
   previous: LayerTransform | undefined,

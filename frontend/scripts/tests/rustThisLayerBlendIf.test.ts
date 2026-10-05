@@ -18,8 +18,7 @@ function styles(config: RustPixelPocBlendIf) {
 function reference(source: Uint8Array, config: RustPixelPocBlendIf) {
   const result = new Uint8ClampedArray(source)
   const blendIf = styles(config).blendIf
-  // Same alpha-only loop as composeLayerStyleRaster's private final pass;
-  // opacity/threshold arithmetic comes from the actual TS implementation.
+  // Mirror the private alpha-only pass using the real TS opacity helper.
   for (let offset = 0; offset < result.length; offset += 4) {
     if (result[offset + 3] === 0) continue
     result[offset + 3] = Math.round(result[offset + 3]! * layerStyleBlendIfOpacity(blendIf,

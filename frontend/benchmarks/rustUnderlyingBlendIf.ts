@@ -49,7 +49,7 @@ function summarize(values: number[]) {
 }
 try {
   for (let iteration = -3; iteration < samples; iteration++) {
-    // Alternate order to reduce systematic warmup/order bias. Comparisons are untimed.
+    // Alternate order; compare outside timing.
     let ts, rust
     if (iteration % 2 === 0) { ts = tsPass(); rust = rustPass() }
     else { rust = rustPass(); ts = tsPass() }

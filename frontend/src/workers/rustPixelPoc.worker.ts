@@ -52,11 +52,12 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
   }
   const current = generation
   const runtime = runtimePromise
-  // Source lifecycle commands are correctness barriers, never cancellable.
+  // Never cancel source lifecycle barriers.
   const isRender = request.type === 'render' || request.type === 'render-region' ||
     request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
     request.type === 'blend-if-this-layer-staged-region' ||
-    request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region'
+    request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
+    request.type === 'gradient-overlay-staged-region'
   if (isRender) pending.add(request.id)
   void runtime.then((engine) => {
     if (current !== generation || cancelled.has(request.id)) {
@@ -81,7 +82,8 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     }
     if (request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
         request.type === 'blend-if-this-layer-staged-region' ||
-        request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region') {
+        request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
+        request.type === 'gradient-overlay-staged-region') {
       const result = (() => {
         switch (request.type) {
           case 'blend-if-this-layer-staged-region':
@@ -96,6 +98,9 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
             return engine.patternOverlayStagedRegion(request.sourceId, request.region,
               new Uint8Array(request.target), { rgba: new Uint8Array(request.pattern.rgba),
                 width: request.pattern.width, height: request.pattern.height }, request.effect)
+          case 'gradient-overlay-staged-region':
+            return engine.gradientOverlayStagedRegion(request.sourceId, request.region,
+              new Uint8Array(request.target), request.effect)
           case 'render-staged-region':
             return engine.renderStagedRegion(request.sourceId, request.region, request.fillOpacity)
           default:
@@ -113,8 +118,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
       ? engine.renderRegion(new Uint8Array(request.rgba), request.sourceWidth, request.sourceHeight,
         request.region, request.fillOpacity)
       : engine.render(new Uint8Array(request.rgba), request.fillOpacity)
-    // Rendering is synchronous. The caller must also ignore obsolete IDs;
-    // cancel cannot interrupt a running WASM call on this Worker thread.
+    // WASM is synchronous; callers must reject obsolete replies.
     if (request.type === 'render-region') {
       reply({ type: 'rendered-region', id: request.id, rgba: rgba.buffer as ArrayBuffer,
         width: request.region.width, height: request.region.height, timings }, [rgba.buffer])

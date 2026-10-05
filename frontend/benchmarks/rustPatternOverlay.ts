@@ -58,8 +58,7 @@ function summarize(values: number[]) {
 }
 try {
   for (let iteration = -3; iteration < samples; iteration++) {
-    // Includes both calls, intermediate output/reupload and pattern upload per job.
-    // The source/texture are decoded before timing; parity comparison is untimed.
+    // Timing includes intermediate copies/uploads, not decoding or parity checks.
     let ts, rust
     if (iteration % 2 === 0) { ts = tsPass(); rust = rustPass() }
     else { rust = rustPass(); ts = tsPass() }

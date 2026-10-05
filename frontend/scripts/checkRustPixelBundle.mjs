@@ -27,6 +27,7 @@ assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_blend_if_this_layer_region'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_color_overlay_region'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_pattern_overlay_region'))
+assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_gradient_overlay_region'))
 assert.ok(names.some((name) => name.startsWith('index-') && name.endsWith('.js') &&
   readFileSync(join(assetsRoot, name), 'utf8').includes(diagnosticName)),
   'O ponto de entrada deve referenciar o chunk diagnóstico')

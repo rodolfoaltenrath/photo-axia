@@ -1,13 +1,12 @@
-//! Experimental C1 pixel kernel. This is not the document-compositor ABI.
-//! The caller owns the copied input buffer and must free it after use.
+//! Experimental pixel ABI; not the document compositor.
 
 pub mod blend_if;
 pub mod color_overlay;
 pub mod composite;
+pub mod gradient_overlay;
 pub mod pattern_overlay;
 
-/// Matches the current TS fill-only pass on a transparent target. A source
-/// pixel whose scaled alpha rounds to zero does not contribute hidden RGB.
+/// Zero-alpha fill pixels must not retain hidden RGB.
 pub fn apply_fill_opacity_in_place(rgba: &mut [u8], fill_opacity: u8) -> Result<(), &'static str> {
     if rgba.is_empty() || !rgba.len().is_multiple_of(4) {
         return Err("invalid-rgba-length");
@@ -17,8 +16,7 @@ pub fn apply_fill_opacity_in_place(rgba: &mut [u8], fill_opacity: u8) -> Result<
     }
     let fill = f64::from(fill_opacity) / 100.0;
     for pixel in rgba.as_chunks_mut::<4>().0 {
-        // JS Math.round rounds non-negative halves upward. Keep the same
-        // sequence of floating-point operations as the existing TS pass.
+        // Preserve TS operation order and half-up rounding.
         let alpha = (f64::from(pixel[3]) * fill + 0.5).floor() as u8;
         if alpha == 0 {
             pixel.fill(0);
@@ -37,8 +35,7 @@ pub struct RasterRegion {
     pub height: usize,
 }
 
-/// Writes a tightly packed output tile sampled at absolute source coordinates.
-/// Validation happens before the first write, so invalid requests preserve output.
+/// Validate before writing; sample absolute source coordinates.
 pub fn apply_fill_opacity_region(
     source: &[u8],
     source_width: usize,
@@ -118,8 +115,7 @@ fn validate_raster_region(
 
 const MAX_POC_BYTES: usize = 64 * 1024 * 1024;
 
-/// Allocates a byte buffer for the internal WASM adapter. A zero return means
-/// failure. This experimental ABI must not be exposed to untrusted callers.
+/// Private adapter only; null means allocation failed.
 #[no_mangle]
 pub extern "C" fn axia_poc_alloc(len: usize) -> *mut u8 {
     if len == 0 || len > MAX_POC_BYTES || !len.is_multiple_of(4) {
@@ -130,8 +126,7 @@ pub extern "C" fn axia_poc_alloc(len: usize) -> *mut u8 {
 }
 
 /// # Safety
-/// `ptr` and `len` must be exactly the pair returned by `axia_poc_alloc`,
-/// used only once. This precondition is enforced by the private JS adapter.
+/// Free an exact live `axia_poc_alloc` pair only once.
 #[no_mangle]
 pub unsafe extern "C" fn axia_poc_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() || len == 0 || len > MAX_POC_BYTES || !len.is_multiple_of(4) {
@@ -141,7 +136,6 @@ pub unsafe extern "C" fn axia_poc_free(ptr: *mut u8, len: usize) {
     std::alloc::dealloc(ptr, layout);
 }
 
-/// Returns 0 on success, 1 for bad length, 2 for bad opacity, 3 for null ptr.
 /// # Safety
 /// `ptr` and `len` must identify a live allocation from `axia_poc_alloc`.
 #[no_mangle]
@@ -162,11 +156,9 @@ pub unsafe extern "C" fn axia_poc_fill_opacity(ptr: *mut u8, len: usize, fill_op
     }
 }
 
-/// Returns 0 on success, 1 for bad length/dimensions, 2 for bad opacity,
-/// 3 for null ptr, 4 for out-of-bounds region, 5 for overlapping buffers.
 /// # Safety
 /// Both pointer/length pairs must be live allocations from `axia_poc_alloc`.
-/// They must be distinct and freed once each by the private JS adapter.
+/// Buffers must not overlap; free each allocation once.
 #[no_mangle]
 pub unsafe extern "C" fn axia_poc_fill_opacity_region(
     source_ptr: *const u8,

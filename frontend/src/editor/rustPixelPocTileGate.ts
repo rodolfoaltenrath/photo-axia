@@ -3,7 +3,7 @@ import type { RustPixelPocResponse } from './rustPixelPocProtocol.ts'
 type StagedSource = Extract<RustPixelPocResponse, { type: 'source-staged' }>
 type StagedTile = Extract<RustPixelPocResponse, { type: 'rendered-staged-region' }>
 
-/** Explicit POC consumer guard. No editor preview depends on this class yet. */
+/** Experimental reply guard; not connected to the editor. */
 export class RustPixelPocTileGate {
   private generation = 0
   private sourceId: number | null = null

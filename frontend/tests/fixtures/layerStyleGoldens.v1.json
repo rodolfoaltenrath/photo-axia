@@ -75,6 +75,36 @@
         ] }
     },
     {
+      "id": "gradient-reflected-centered",
+      "source": { "width": 2, "height": 2, "rgba": [
+        40, 60, 80, 255, 40, 60, 80, 255, 40, 60, 80, 255, 40, 60, 80, 255
+      ] },
+      "styles": { "enabled": true, "fillOpacity": 0, "effects": [{
+        "type": "gradient-overlay", "id": "reflected-v1", "angle": 0, "scale": 100,
+        "gradient": { "type": "reflected", "interpolation": "srgb",
+          "colorStops": [{ "position": 0, "color": "#ff0000" }, { "position": 1, "color": "#0000ff" }],
+          "opacityStops": [{ "position": 0, "opacity": 100 }, { "position": 1, "opacity": 100 }] }
+      }] },
+      "globalLight": { "angle": 0, "altitude": 30 }, "resolutionScale": 1,
+      "expected": { "width": 2, "height": 2, "offsetX": 0, "offsetY": 0,
+        "rgba": [128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255] }
+    },
+    {
+      "id": "gradient-diamond-corners",
+      "source": { "width": 2, "height": 2, "rgba": [
+        40, 60, 80, 255, 40, 60, 80, 255, 40, 60, 80, 255, 40, 60, 80, 255
+      ] },
+      "styles": { "enabled": true, "fillOpacity": 0, "effects": [{
+        "type": "gradient-overlay", "id": "diamond-v1", "angle": 0, "scale": 100,
+        "gradient": { "type": "diamond", "interpolation": "srgb",
+          "colorStops": [{ "position": 0, "color": "#ff0000" }, { "position": 1, "color": "#0000ff" }],
+          "opacityStops": [{ "position": 0, "opacity": 100 }, { "position": 1, "opacity": 100 }] }
+      }] },
+      "globalLight": { "angle": 0, "altitude": 30 }, "resolutionScale": 1,
+      "expected": { "width": 2, "height": 2, "offsetX": 0, "offsetY": 0,
+        "rgba": [0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255] }
+    },
+    {
       "id": "gradient-fractional-sampling",
       "source": { "width": 3, "height": 1, "rgba": [
         30, 30, 30, 255, 60, 60, 60, 180, 90, 90, 90, 100

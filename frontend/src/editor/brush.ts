@@ -198,10 +198,7 @@ export function setContextTransform(context: BrushContext, matrix: Matrix2D) {
   context.setTransform(...matrix)
 }
 
-/**
- * Draws only the points that were not rendered yet. Returning the new point
- * count makes each animation frame O(new points), rather than O(full stroke).
- */
+/** Draw only new points; never replay the full stroke each frame. */
 export function drawBrushPoints(
   context: BrushContext,
   points: readonly SelectionPoint[],

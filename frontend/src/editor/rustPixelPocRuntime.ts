@@ -30,10 +30,16 @@ interface RustPixelPocExports {
     targetPointer: number, targetLength: number, outputPointer: number, outputLength: number,
     patternPointer: number, patternLength: number, patternWidth: number, patternHeight: number,
     cosine: number, sine: number, scaleFactor: number, opacity: number, blendMode: number): number
+  axia_poc_gradient_overlay_region(sourcePointer: number, sourceLength: number,
+    sourceWidth: number, sourceHeight: number, x: number, y: number, width: number, height: number,
+    targetPointer: number, targetLength: number, outputPointer: number, outputLength: number,
+    colorsPointer: number, colorsLength: number, opacitiesPointer: number, opacitiesLength: number,
+    kind: number, cosine: number, sine: number, scale: number, reverse: number,
+    opacity: number, blendMode: number): number
 }
 
 export interface RustPixelPocRegion { x: number; y: number; width: number; height: number }
-/** Caller must normalize document thresholds once before dispatch. */
+/** Normalize thresholds before dispatch. */
 export interface RustPixelPocBlendIf {
   channel: 'gray' | 'red' | 'green' | 'blue'
   shadows: [number, number]
@@ -47,15 +53,30 @@ export interface RustPixelPocColorOverlay {
   blendMode: LayerBlendMode
 }
 
-/** A decoded RGBA8 texture, not a URL or document asset handle. */
+/** Decoded RGBA8, not an asset URL. */
 export interface RustPixelPocPatternRaster { rgba: Uint8Array; width: number; height: number }
-/** Caller supplies normalized layer-style parameters, not unbounded UI values. */
+/** Normalized style parameters only. */
 export interface RustPixelPocPatternOverlay {
   angle: number
   scale: number
   opacity: number
   blendMode: LayerBlendMode
 }
+
+export interface RustPixelPocGradientOverlay {
+  gradient: {
+    type: 'linear' | 'reflected' | 'diamond'
+    colorStops: { position: number; color: [number, number, number, number] }[]
+    opacityStops: { position: number; opacity: number }[]
+  }
+  angle: number
+  scale: number
+  reverse: boolean
+  opacity: number
+  blendMode: LayerBlendMode
+}
+
+const GRADIENT_KINDS = { linear: 0, reflected: 1, diamond: 2 } as const
 
 const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
   normal: 0, multiply: 1, screen: 2, overlay: 3, darken: 4, lighten: 5
@@ -68,6 +89,9 @@ type TilePass =
   | { type: 'pattern-overlay'; pointer: number; length: number; patternPointer: number;
       patternLength: number; patternWidth: number; patternHeight: number;
       cosine: number; sine: number; scaleFactor: number; effect: RustPixelPocPatternOverlay }
+  | { type: 'gradient-overlay'; pointer: number; length: number; colorsPointer: number;
+      colorsLength: number; opacitiesPointer: number; opacitiesLength: number;
+      cosine: number; sine: number; effect: RustPixelPocGradientOverlay }
 
 const BLEND_IF_CHANNELS: Readonly<Record<RustPixelPocUnderlyingBlendIf['channel'], number>> = {
   gray: 0, red: 1, green: 2, blue: 3
@@ -92,7 +116,8 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_blend_if_underlying_region !== 'function' ||
       typeof candidate.axia_poc_blend_if_this_layer_region !== 'function' ||
       typeof candidate.axia_poc_color_overlay_region !== 'function' ||
-      typeof candidate.axia_poc_pattern_overlay_region !== 'function') {
+      typeof candidate.axia_poc_pattern_overlay_region !== 'function' ||
+      typeof candidate.axia_poc_gradient_overlay_region !== 'function') {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -110,6 +135,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
   let staged: { id: number; generation: number; pointer: number; length: number;
     width: number; height: number } | null = null
   let latestGeneration = 0
+  let reservedGeneration: number | null = null
   let disposed = false
 
   function validateNextGeneration(generation: number) {
@@ -193,6 +219,14 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
               pass.pointer, pass.length, outputPointer, outputLength,
               pass.patternPointer, pass.patternLength, pass.patternWidth, pass.patternHeight,
               pass.cosine, pass.sine, pass.scaleFactor, pass.effect.opacity, BLEND_MODES[pass.effect.blendMode])
+            break
+          case 'gradient-overlay':
+            status = exports.axia_poc_gradient_overlay_region(sourcePointer, sourceLength,
+              sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+              pass.pointer, pass.length, outputPointer, outputLength,
+              pass.colorsPointer, pass.colorsLength, pass.opacitiesPointer, pass.opacitiesLength,
+              GRADIENT_KINDS[pass.effect.gradient.type], pass.cosine, pass.sine,
+              pass.effect.scale, pass.effect.reverse ? 1 : 0, pass.effect.opacity, BLEND_MODES[pass.effect.blendMode])
             break
           default:
             pass satisfies never
@@ -304,12 +338,14 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       validateNextGeneration(generation)
       latestGeneration = generation
       discardStaged()
+      reservedGeneration = generation
     },
     stageSource(source: Uint8Array, width: number, height: number, generation: number) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
-      validateNextGeneration(generation)
-      // A new edit invalidates old pixels even if validation/allocation fails.
+      if (reservedGeneration === null || generation !== reservedGeneration) validateNextGeneration(generation)
+      // Invalidate old pixels even if staging fails.
       latestGeneration = generation
+      reservedGeneration = null
       discardStaged()
       validateSource(source, width, height)
       const started = performance.now()
@@ -335,7 +371,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
         region, fillOpacity, 0, 0), generation: staged.generation }
     },
-    /** The staged source must be the styled raster, not the original effect mask. */
+    /** Requires styled pixels, not the original mask. */
     blendIfThisLayerStagedRegion(sourceId: number, region: RustPixelPocRegion, config: RustPixelPocBlendIf) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
@@ -409,8 +445,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         throw new RustPixelPocError('invalid-input')
       }
       validateSource(pattern.rgba, pattern.width, pattern.height)
-      // Same trig engine/order as the reference TS pass, computed once per job.
-      // A different libm can select a different texel at nearest-neighbor boundaries.
+      // Keep TS trig to preserve texel-boundary parity.
       const radians = -effect.angle * Math.PI / 180
       const cosine = Math.cos(radians), sine = Math.sin(radians)
       const scaleFactor = Math.max(0.01, effect.scale / 100)
@@ -440,6 +475,73 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         exports.axia_poc_free(pointer, length)
       }
     },
+    gradientOverlayStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array,
+      effect: RustPixelPocGradientOverlay) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
+      const length = validateRegion(region, staged.width, staged.height, 100)
+      if (!effect || !effect.gradient || !Object.hasOwn(GRADIENT_KINDS, effect.gradient.type) ||
+          !Object.hasOwn(BLEND_MODES, effect.blendMode) || typeof effect.reverse !== 'boolean' ||
+          !Number.isFinite(effect.angle) || effect.angle < -180 || effect.angle >= 180 ||
+          !Number.isFinite(effect.scale) || effect.scale < 1 || effect.scale > 1000 ||
+          !Number.isFinite(effect.opacity) || effect.opacity < 0 || effect.opacity > 100 ||
+          target.byteLength !== length) throw new RustPixelPocError('invalid-input')
+      const { colorStops, opacityStops } = effect.gradient
+      for (const stops of [colorStops, opacityStops]) {
+        if (!Array.isArray(stops) || stops.length < 2 || stops.length > 32) throw new RustPixelPocError('invalid-input')
+        let previous = 0
+        for (const stop of stops) {
+          if (!stop || !Number.isFinite(stop.position) || stop.position < previous || stop.position > 1) {
+            throw new RustPixelPocError('invalid-input')
+          }
+          previous = stop.position
+        }
+      }
+      const colors = new Uint8Array(colorStops.length * 16)
+      const colorsView = new DataView(colors.buffer)
+      for (const [index, stop] of colorStops.entries()) {
+        if (!Array.isArray(stop.color) || stop.color.length !== 4 ||
+            [...stop.color].some(value => !Number.isSafeInteger(value) || value < 0 || value > 255)) {
+          throw new RustPixelPocError('invalid-input')
+        }
+        colorsView.setFloat64(index * 16, stop.position, true)
+        colors.set(stop.color, index * 16 + 8)
+      }
+      const opacities = new Uint8Array(opacityStops.length * 16)
+      const opacityView = new DataView(opacities.buffer)
+      for (const [index, stop] of opacityStops.entries()) {
+        if (!Number.isFinite(stop.opacity) || stop.opacity < 0 || stop.opacity > 100) {
+          throw new RustPixelPocError('invalid-input')
+        }
+        opacityView.setFloat64(index * 16, stop.position, true)
+        opacityView.setFloat64(index * 16 + 8, stop.opacity, true)
+      }
+      // Use the reference TS trig once per job.
+      const radians = effect.angle * Math.PI / 180
+      const cosine = Math.cos(radians), sine = Math.sin(radians)
+      const started = performance.now()
+      const allocations: { pointer: number; bytes: Uint8Array }[] = []
+      try {
+        for (const bytes of [target, colors, opacities]) {
+          const pointer = exports.axia_poc_alloc(bytes.byteLength)
+          if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+          allocations.push({ pointer, bytes })
+          if (pointer + bytes.byteLength > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+        }
+        const allocated = performance.now()
+        for (const { pointer, bytes } of allocations) new Uint8Array(exports.memory.buffer, pointer, bytes.byteLength).set(bytes)
+        const copiedIn = performance.now()
+        return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
+          region, 100, allocated - started, copiedIn - allocated, {
+            type: 'gradient-overlay', pointer: allocations[0]!.pointer, length,
+            colorsPointer: allocations[1]!.pointer, colorsLength: colors.byteLength,
+            opacitiesPointer: allocations[2]!.pointer, opacitiesLength: opacities.byteLength,
+            cosine, sine, effect
+          }), generation: staged.generation }
+      } finally {
+        for (const { pointer, bytes } of allocations) exports.axia_poc_free(pointer, bytes.byteLength)
+      }
+    },
     releaseSource(sourceId: number) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
@@ -448,6 +550,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     dispose() {
       if (disposed) return
       disposed = true
+      reservedGeneration = null
       discardStaged()
     }
   }

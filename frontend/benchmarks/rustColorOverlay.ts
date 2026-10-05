@@ -48,8 +48,7 @@ function summarize(values: number[]) {
 }
 try {
   for (let iteration = -3; iteration < samples; iteration++) {
-    // Compare equivalent fill → overlay outputs. Includes both runtime calls,
-    // intermediate WASM → JS → WASM copies, allocations and final output copy.
+    // Timing includes fill → overlay and intermediate copies.
     let ts, rust
     if (iteration % 2 === 0) { ts = tsPass(); rust = rustPass() }
     else { rust = rustPass(); ts = tsPass() }

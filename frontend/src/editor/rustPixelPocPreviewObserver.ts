@@ -3,14 +3,14 @@ import { layerStyleHash } from './layerStyleCompositor.ts'
 import { RustPixelPocTileGate } from './rustPixelPocTileGate.ts'
 
 export interface RustPixelPocViewportState {
-  /** The animated visual scale, not only the final toolbar zoom value. */
+  /** Animated scale, not the final toolbar value. */
   scale: number
   devicePixelRatio: number
   scrollLeft: number
   scrollTop: number
   width: number
   height: number
-  /** Changes when another layer or the document stack changes appearance. */
+  /** Revise when the backdrop/stack changes. */
   stackKey: string
 }
 
@@ -22,14 +22,14 @@ export interface RustPixelPocPreviewSnapshot {
   viewportKey: string
 }
 
-/** A conservative one-layer observation; no real preview subscribes to it yet. */
+/** Experimental snapshot; not subscribed by the editor. */
 export function rasterPreviewSnapshot(
   document: Pick<DocumentSpec, 'id' | 'width' | 'height' | 'background' | 'colorSpace' |
     'resolutionDpi' | 'layerStyleGlobalLight'>,
   layer: Pick<LayerItem, 'id' | 'kind' | 'image' | 'styles' | 'visible' | 'opacity' | 'blendMode'>,
   transform: LayerTransform | undefined,
   viewport: RustPixelPocViewportState,
-  /** Pass a memoized value when observing every pan/zoom frame. */
+  /** Memoize for pan/zoom frames. */
   cachedStyleHash?: string
 ): RustPixelPocPreviewSnapshot {
   const image = layer.image
@@ -62,7 +62,6 @@ export type RustPixelPocInvalidation =
   | { kind: 'view' }
   | { kind: 'none' }
 
-/** Turns editor state changes into the POC's source/view invalidation barriers. */
 export class RustPixelPocPreviewObserver {
   private previous: RustPixelPocPreviewSnapshot | undefined
   private readonly gate: RustPixelPocTileGate

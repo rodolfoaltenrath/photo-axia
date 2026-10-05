@@ -1,5 +1,4 @@
-//! Nearest-neighbor repeating pattern overlay on the original alpha mask.
-//! Coordinates are absolute in the prepared raster, never local to a tile.
+//! Repeating pattern uses the original mask and absolute raster coordinates.
 use crate::composite::{composite_pixel, BlendMode};
 use crate::{validate_raster_region, RasterRegion, MAX_POC_BYTES};
 
@@ -15,8 +14,7 @@ pub struct PatternOverlay<'a> {
     pub pattern: PatternRaster<'a>,
     pub opacity: f64,
     pub blend_mode: BlendMode,
-    // Computed by the TS adapter with the reference Math.cos/Math.sin.
-    // Do not substitute Rust libm: texel boundaries amplify tiny differences.
+    // Use TS trig coefficients to preserve texel-boundary parity.
     pub cosine: f64,
     pub sine: f64,
     pub scale_factor: f64,
@@ -126,10 +124,8 @@ pub fn apply_pattern_overlay_region(
     Ok(())
 }
 
-/// 0=success, 1=lengths/dimensions, 2=effect, 3=null pointer, 5=output overlap.
 /// # Safety
-/// Every pointer/length pair must identify a live `axia_poc_alloc` allocation.
-/// The internal adapter owns and frees each allocation exactly once.
+/// Use live `axia_poc_alloc` pairs; output must not overlap any input.
 #[no_mangle]
 pub unsafe extern "C" fn axia_poc_pattern_overlay_region(
     source_ptr: *const u8,

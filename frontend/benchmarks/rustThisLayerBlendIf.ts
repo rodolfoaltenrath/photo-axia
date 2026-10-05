@@ -27,8 +27,7 @@ const times = { tsReferenceTotalMs: [] as number[], rustRuntimeTotalMs: [] as nu
 function tsPass() {
   const started = performance.now()
   const output = new Uint8ClampedArray(source)
-  // Mirrors the private TS alpha-only loop, calling its actual opacity helper.
-  // Does not measure fill/effects, Canvas or full composeLayerStyleRaster.
+  // Alpha-only reference, not full compositor timing.
   for (let offset = 0; offset < output.length; offset += 4) {
     if (output[offset + 3] === 0) continue
     output[offset + 3] = Math.round(output[offset + 3]! * layerStyleBlendIfOpacity(blendIf,

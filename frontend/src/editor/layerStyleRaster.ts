@@ -206,10 +206,7 @@ function spreadAlpha(source: Uint8ClampedArray, width: number, height: number, r
     : new Uint8ClampedArray(source)
 }
 
-/**
- * Transformada de distância quadrada em uma dimensão (Felzenszwalb/Huttenlocher).
- * Mantém o custo linear, diferentemente de testar um disco inteiro para cada pixel.
- */
+/** Distância quadrada 1D em O(n), de Felzenszwalb/Huttenlocher. */
 function squaredDistanceTransform1d(input: Int32Array, output: Int32Array, length: number) {
   const sites = new Int32Array(length)
   const boundaries = new Float64Array(length + 1)
@@ -503,8 +500,7 @@ function renderInnerShadow(
   const radius = Math.max(0, Math.round(effect.size * resolutionScale))
   const angle = (effect.useGlobalLight ? globalLight.angle : effect.angle) * Math.PI / 180
   const distance = effect.distance * resolutionScale
-  // A máscara do conteúdo se move contra a projeção externa. A diferença que
-  // permanece dentro da máscara original forma a sombra nas bordas internas.
+  // Desloque a máscara no sentido oposto ao da sombra externa.
   const offsetX = Math.round(Math.cos(angle) * distance)
   const offsetY = Math.round(-Math.sin(angle) * distance)
   const shifted = offsetAlpha(sourceAlpha, width, height, offsetX, offsetY)
@@ -548,8 +544,7 @@ function renderInnerGlow(
     const mask = sourceAlpha[index]! / 255
     if (mask <= 0) continue
     const blurredMask = blurred[index]! / 255
-    // O blur considera pixels fora do raster como transparentes. Isso mantém o
-    // brilho de borda correto mesmo quando a forma toca os limites da imagem.
+    // O blur deve tratar pixels fora do raster como transparentes.
     const raw = effect.source === 'edge'
       ? mask * clamp01((1 - blurredMask) * 2)
       : mask * blurredMask
@@ -631,9 +626,7 @@ function renderBevelEmboss(
   const radius = Math.max(1, Math.round(effect.size * resolutionScale))
   const softenRadius = Math.max(0, Math.round(effect.soften * resolutionScale))
   const precise = effect.technique !== 'smooth'
-  // A rampa de altura é aproximada pelo próprio alfa borrado: perto da borda
-  // original o valor varia suavemente de dentro para fora, funcionando como um
-  // mapa de relevo sem exigir uma transformada de distância dedicada.
+  // O bisel aproxima a altura pelo alfa borrado.
   let ramp = blurAlpha(sourceAlpha, width, height, radius, precise)
   if (softenRadius > 0) ramp = blurAlpha(ramp, width, height, softenRadius, false)
   if (effect.technique === 'chisel-hard') {
@@ -644,8 +637,7 @@ function renderBevelEmboss(
     ramp = sharpened
   }
   if (effect.textureEnabled && texture) {
-    // A textura soma um relevo fino de baixa amplitude sobre a rampa do bisel,
-    // amostrada pela luminância do padrão em vez de reconstruir um mapa de altura.
+    // A luminância da textura modula a altura do bisel.
     const textureSign = effect.textureInvert ? -1 : 1
     const depthFactor = effect.textureDepth / 100 * textureSign
     const textured = new Uint8ClampedArray(ramp.length)

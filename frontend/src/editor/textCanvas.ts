@@ -36,11 +36,7 @@ interface EllipseArcSample {
   y: number
 }
 
-/**
- * MantÃ©m o texto DOM nÃ­tido quando a camada foi ampliada: a fonte passa a ser
- * desenhada na escala vertical final, e somente uma distorÃ§Ã£o nÃ£o uniforme
- * residual permanece em transform. Em escala uniforme, nÃ£o hÃ¡ scale no texto.
- */
+/** Redesenha a fonte na escala final; só a distorção residual usa transform. */
 export function textPresentationScale(
   text: Pick<TextLayerContent, 'baseWidth' | 'baseHeight'>,
   display: { width: number; height: number },

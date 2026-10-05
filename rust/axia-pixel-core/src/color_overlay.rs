@@ -18,8 +18,7 @@ impl ColorOverlay {
     }
 }
 
-/// Source holds the original layer/mask; target holds the compact composed tile
-/// at the overlay stage. Neither input is modified. Validation precedes writing.
+/// Original mask and composed target are separate, read-only inputs.
 pub fn apply_color_overlay_region(
     source: &[u8],
     source_width: usize,
@@ -56,11 +55,8 @@ pub fn apply_color_overlay_region(
     Ok(())
 }
 
-/// Returns 0 on success, 1 for invalid dimensions/lengths, 2 for invalid effect,
-/// 3 for null pointers, 5 for output overlapping either input.
 /// # Safety
-/// All pointer/length pairs must identify live `axia_poc_alloc` allocations.
-/// The JS adapter owns and releases these allocations exactly once.
+/// Use live `axia_poc_alloc` pairs; output must not overlap either input.
 #[no_mangle]
 pub unsafe extern "C" fn axia_poc_color_overlay_region(
     source_ptr: *const u8,

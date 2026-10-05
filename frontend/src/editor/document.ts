@@ -129,10 +129,7 @@ export interface DocumentPhysicalSize {
   heightCentimeters: number
 }
 
-/**
- * Returns the physical size represented by the final raster at the selected PPI.
- * Pixel dimensions never change here: PPI only describes their physical density.
- */
+/** PPI changes physical size, not raster pixel dimensions. */
 export function documentPhysicalSize(
   settings: Pick<NewDocumentSettings, 'unit' | 'width' | 'height' | 'resolutionDpi'>
 ): DocumentPhysicalSize {

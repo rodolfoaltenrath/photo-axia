@@ -1,5 +1,4 @@
-//! Straight-alpha CPU effect blending. Matches the current pure TS pixel pass;
-//! this is not yet the document's Canvas/GPU blending implementation.
+//! Straight-alpha effect blending, not document Canvas/GPU blending.
 
 #[derive(Clone, Copy, Debug)]
 pub enum BlendMode {
@@ -45,14 +44,19 @@ fn blend_channel(backdrop: f64, source: f64, mode: BlendMode) -> f64 {
 }
 
 pub fn composite_pixel(target: &mut [u8; 4], color: [u8; 3], alpha: u8, mode: BlendMode) {
-    if alpha == 0 {
+    composite_pixel_values(target, color.map(f64::from), f64::from(alpha), mode);
+}
+
+/// Gradient tails can extrapolate beyond byte ranges (TS parity).
+pub fn composite_pixel_values(target: &mut [u8; 4], color: [f64; 3], alpha: f64, mode: BlendMode) {
+    if alpha <= 0.0 {
         return;
     }
-    let source_alpha = f64::from(alpha) / 255.0;
+    let source_alpha = alpha / 255.0;
     let backdrop_alpha = f64::from(target[3]) / 255.0;
     let output_alpha = source_alpha + backdrop_alpha - source_alpha * backdrop_alpha;
     for channel in 0..3 {
-        let source = f64::from(color[channel]) / 255.0;
+        let source = color[channel] / 255.0;
         let backdrop = f64::from(target[channel]) / 255.0;
         let blended = blend_channel(backdrop, source, mode);
         // Do not regroup, fuse multiply-add, or change precision during the port.

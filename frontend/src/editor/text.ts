@@ -2,7 +2,7 @@ import type { TextLayerContent } from '../types/editor'
 
 export type TextCanvasContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
-/** Texto Ã© renderizado no DOM e no Canvas; estes limites evitam layouts abusivos. */
+/** Limita layouts abusivos no DOM e no Canvas. */
 export const MAX_TEXT_CONTENT_LENGTH = 20_000
 export const MAX_TEXT_LINE_COUNT = 4_000
 export const MAX_TEXT_FONT_FAMILY_LENGTH = 512
@@ -74,10 +74,7 @@ export function textPathOffset(text: Pick<TextLayerContent, 'pathOffset'>) {
     : 0
 }
 
-/**
- * Mantém a linha-base afastada das bordas para que os glifos permaneçam dentro
- * da caixa local da camada. A elipse continua editável por largura e altura.
- */
+/** Afasta a linha-base das bordas para manter os glifos na caixa local. */
 export function ellipseTextPathGeometry(text: Pick<TextLayerContent, 'baseWidth' | 'baseHeight' | 'fontSize'>): EllipseTextPathGeometry {
   const width = Math.max(1, text.baseWidth)
   const height = Math.max(1, text.baseHeight)

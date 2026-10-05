@@ -1,5 +1,5 @@
-// Experimental C1 protocol. No document or UI code depends on this worker yet.
-import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocPatternOverlay,
+// Experimental protocol; not connected to the editor renderer.
+import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
   | { type: 'init'; id: number; wasm: ArrayBuffer }
@@ -21,6 +21,8 @@ export type RustPixelPocRequest =
       region: RustPixelPocRegion; target: ArrayBuffer;
       pattern: { rgba: ArrayBuffer; width: number; height: number }; effect: RustPixelPocPatternOverlay }
   | { type: 'release-source'; id: number; sourceId: number }
+  | { type: 'gradient-overlay-staged-region'; id: number; sourceId: number;
+      region: RustPixelPocRegion; target: ArrayBuffer; effect: RustPixelPocGradientOverlay }
   | { type: 'cancel'; id: number }
   | { type: 'dispose'; id: number }
 

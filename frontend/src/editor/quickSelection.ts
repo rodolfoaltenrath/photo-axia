@@ -26,11 +26,7 @@ interface NormalizedQuickSelectionOptions {
   edgeTolerance: number
 }
 
-/**
- * FIFO compacta. Diferente de reservar `width * height` posições, esta fila retém
- * apenas a fronteira ainda pendente do flood fill. Em uma imagem 4K isso evita uma
- * alocação fixa adicional de ~32 MiB antes de existir trabalho suficiente para ela.
- */
+/** Armazena só a fronteira pendente, sem reservar uma fila do tamanho da imagem. */
 class PixelQueue {
   private data = new Int32Array(4_096)
   private head = 0
@@ -257,11 +253,7 @@ function resultFromState(state: QuickSelectionState): QuickSelectionResult {
     : emptyResult()
 }
 
-/**
- * Grows a region from positive seeds. A candidate must resemble the aggregate seed
- * colour and cross only local colour transitions below edgeTolerance. The latter is
- * what keeps a loose painted stroke from leaking through a high-contrast boundary.
- */
+/** Grow by seed similarity; reject local colour transitions above edgeTolerance. */
 export function quickSelectionSpans(
   pixels: Uint8ClampedArray | Uint8Array,
   width: number,
@@ -274,10 +266,7 @@ export function quickSelectionSpans(
   return resultFromState(state)
 }
 
-/**
- * Sem Worker, mantém a mesma máscara do núcleo síncrono, mas divide a busca em
- * lotes para que cancelamento e repintura do navegador continuem possíveis.
- */
+/** Sem Worker, processe em lotes para permitir cancelamento e repintura. */
 export async function quickSelectionSpansCooperatively(
   pixels: Uint8ClampedArray | Uint8Array,
   width: number,

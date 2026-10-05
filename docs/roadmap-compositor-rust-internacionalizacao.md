@@ -1,7 +1,7 @@
 # Roadmap: compositor único em Rust e Axia multilíngue
 
 Estado: **C0/I0 iniciados; C1/C2 com passes Rust isolados; nenhuma migração visual ou de compositor ativada**.
-Atualizado em 2026-10-02.
+Atualizado em 2026-10-05.
 
 Este plano tem duas trilhas independentes, com contratos compartilhados: (A) unificar
 preview e exportação em um compositor de documento, introduzindo Rust/WASM onde
@@ -365,6 +365,32 @@ estilos/fill/halo/resolução; reusar a chave da máscara original produziria fo
 obsoleta. Faltam executor de estágios/batch, transformação/reamostragem,
 cache/orçamento e os demais efeitos; preview normal e gates continuam intocados.
 Detalhes e limites na [prova Rust/WASM](prova-rust-wasm-c1.md).
+
+Em 2026-10-05 foi adicionada a identidade específica do raster estilizado
+antes de Mesclar se: fill/efeitos ativos, revisão de assets/conteúdo, halo,
+dimensões, densidade e qualidade invalidam a fonte; faixas dos filtros
+invalidam somente a vista. Texto/forma sem imagem também recebem identidade
+explícita. O adaptador agora permite um upload da geração reservada pela
+invalidação, corrigindo a rejeição da substituição esperada sem abrir caminho
+para duplicatas ou uploads atrasados. Snapshot, runtime, Worker real e
+diagnóstico empacotado cobrem esse ciclo. Não é um cache LRU nem um executor;
+nenhum kernel Rust adicional ou caminho visual normal foi alterado. Faltam
+integração reativa, orçamento/batch e os demais gates. Detalhes na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
+Uma sétima fatia adiciona **Sobreposição de gradiente** linear, refletido e
+diamante ao caminho Rust isolado, com paradas independentes de cor/opacidade,
+seis modos de mesclagem e tiles na grade completa da máscara original. Radial
+e angular são rejeitados explicitamente, não aproximados. Matrizes com
+4.718.592 pixels, dois novos goldens, tiles/halos preparados no TS e Worker real
+passaram byte a byte. A sonda isolada 1024² mediu fill + gradiente linear em
+1.217,18 ms no TS e 122,10 ms no adapter Rust, incluindo cópias intermediárias;
+não mede FPS nem justifica ativação no editor. O corpus puro tem 15 casos;
+492 testes frontend, 87 WASM/Worker e 22 Rust, build e smoke WebView2 passaram.
+Faltam dois tipos de gradiente, demais efeitos/halos, executor/batch,
+transformações e orçamento agregado. Nenhum gate foi fechado e preview normal,
+exportação e `.axia` permanecem inalterados. Contrato e medição completos na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
 
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a

@@ -73,10 +73,7 @@ const {
 
 const activeImageIsStyled = computed(() => Boolean(geometryForSource(imageSources.value[activeImageSlot.value])))
 const showsStyledTextRaster = computed(() => Boolean(props.layer.text && !props.textEditor && activeImageIsStyled.value))
-// Para uma camada de texto, o primeiro raster estilizado começa sem imagem
-// ativa. Ainda assim o buffer precisa entrar no DOM para disparar `load` e só
-// então assumir o lugar do texto vetorial. Usar apenas `activeImageIsStyled`
-// aqui criava um ciclo: o <img> não existia para poder ficar ativo.
+// Monte o raster antes de ficar ativo: o handoff depende do evento load.
 const mountsStyledTextRaster = computed(() => Boolean(props.layer.text && !props.textEditor && desiredImageSource.value))
 
 const textLayout = computed(() => props.layer.text ? layoutText(props.layer.text) : undefined)

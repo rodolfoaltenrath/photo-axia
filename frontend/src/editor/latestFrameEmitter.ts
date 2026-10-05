@@ -8,11 +8,7 @@ const browserFrameScheduler: FrameScheduler = {
   schedule: (callback) => requestAnimationFrame(callback)
 }
 
-/**
- * Sends at most one value per animation frame and applies backpressure while
- * an asynchronous consumer is busy. Intermediate values are replaced by the
- * latest one, which is exactly what an interactive preview needs.
- */
+/** One value per frame; while busy, retain only the latest pending value. */
 export class LatestFrameEmitter<Value> {
   private readonly emit: (value: Value) => Promise<unknown>
   private frame: number | undefined
