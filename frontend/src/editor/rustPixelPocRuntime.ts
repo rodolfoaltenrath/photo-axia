@@ -1,9 +1,15 @@
 import type { LayerBlendMode } from '../types/editor.ts'
+import { RustPixelPocError } from './rustPixelPocError.ts'
+import { encodeLocalBatch, encodeBatchGradient, type RustPixelPocBatchPlan } from './rustPixelPocBatch.ts'
+export { RustPixelPocError } from './rustPixelPocError.ts'
 
 const MAX_POC_BYTES = 64 * 1024 * 1024
 let nextSourceId = 0
 
 interface RustPixelPocExports {
+  axia_poc_local_batch_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
+    x: number, y: number, width: number, height: number, packetPointer: number, packetLength: number,
+    outputPointer: number, outputLength: number): number
   memory: WebAssembly.Memory
   axia_poc_alloc(length: number): number
   axia_poc_free(pointer: number, length: number): void
@@ -83,6 +89,7 @@ const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
 }
 
 type TilePass =
+  | { type: 'local-batch'; pointer: number; length: number }
   | { type: 'blend-if'; pointer: number; length: number; config: RustPixelPocUnderlyingBlendIf }
   | { type: 'blend-if-this-layer'; config: RustPixelPocBlendIf }
   | { type: 'color-overlay'; pointer: number; length: number; effect: RustPixelPocColorOverlay }
@@ -97,15 +104,6 @@ const BLEND_IF_CHANNELS: Readonly<Record<RustPixelPocUnderlyingBlendIf['channel'
   gray: 0, red: 1, green: 2, blue: 3
 }
 
-export class RustPixelPocError extends Error {
-  readonly code: 'wasm-unavailable' | 'invalid-input' | 'wasm-failure'
-
-  constructor(code: 'wasm-unavailable' | 'invalid-input' | 'wasm-failure') {
-    super(code)
-    this.code = code
-  }
-}
-
 function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
   const candidate = exports as unknown as Partial<RustPixelPocExports>
   if (!(candidate.memory instanceof WebAssembly.Memory) ||
@@ -118,7 +116,8 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_color_overlay_region !== 'function' ||
       typeof candidate.axia_poc_pattern_overlay_region !== 'function' ||
       typeof candidate.axia_poc_gradient_overlay_region !== 'function' ||
-      candidate.axia_poc_gradient_overlay_region.length !== 24) {
+      candidate.axia_poc_gradient_overlay_region.length !== 24 ||
+      typeof candidate.axia_poc_local_batch_region !== 'function' || candidate.axia_poc_local_batch_region.length !== 12) {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -196,6 +195,11 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
           outputPointer, outputLength, fillOpacity)
       } else {
         switch (pass.type) {
+          case 'local-batch':
+            status = exports.axia_poc_local_batch_region(sourcePointer, sourceLength,
+              sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+              pass.pointer, pass.length, outputPointer, outputLength)
+            break
           case 'blend-if-this-layer':
             status = exports.axia_poc_blend_if_this_layer_region(sourcePointer, sourceLength,
               sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
@@ -236,6 +240,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         }
       }
       if (status !== 0) {
+        if (pass?.type === 'local-batch' && status === 6) throw new RustPixelPocError('memory-limit')
         throw new RustPixelPocError('wasm-failure')
       }
       computed = performance.now()
@@ -482,45 +487,8 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
       const length = validateRegion(region, staged.width, staged.height, 100)
-      if (!effect || !effect.gradient || !Object.hasOwn(GRADIENT_KINDS, effect.gradient.type) ||
-          !Object.hasOwn(BLEND_MODES, effect.blendMode) || typeof effect.reverse !== 'boolean' ||
-          !Number.isFinite(effect.angle) || effect.angle < -180 || effect.angle >= 180 ||
-          !Number.isFinite(effect.scale) || effect.scale < 1 || effect.scale > 1000 ||
-          !Number.isFinite(effect.opacity) || effect.opacity < 0 || effect.opacity > 100 ||
-          target.byteLength !== length) throw new RustPixelPocError('invalid-input')
-      const { colorStops, opacityStops } = effect.gradient
-      for (const stops of [colorStops, opacityStops]) {
-        if (!Array.isArray(stops) || stops.length < 2 || stops.length > 32) throw new RustPixelPocError('invalid-input')
-        let previous = 0
-        for (const stop of stops) {
-          if (!stop || !Number.isFinite(stop.position) || stop.position < previous || stop.position > 1) {
-            throw new RustPixelPocError('invalid-input')
-          }
-          previous = stop.position
-        }
-      }
-      const colors = new Uint8Array(colorStops.length * 16)
-      const colorsView = new DataView(colors.buffer)
-      for (const [index, stop] of colorStops.entries()) {
-        if (!Array.isArray(stop.color) || stop.color.length !== 4 ||
-            [...stop.color].some(value => !Number.isSafeInteger(value) || value < 0 || value > 255)) {
-          throw new RustPixelPocError('invalid-input')
-        }
-        colorsView.setFloat64(index * 16, stop.position, true)
-        colors.set(stop.color, index * 16 + 8)
-      }
-      const opacities = new Uint8Array(opacityStops.length * 16)
-      const opacityView = new DataView(opacities.buffer)
-      for (const [index, stop] of opacityStops.entries()) {
-        if (!Number.isFinite(stop.opacity) || stop.opacity < 0 || stop.opacity > 100) {
-          throw new RustPixelPocError('invalid-input')
-        }
-        opacityView.setFloat64(index * 16, stop.position, true)
-        opacityView.setFloat64(index * 16 + 8, stop.opacity, true)
-      }
-      // Use the reference TS trig once per job.
-      const radians = effect.angle * Math.PI / 180
-      const cosine = Math.cos(radians), sine = Math.sin(radians)
+      if (target.byteLength !== length) throw new RustPixelPocError('invalid-input')
+      const { colors, opacities, cosine, sine } = encodeBatchGradient(effect)
       const started = performance.now()
       const allocations: { pointer: number; bytes: Uint8Array }[] = []
       try {
@@ -543,6 +511,24 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       } finally {
         for (const { pointer, bytes } of allocations) exports.axia_poc_free(pointer, bytes.byteLength)
       }
+    },
+    localBatchStagedRegion(sourceId: number, region: RustPixelPocRegion, plan: RustPixelPocBatchPlan) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
+      const length = validateRegion(region, staged.width, staged.height, 100)
+      const bytes = encodeLocalBatch(plan, staged.length, length)
+      const started = performance.now()
+      const pointer = exports.axia_poc_alloc(bytes.byteLength)
+      if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+      try {
+        if (pointer + bytes.byteLength > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+        const allocated = performance.now()
+        new Uint8Array(exports.memory.buffer, pointer, bytes.byteLength).set(bytes)
+        const copiedIn = performance.now()
+        return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
+          region, 100, allocated - started, copiedIn - allocated, { type: 'local-batch', pointer, length: bytes.byteLength }),
+          generation: staged.generation }
+      } finally { exports.axia_poc_free(pointer, bytes.byteLength) }
     },
     releaseSource(sourceId: number) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')

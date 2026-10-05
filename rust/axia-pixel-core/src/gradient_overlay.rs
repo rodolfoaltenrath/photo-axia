@@ -61,7 +61,7 @@ fn validate_positions(positions: impl Iterator<Item = f64>, length: usize) -> bo
 }
 
 impl GradientOverlay<'_> {
-    fn validate(&self) -> Result<(), &'static str> {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
         if !validate_positions(
             self.colors.iter().map(|stop| stop.position),
             self.colors.len(),

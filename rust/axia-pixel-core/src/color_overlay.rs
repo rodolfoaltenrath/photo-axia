@@ -10,7 +10,7 @@ pub struct ColorOverlay {
 }
 
 impl ColorOverlay {
-    fn validate(self) -> Result<(), &'static str> {
+    pub(crate) fn validate(self) -> Result<(), &'static str> {
         if !self.opacity.is_finite() || !(0.0..=100.0).contains(&self.opacity) {
             return Err("invalid-effect-opacity");
         }

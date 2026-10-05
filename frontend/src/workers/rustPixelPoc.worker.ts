@@ -57,7 +57,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
     request.type === 'blend-if-this-layer-staged-region' ||
     request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
-    request.type === 'gradient-overlay-staged-region'
+    request.type === 'gradient-overlay-staged-region' || request.type === 'local-batch-staged-region'
   if (isRender) pending.add(request.id)
   void runtime.then((engine) => {
     if (current !== generation || cancelled.has(request.id)) {
@@ -83,9 +83,11 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     if (request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
         request.type === 'blend-if-this-layer-staged-region' ||
         request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
-        request.type === 'gradient-overlay-staged-region') {
+        request.type === 'gradient-overlay-staged-region' || request.type === 'local-batch-staged-region') {
       const result = (() => {
         switch (request.type) {
+          case 'local-batch-staged-region':
+            return engine.localBatchStagedRegion(request.sourceId, request.region, request.plan)
           case 'blend-if-this-layer-staged-region':
             return engine.blendIfThisLayerStagedRegion(request.sourceId, request.region, request.blendIf)
           case 'blend-if-staged-region':

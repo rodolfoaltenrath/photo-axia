@@ -34,7 +34,7 @@ pub struct BlendIfConfig {
 pub type UnderlyingBlendIf = BlendIfConfig;
 
 impl BlendIfConfig {
-    fn validate(self) -> Result<(), &'static str> {
+    pub(crate) fn validate(self) -> Result<(), &'static str> {
         if self.shadows[0] > self.shadows[1]
             || self.shadows[1] > self.highlights[0]
             || self.highlights[0] > self.highlights[1]

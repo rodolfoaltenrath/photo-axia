@@ -848,3 +848,97 @@ Próximos passos: executor de estágios/batch para reduzir cópias intermediári
 demais efeitos e halo, cache/orçamento agregado, transformação/reamostragem,
 medição end-to-end e validação multiplataforma. Os gates C0/C1/C2 continuam
 abertos; preview normal, exportação e `.axia` permanecem inalterados.
+
+## Nona fatia: lote local de estilos
+
+Implementada em 2026-10-05. O executor experimental recebe um plano e executa
+fill → sobreposições ordenadas → Mesclar se da própria camada em uma chamada
+WASM, devolvendo somente o tile final. Aceita fill fracionário, até 64
+sobreposições de cor, gradiente ou padrão, os cinco tipos de gradiente e um
+filtro terminal opcional. Não inclui Camada abaixo, transformação,
+reamostragem, sombras/halos nem composição da pilha do documento.
+
+### Contrato e execução
+
+O [contrato do lote local V1](contrato-lote-local-v1.md) especifica o pacote
+binário little-endian, alinhamento, campos reservados, orçamento e erros.
+A ABI privada `axia_poc_local_batch_region` tem 12 argumentos; adapter e
+checagem do bundle rejeitam export ausente ou assinatura incompatível.
+O Worker recebe o plano como comando regional de fonte preparada, mantendo
+ID/geração, barreiras de ciclo de vida e descarte por view gate.
+
+- Reutiliza os kernels existentes. Cada passe materializa RGBA8 e mantém a
+  ordem e os arredondamentos da referência TS; não funde multiplicações de
+  alfa. Sobreposições leem a máscara original, não a saída do passe anterior.
+  O filtro terminal lê o raster já estilizado.
+- Valida todo o pacote antes de executar. Dois buffers nativos alternam entre
+  passes; a saída externa só recebe o resultado após sucesso completo.
+  Erros não deixam saída parcial. Buffers temporários têm liberação RAII;
+  packet/saída do adapter são liberados também em falhas.
+- Impõe **96 MiB por job**, somando fonte, pacote, saída, um ou dois buffers
+  temporários e reserva conservadora de metadados. Retorna status 6 e
+  `memory-limit` para orçamento/reserva do lote. Não limita RSS, páginas WASM,
+  buffers JS, fontes de outros jobs ou outros Workers; não é orçamento global
+  do editor. Os passes individuais mantêm seus contratos anteriores.
+- O serializador compartilha a codificação/validação de gradiente com o passe
+  individual. Fill ganha um caminho interno fracionário sem alterar a ABI
+  inteira antiga. Nenhuma dependência ou versão da stack foi alterada.
+
+O pacote mantém entradas imutáveis e payloads alinhados. Padrões são copiados
+para cada job; não existe cache/LRU de assets nem deduplicação do serializador.
+A ABI continua privada/unsafe, sem registro nativo de alocações ou handles
+seguros. Um kernel síncrono em andamento ainda não pode ser interrompido.
+
+### Validação
+
+- **29 testes Rust**, Clippy sem avisos e formatação verificada.
+- **498 testes frontend** e typechecks passaram.
+- **115 testes WASM/Worker**, incluindo matrizes byte a byte sobre
+  **983.040 pixels**: cinco tipos de gradiente × três valores de fill,
+  sobreposições ordenadas e filtro terminal.
+- Nove fixtures compatíveis do corpus fixo de 17 casos passam pelo lote, sem
+  regenerar expectativas. Os demais exigem passes ainda não portados.
+- Tiles 7×5 em 16 configurações de ordem/canal, fill fracionário, zero/um/
+  dois/64 efeitos, máscara original imutável e arredondamento separado de alfa.
+- Rejeição de planos esparsos, tipos/configurações desconhecidos, campos
+  reservados, offsets/overflow, payloads malformados, NaN e sobreposição de
+  saída. Testes ABI mantêm a saída sentinela intacta ao rejeitar o pacote.
+- Falhas simuladas de alocação de pacote/saída e orçamento nativo verificam
+  limpeza, fonte preservada, recuperação e descarte. Worker real cobre
+  transferência, view gate, invalidação e recuperação após plano inválido.
+- Diagnóstico Wails/WebView2 compara bytes fixos do lote, preserva a geração
+  e verifica os passes individuais na mesma fonte após o lote. Build,
+  integridade e smoke passaram; WASM de **50.587 bytes**. Não foi gerado novo
+  instalador/portável nem feita validação Linux nesta fatia.
+
+### Medição isolada
+
+Executar `npm run benchmark:rust-local-batch -- 1024 20`. Sonda no Windows,
+i7-3770 e Node 24.14.1 fixado, sem builds/testes concorrentes, com três
+aquecimentos e vinte amostras alternadas. Compara quatro chamadas individuais
+(fill 60%, cor, gradiente, padrão) com uma chamada de lote; usa duas fontes
+preparadas uma vez e compara cada saída com TS fora da janela cronometrada.
+Não inclui o filtro terminal: o caminho individual exigiria preparar outra
+fonte estilizada, tornando diferente o cenário de uma máscara preparada.
+
+| Medida | Individuais: mediana / p95 | Lote: mediana / p95 |
+| --- | ---: | ---: |
+| Total do adapter | 365,312 / 408,130 ms | 358,808 / 389,442 ms |
+| Tempo nativo | 356,810 / 400,396 ms | 357,029 / 387,986 ms |
+| Cópias de entrada | 1,897 / 2,415 ms | 0,002 / 0,004 ms |
+| Cópias de saída | 4,765 / 7,125 ms | 1,015 / 1,152 ms |
+
+Bytes devolvidos WASM→JS caem de **16 MiB para 4 MiB** por job. Preparar a
+fonte levou 1,720 ms no caminho individual e 1,231 ms no lote, fora da janela.
+O total inclui serialização/alocação/liberação; o tempo nativo do lote inclui
+parsing, reservas, scratch e cópia final. Não somar medianas/p95. A redução
+do total foi pequena, cerca de 1,8%; kernels dominam e não ficaram mais
+rápidos nesta medição. Não atribuir ganho a SIMD nem extrapolar para FPS.
+Worker, Canvas, texto, GPU, documento e pico de memória não foram medidos.
+O lote troca tráfego intermediário para JS por buffers nativos; menos bytes
+de saída não demonstra menor consumo total de memória.
+
+Próximos passos: demais estágios e halo, cache/assets e orçamento agregado,
+transformação/reamostragem, medição end-to-end e validação multiplataforma.
+Os gates C0/C1/C2 continuam abertos. Preview normal, exportação, texto, modelo
+do documento e `.axia` permanecem inalterados.

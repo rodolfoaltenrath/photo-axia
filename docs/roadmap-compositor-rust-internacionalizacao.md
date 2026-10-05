@@ -403,6 +403,17 @@ preview normal. Faltam demais efeitos/halos, executor/batch, cache/orçamento,
 transformações e validação multiplataforma. Detalhes e medições na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
+Uma nona fatia adiciona um **lote local** em Rust: fill fracionário, até 64
+overlays de cor/gradiente/padrão e Mesclar se — Esta camada no fim, sem cópias
+JS de rasters intermediários. Máscara e destino são separados; a saída só é
+publicada após sucesso. TS/Rust verificam 96 MiB por job incluindo scratch;
+`memory-limit` identifica orçamento/reserva interna. Não inclui Camada abaixo,
+transformação, halo ou compositor de documento. A sonda 1024² reduziu saída
+WASM→JS de 16 MiB para 4 MiB, mas o tempo total mudou pouco (365,31 → 358,81 ms):
+predominam os kernels. Isso não mede FPS nem conclui C0/C1/C2. Contrato,
+cobertura e limites na [ABI do lote local](contrato-lote-local-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

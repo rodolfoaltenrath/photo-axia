@@ -1,5 +1,6 @@
 //! Experimental pixel ABI; not the document compositor.
 
+pub mod batch;
 pub mod blend_if;
 pub mod color_overlay;
 pub mod composite;
@@ -44,7 +45,25 @@ pub fn apply_fill_opacity_region(
     output: &mut [u8],
     fill_opacity: u8,
 ) -> Result<(), &'static str> {
-    if fill_opacity > 100 {
+    apply_fill_opacity_region_fractional(
+        source,
+        source_width,
+        source_height,
+        region,
+        output,
+        f64::from(fill_opacity),
+    )
+}
+
+pub(crate) fn apply_fill_opacity_region_fractional(
+    source: &[u8],
+    source_width: usize,
+    source_height: usize,
+    region: RasterRegion,
+    output: &mut [u8],
+    fill_opacity: f64,
+) -> Result<(), &'static str> {
+    if !fill_opacity.is_finite() || !(0.0..=100.0).contains(&fill_opacity) {
         return Err("invalid-fill-opacity");
     }
     validate_raster_region(
@@ -54,7 +73,7 @@ pub fn apply_fill_opacity_region(
         region,
         output.len(),
     )?;
-    let fill = f64::from(fill_opacity) / 100.0;
+    let fill = fill_opacity / 100.0;
     for row in 0..region.height {
         for column in 0..region.width {
             let source_index = ((region.y + row) * source_width + region.x + column) * 4;

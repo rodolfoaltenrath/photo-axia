@@ -1,7 +1,9 @@
 // Experimental protocol; not connected to the editor renderer.
+import type { RustPixelPocBatchPlan } from './rustPixelPocBatch.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
+  | { type: 'local-batch-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion; plan: RustPixelPocBatchPlan }
   | { type: 'init'; id: number; wasm: ArrayBuffer }
   | { type: 'render'; id: number; rgba: ArrayBuffer; fillOpacity: number }
   | { type: 'render-region'; id: number; rgba: ArrayBuffer; sourceWidth: number; sourceHeight: number;
@@ -46,4 +48,4 @@ export type RustPixelPocResponse =
   | { type: 'source-released'; id: number; sourceId: number }
   | { type: 'cancelled'; id: number }
   | { type: 'disposed'; id: number }
-  | { type: 'error'; id: number; code: 'wasm-unavailable' | 'invalid-input' | 'wasm-failure' }
+  | { type: 'error'; id: number; code: 'wasm-unavailable' | 'invalid-input' | 'wasm-failure' | 'memory-limit' }

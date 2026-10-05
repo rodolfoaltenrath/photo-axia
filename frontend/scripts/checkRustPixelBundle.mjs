@@ -19,6 +19,7 @@ const generated = readFileSync(join(frontendRoot, 'src', 'generated', 'axia_pixe
 const bundled = readFileSync(join(assetsRoot, wasmName))
 assert.deepEqual(bundled, generated, 'Vite deve empacotar os bytes gerados pelo Cargo sem alteração')
 const { instance } = await WebAssembly.instantiate(bundled, {})
+assert.equal(instance.exports.axia_poc_local_batch_region?.length, 12, 'Assinatura do lote local incompatível')
 assert.equal(instance.exports.axia_poc_gradient_overlay_region?.length, 24,
   'A assinatura do gradiente deve corresponder ao adapter atual')
 

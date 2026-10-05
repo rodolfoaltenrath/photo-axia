@@ -20,7 +20,11 @@ pub struct PatternOverlay<'a> {
     pub scale_factor: f64,
 }
 
-fn validate_pattern(length: usize, width: usize, height: usize) -> Result<(), &'static str> {
+pub(crate) fn validate_pattern(
+    length: usize,
+    width: usize,
+    height: usize,
+) -> Result<(), &'static str> {
     if width == 0
         || height == 0
         || width > 8192
@@ -36,7 +40,7 @@ fn validate_pattern(length: usize, width: usize, height: usize) -> Result<(), &'
     Ok(())
 }
 
-fn validate_parameters(
+pub(crate) fn validate_parameters(
     opacity: f64,
     cosine: f64,
     sine: f64,

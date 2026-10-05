@@ -6,6 +6,10 @@ O objetivo é que preview, exportação, miniatura, conta-gotas, rasterização 
 mesclagem façam pedidos diferentes ao **mesmo** compositor, sem duplicar regras
 de aparência. Qualquer alteração deste contrato requer versão e teste de paridade.
 
+O [lote local experimental](contrato-lote-local-v1.md) tem ABI própria para
+fill/overlays/filtro terminal. Ainda não implementa a pilha ou transformações
+documentais especificadas aqui.
+
 ## 1. Vocabulário e unidades
 
 - Documento: espaço contínuo em pixels documentais, origem `(0, 0)` no canto

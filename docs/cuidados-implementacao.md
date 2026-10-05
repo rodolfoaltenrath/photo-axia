@@ -25,6 +25,7 @@ Esta organização não altera o comportamento do editor.
 | 3 | Ponteiro nulo |
 | 4 | Região fora da fonte, no passe `fill_opacity_region` |
 | 5 | Saída sobreposta a uma entrada, nos passes regionais |
+| 6 | Orçamento/reserva de memória, somente no lote local |
 
 - Preservar precisão `f64`, ordem das operações e arredondamento do TS.
   Reassociação ou multiply-add fundido pode alterar os bytes de referência.
@@ -43,6 +44,10 @@ Esta organização não altera o comportamento do editor.
   ciclo de vida da fonte são barreiras e não podem ser cancelados.
 - Benchmarks dos passes não representam FPS do preview. As medições e seus
   limites estão na [prova Rust/WASM](prova-rust-wasm-c1.md).
+
+O lote local preserva a máscara e materializa bytes entre passes; seu filtro
+terminal não inclui Camada abaixo. O limite de 96 MiB inclui scratch, mas não
+é o orçamento global do editor. Ver [contrato do lote](contrato-lote-local-v1.md).
 
 ## Preview, texto e seleção
 

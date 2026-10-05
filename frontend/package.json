@@ -41,6 +41,8 @@
     "benchmark:rust-pattern-overlay": "node --experimental-strip-types benchmarks/rustPatternOverlay.ts",
     "prebenchmark:rust-gradient-overlay": "node scripts/buildRustPixelPoc.mjs",
     "benchmark:rust-gradient-overlay": "node --experimental-strip-types benchmarks/rustGradientOverlay.ts",
+    "prebenchmark:rust-local-batch": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-local-batch": "node --experimental-strip-types benchmarks/rustLocalBatch.ts",
     "test:types": "tsc --project tsconfig.test.json",
     "benchmark:quick-selection": "node --experimental-strip-types benchmarks/quickSelection4k.mjs"
   },

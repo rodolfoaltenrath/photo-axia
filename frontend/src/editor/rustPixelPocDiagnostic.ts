@@ -117,6 +117,17 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         throw new Error(`Worker Rust produziu gradiente ${type} diferente do golden.`)
       }
     }
+    const batchRequest = send({ type: 'local-batch-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 }, plan: { fillOpacity: 0, effects: [
+        { type: 'color-overlay', effect: { color: [255, 0, 0, 255], opacity: 50, blendMode: 'normal' } },
+        { type: 'color-overlay', effect: { color: [0, 0, 255, 255], opacity: 50, blendMode: 'normal' } }
+      ], thisLayerBlendIf: { channel: 'red', shadows: [0, 170], highlights: [255, 255] } } })
+    const batchToken = gate.captureTile('lote-direita', batchRequest.id)
+    const batchResult = await batchRequest
+    if (!batchToken?.isCurrent(batchResult) ||
+        [...new Uint8Array(batchResult.rgba)].join(',') !== '85,0,170,96,0,0,0,0') {
+      throw new Error('Worker Rust produziu lote de estilos diferente do golden.')
+    }
     const backdrop = new Uint8Array([75, 0, 0, 255, 100, 0, 0, 0])
     const blendRequest = send({ type: 'blend-if-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, backdrop: backdrop.buffer,
