@@ -10,8 +10,8 @@ const samples = Number(process.argv[3] ?? 20)
 const type = process.argv[4] ?? 'linear'
 if (!Number.isSafeInteger(side) || side < 16 || side > 2048 ||
     !Number.isSafeInteger(samples) || samples < 5 || samples > 100 ||
-    (type !== 'linear' && type !== 'reflected' && type !== 'diamond')) {
-  throw new Error('Uso: benchmark:rust-gradient-overlay -- [lado 16..2048] [amostras 5..100] [linear|reflected|diamond]')
+    (type !== 'linear' && type !== 'reflected' && type !== 'diamond' && type !== 'radial' && type !== 'angle')) {
+  throw new Error('Uso: benchmark:rust-gradient-overlay -- [lado 16..2048] [amostras 5..100] [linear|reflected|diamond|radial|angle]')
 }
 const wasm = Uint8Array.from(readFileSync(new URL(
   '../../rust/axia-pixel-core/target/wasm32-unknown-unknown/release/axia_pixel_core.wasm', import.meta.url

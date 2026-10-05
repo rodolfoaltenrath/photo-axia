@@ -18,6 +18,9 @@ const diagnosticName = exactlyOne('rustPixelPocDiagnostic-', '.js')
 const generated = readFileSync(join(frontendRoot, 'src', 'generated', 'axia_pixel_core.wasm'))
 const bundled = readFileSync(join(assetsRoot, wasmName))
 assert.deepEqual(bundled, generated, 'Vite deve empacotar os bytes gerados pelo Cargo sem alteração')
+const { instance } = await WebAssembly.instantiate(bundled, {})
+assert.equal(instance.exports.axia_poc_gradient_overlay_region?.length, 24,
+  'A assinatura do gradiente deve corresponder ao adapter atual')
 
 const diagnostic = readFileSync(join(assetsRoot, diagnosticName), 'utf8')
 assert.ok(diagnostic.includes(wasmName), 'O diagnóstico deve apontar ao WASM com hash')

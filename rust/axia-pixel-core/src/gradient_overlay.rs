@@ -1,4 +1,4 @@
-//! Local-grid linear, reflected and diamond gradients on the original mask.
+//! Local-grid gradient overlays on the original mask.
 use crate::composite::{composite_pixel_values, BlendMode};
 use crate::{validate_raster_region, RasterRegion, MAX_POC_BYTES};
 
@@ -7,6 +7,8 @@ pub enum GradientKind {
     Linear,
     Reflected,
     Diamond,
+    Radial,
+    Angle,
 }
 
 impl TryFrom<u32> for GradientKind {
@@ -16,6 +18,8 @@ impl TryFrom<u32> for GradientKind {
             0 => Ok(Self::Linear),
             1 => Ok(Self::Reflected),
             2 => Ok(Self::Diamond),
+            3 => Ok(Self::Radial),
+            4 => Ok(Self::Angle),
             _ => Err("unsupported-gradient"),
         }
     }
@@ -39,6 +43,7 @@ pub struct GradientOverlay<'a> {
     pub opacities: &'a [OpacityStop],
     pub cosine: f64,
     pub sine: f64,
+    pub angle_radians: f64,
     pub scale: f64,
     pub reverse: bool,
     pub opacity: f64,
@@ -73,6 +78,8 @@ impl GradientOverlay<'_> {
             || !(1.0..=1000.0).contains(&self.scale)
             || !self.cosine.is_finite()
             || !self.sine.is_finite()
+            || !self.angle_radians.is_finite()
+            || !(-std::f64::consts::PI..std::f64::consts::PI).contains(&self.angle_radians)
             || self.cosine.abs() > 1.0
             || self.sine.abs() > 1.0
             || (self.cosine * self.cosine + self.sine * self.sine - 1.0).abs() > 1e-12
@@ -88,6 +95,22 @@ impl GradientOverlay<'_> {
         let dx = x as f64 + 0.5 - width as f64 / 2.0;
         let dy = y as f64 + 0.5 - height as f64 / 2.0;
         let position = match self.kind {
+            GradientKind::Radial => {
+                // Preserve the reference JS two-input hypot rounding.
+                let a = (dx / radius_x).abs();
+                let b = (dy / radius_y).abs();
+                let largest = a.max(b);
+                if largest == 0.0 {
+                    0.0
+                } else {
+                    let a = a / largest;
+                    let b = b / largest;
+                    (a * a + b * b).sqrt() * largest
+                }
+            }
+            GradientKind::Angle => {
+                ((dy.atan2(dx) - self.angle_radians) / (std::f64::consts::PI * 2.0) + 1.0) % 1.0
+            }
             GradientKind::Diamond => dx.abs() / radius_x + dy.abs() / radius_y,
             GradientKind::Linear | GradientKind::Reflected => {
                 let extent = (self.cosine.abs() * radius_x + self.sine.abs() * radius_y).max(0.5);
@@ -213,6 +236,7 @@ pub unsafe extern "C" fn axia_poc_gradient_overlay_region(
     reverse: u32,
     opacity: f64,
     blend_mode: u32,
+    angle_radians: f64,
 ) -> u32 {
     if [
         source_ptr,
@@ -309,6 +333,7 @@ pub unsafe extern "C" fn axia_poc_gradient_overlay_region(
         opacities: &opacities,
         cosine,
         sine,
+        angle_radians,
         scale,
         reverse: reverse == 1,
         opacity,
@@ -361,6 +386,7 @@ mod tests {
             opacities: &OPACITIES,
             cosine: 1.0,
             sine: 0.0,
+            angle_radians: 0.0,
             scale: 100.0,
             reverse: false,
             opacity: 100.0,
@@ -392,6 +418,59 @@ mod tests {
         let gradient = effect();
         assert_eq!(gradient.position(2, 1, 5, 3), 0.5);
         assert_eq!(gradient.paint(0.5), ([128.0; 3], 1.0));
+    }
+    #[test]
+    fn radial_keeps_center_and_ellipse_axes() {
+        let gradient = GradientOverlay {
+            kind: GradientKind::Radial,
+            ..effect()
+        };
+        assert_eq!(gradient.position(2, 1, 5, 3), 0.0);
+        assert_eq!(gradient.position(1, 0, 3, 1), 0.0);
+        assert_eq!(gradient.position(0, 0, 3, 1), 2.0 / 3.0);
+        assert_eq!(gradient.position(0, 0, 1, 3), 2.0 / 3.0);
+    }
+    #[test]
+    fn angle_wraps_once_and_keeps_center_convention() {
+        let gradient = GradientOverlay {
+            kind: GradientKind::Angle,
+            ..effect()
+        };
+        assert_eq!(gradient.position(1, 1, 3, 3), 0.0);
+        assert_eq!(gradient.position(2, 1, 3, 3), 0.0);
+        assert_eq!(gradient.position(1, 0, 3, 3), 0.75);
+        assert_eq!(gradient.position(0, 1, 3, 3), 0.5);
+        assert_eq!(gradient.position(1, 2, 3, 3), 0.25);
+        let rotated = GradientOverlay {
+            angle_radians: -std::f64::consts::PI,
+            ..gradient
+        };
+        assert_eq!(rotated.position(0, 1, 3, 3), 0.0);
+    }
+    #[test]
+    fn invalid_angle_preserves_output() {
+        let mut output = [99; 4];
+        let invalid = GradientOverlay {
+            kind: GradientKind::Angle,
+            angle_radians: f64::NAN,
+            ..effect()
+        };
+        assert!(apply_gradient_overlay_region(
+            &[40, 60, 80, 255],
+            1,
+            1,
+            RasterRegion {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1
+            },
+            &[0; 4],
+            &mut output,
+            invalid,
+        )
+        .is_err());
+        assert_eq!(output, [99; 4]);
     }
     #[test]
     fn invalid_stops_preserve_output() {

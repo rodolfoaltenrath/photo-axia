@@ -35,7 +35,7 @@ interface RustPixelPocExports {
     targetPointer: number, targetLength: number, outputPointer: number, outputLength: number,
     colorsPointer: number, colorsLength: number, opacitiesPointer: number, opacitiesLength: number,
     kind: number, cosine: number, sine: number, scale: number, reverse: number,
-    opacity: number, blendMode: number): number
+    opacity: number, blendMode: number, angleRadians: number): number
 }
 
 export interface RustPixelPocRegion { x: number; y: number; width: number; height: number }
@@ -65,7 +65,7 @@ export interface RustPixelPocPatternOverlay {
 
 export interface RustPixelPocGradientOverlay {
   gradient: {
-    type: 'linear' | 'reflected' | 'diamond'
+    type: 'linear' | 'reflected' | 'diamond' | 'radial' | 'angle'
     colorStops: { position: number; color: [number, number, number, number] }[]
     opacityStops: { position: number; opacity: number }[]
   }
@@ -76,7 +76,7 @@ export interface RustPixelPocGradientOverlay {
   blendMode: LayerBlendMode
 }
 
-const GRADIENT_KINDS = { linear: 0, reflected: 1, diamond: 2 } as const
+const GRADIENT_KINDS = { linear: 0, reflected: 1, diamond: 2, radial: 3, angle: 4 } as const
 
 const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
   normal: 0, multiply: 1, screen: 2, overlay: 3, darken: 4, lighten: 5
@@ -117,7 +117,8 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_blend_if_this_layer_region !== 'function' ||
       typeof candidate.axia_poc_color_overlay_region !== 'function' ||
       typeof candidate.axia_poc_pattern_overlay_region !== 'function' ||
-      typeof candidate.axia_poc_gradient_overlay_region !== 'function') {
+      typeof candidate.axia_poc_gradient_overlay_region !== 'function' ||
+      candidate.axia_poc_gradient_overlay_region.length !== 24) {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -226,7 +227,8 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
               pass.pointer, pass.length, outputPointer, outputLength,
               pass.colorsPointer, pass.colorsLength, pass.opacitiesPointer, pass.opacitiesLength,
               GRADIENT_KINDS[pass.effect.gradient.type], pass.cosine, pass.sine,
-              pass.effect.scale, pass.effect.reverse ? 1 : 0, pass.effect.opacity, BLEND_MODES[pass.effect.blendMode])
+              pass.effect.scale, pass.effect.reverse ? 1 : 0, pass.effect.opacity, BLEND_MODES[pass.effect.blendMode],
+              pass.effect.angle * Math.PI / 180)
             break
           default:
             pass satisfies never

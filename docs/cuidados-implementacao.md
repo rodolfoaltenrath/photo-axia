@@ -35,7 +35,9 @@ Esta organização não altera o comportamento do editor.
   Diferenças minúsculas de trigonometria podem trocar o texel amostrado.
 - Gradientes usam a grade inteira da fonte, não o centro de cada tile.
   Preservar a extrapolação TS após a última parada; alterá-la exige decisão
-  separada de compatibilidade. Radial e angular ainda não foram portados.
+  separada de compatibilidade. Radial preserva a ordem do `hypot` de dois
+  argumentos da referência JS; angular preserva centro, emenda e `%`.
+  Testar paradas rígidas ao mudar toolchain/runtime, não só degradês suaves.
 - Uma chamada WASM síncrona não é interrompida pelo cancelamento do Worker.
   O consumidor também deve rejeitar respostas ultrapassadas. Comandos de
   ciclo de vida da fonte são barreiras e não podem ser cancelados.

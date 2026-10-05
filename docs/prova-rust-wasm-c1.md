@@ -638,6 +638,9 @@ transformações e benchmark end-to-end; os gates C0/C1/C2 permanecem abertos.
 
 ## Sétima fatia: sobreposição de gradiente linear, refletido e diamante
 
+Esta seção registra a primeira versão do passe. A extensão atual para radial
+e angular e a assinatura revisada estão na oitava fatia, abaixo.
+
 Implementada em 2026-10-05, somente no caminho experimental. O novo kernel
 `axia_poc_gradient_overlay_region` e o comando Worker
 `gradient-overlay-staged-region` operam sobre fonte preparada e destino
@@ -746,3 +749,102 @@ executor de estágios que evite cópias intermediárias, cache/orçamento agrega
 transformações e integração reativa. Cancelamento não interrompe o kernel
 WASM síncrono. Preview normal, exportação e `.axia` não mudaram; C0/C1/C2
 continuam abertos.
+
+## Oitava fatia: gradientes radial e angular
+
+Implementada em 2026-10-05, no mesmo passe experimental. Agora os cinco tipos
+atuais de **Sobreposição de gradiente** estão disponíveis em Rust/WASM:
+linear=0, refletido=1, diamante=2, radial=3 e angular=4 (`angle` no protocolo).
+Tipos desconhecidos continuam rejeitados. Isso não porta a ferramenta de
+degradê nem ativa o novo caminho no editor.
+
+### Geometria e compatibilidade
+
+- Radial usa as distâncias normalizadas pelos dois raios da fonte completa,
+  preservando a elipse, o centro e a escala do TS. O ângulo não altera o radial,
+  como na referência atual. Não ancorar o gradiente no centro de cada tile.
+- Angular calcula `atan2(dy,dx)` em Rust e recebe o ângulo em radianos do TS.
+  Mantém a mesma ordem de subtração/divisão, soma de uma volta e resto `% 1`.
+  Centro, quadrantes e emenda preservam a convenção atual, inclusive o centro
+  de uma fonte de dimensões ímpares. Escala/reversão são aplicadas depois,
+  mantendo a fórmula compartilhada dos cinco tipos.
+- Máscara original, destino estilizado compacto, alfa reto, paradas
+  independentes e extrapolação após a última parada seguem a sétima fatia.
+  Novos tipos não introduzem alocações ou chamadas JS/WASM por pixel.
+
+Uma regressão foi reproduzida antes de fechar o porte: em fonte 7×11, pixel
+(1,1), `f64::hypot` e `Math.hypot` diferiam por arredondamento. Com duas paradas
+coincidentes nessa posição, Rust retornava branco e TS preto. O radial agora
+usa normalização pelo maior módulo, soma dos quadrados e raiz na mesma ordem
+da referência de dois argumentos. A implementação usada pelo Node fixado pode
+ser conferida no [V8 de Node 24.14.1](https://github.com/nodejs/node/blob/v24.14.1/deps/v8/src/builtins/math.tq).
+O teste falhou com a implementação inicial e passou após o ajuste; sua
+expectativa não foi relaxada. Não presumir igualdade universal com qualquer
+motor JS, versão de libm ou plataforma: a suíte precisa acompanhar mudanças
+de toolchain/runtime, sobretudo para paradas rígidas.
+
+### ABI e segurança
+
+A função privada `axia_poc_gradient_overlay_region` passa de 23 a **24
+argumentos**, acrescentando `angle_radians: f64` ao fim. Aceita valores finitos
+de -π inclusive a π exclusivo. Adapter/Worker calculam esse valor a partir do
+ângulo normalizado já existente; não há mudança no formato `.axia`.
+O adapter exige a aridade atual ao inicializar e rejeita binário antigo com
+`wasm-unavailable`, antes de preparar fontes. A checagem do bundle também
+instancia o WASM local e confere essa assinatura.
+
+Os demais formatos, validações, códigos de erro, fonte preparada e contratos
+de alocação/overlap permanecem iguais. Handles seguros, orçamento agregado e
+interrupção do kernel síncrono continuam pendentes. Nenhuma crate/dependência
+ou versão da stack foi alterada.
+
+### Validação
+
+- **25 testes Rust**, Clippy sem avisos e formatação verificada.
+- **494 testes frontend** e typechecks passaram.
+- **107 testes WASM/Worker**: 87 anteriores e 20 adicionais, incluindo dois
+  goldens, doze matrizes de tipo/modo, três casos de precisão, dois Worker e
+  rejeição da assinatura antiga. A matriz total dos cinco tipos compara
+  **7.864.320 pixels byte a byte**, sem relaxar os testes anteriores.
+- Corpus puro com **17 casos**: adicionados `gradient-radial-center` e
+  `gradient-angle-quadrants`, cobrindo centro/eixos e os quadrantes/emenda.
+  Os 15 anteriores não foram regenerados.
+- Tiles 7×5 em **75 configurações** de tipo/ângulo/escala, inclusive bordas,
+  reversão e paradas coincidentes. Os testes de máscara original e halos
+  preparados no TS agora percorrem os cinco tipos, sem portar sombras/halos.
+- Paradas rígidas e intervalos de 1e-16/1e-14 em geometrias assimétricas;
+  angular em **300 geometrias/rotações determinísticas**, comparando com TS.
+  Native/ABI cobrem ângulo inválido antes de modificar a saída.
+- Worker real recompõe tiles dos dois novos tipos, muda ângulo/escala/reversão
+  sem reupload da máscara e preserva ID/geração. Os testes anteriores continuam
+  cobrindo transferência, recuperação, invalidação e descarte de respostas.
+- Diagnóstico Wails/WebView2 testa bytes fixos dos cinco tipos e paradas
+  rígidas calculadas pelo JS do próprio WebView, na mesma sessão que os passes
+  anteriores. WASM de **42.825 bytes**, build, integridade e smoke passaram.
+  Não foi gerado novo instalador/portável nem feita validação Linux nesta fatia.
+
+### Medições isoladas
+
+Executar `npm run benchmark:rust-gradient-overlay -- 1024 20 radial` e o mesmo
+com `angle`. Sondas realizadas separadamente, sem builds/testes concorrentes,
+com três aquecimentos, vinte amostras e comparação byte a byte fora da janela.
+Mesma máquina/configuração da sétima fatia, mudando apenas o tipo:
+
+| Tipo | TS mediana / p95 | Adapter Rust mediana / p95 |
+| --- | ---: | ---: |
+| Radial | 1.162,609 / 1.230,146 ms | 138,908 / 155,944 ms |
+| Angular | 1.173,846 / 1.279,192 ms | 162,274 / 173,021 ms |
+
+Kernels somados: radial 135,388 / 152,589 ms; angular 157,935 / 167,674 ms.
+Preparar a fonte uma vez: 1,550 ms e 1,497 ms, respectivamente, fora da janela.
+Não somar medianas/p95. O total do adapter inclui duas chamadas, cópia do fill
+para JS e reupload no gradiente, serialização de paradas e alocações/liberações.
+O benchmark não isola linguagem/SIMD nem mede FPS, Worker, Canvas, documento,
+texto, transformação, GPU ou pico de memória. O custo de uma região inteira
+de um megapixel ainda exige tiles/cache e executor/batch antes de integração
+interativa. Não extrapolar esses números para o preview normal.
+
+Próximos passos: executor de estágios/batch para reduzir cópias intermediárias,
+demais efeitos e halo, cache/orçamento agregado, transformação/reamostragem,
+medição end-to-end e validação multiplataforma. Os gates C0/C1/C2 continuam
+abertos; preview normal, exportação e `.axia` permanecem inalterados.

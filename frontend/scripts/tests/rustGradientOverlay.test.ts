@@ -11,17 +11,17 @@ const wasm = Uint8Array.from(readFileSync(new URL(
   '../../../rust/axia-pixel-core/target/wasm32-unknown-unknown/release/axia_pixel_core.wasm', import.meta.url
 ))).buffer
 const modes: LayerBlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten']
-const types: RustPixelPocGradientOverlay['gradient']['type'][] = ['linear', 'reflected', 'diamond']
+const types: RustPixelPocGradientOverlay['gradient']['type'][] = ['linear', 'reflected', 'diamond', 'radial', 'angle']
 const invalid = (error: unknown) => error instanceof RustPixelPocError && error.code === 'invalid-input'
 
-for (const fixtureId of ['gradient-fractional-sampling', 'gradient-reflected-centered', 'gradient-diamond-corners']) {
+for (const fixtureId of ['gradient-fractional-sampling', 'gradient-reflected-centered', 'gradient-diamond-corners',
+  'gradient-radial-center', 'gradient-angle-quadrants']) {
   test(`Gradiente Rust reproduz golden ${fixtureId} sem modificar as entradas`, async () => {
     const corpus = JSON.parse(readFileSync(new URL('../../tests/fixtures/layerStyleGoldens.v1.json', import.meta.url), 'utf8'))
     const fixture = corpus.rasterCases.find((entry: { id: string }) => entry.id === fixtureId)
     const styles = normalizeLayerStyleConfig(fixture.styles)
     const original = styles.effects[0]!
     assert.equal(original.type, 'gradient-overlay')
-    assert.ok(original.gradient.type === 'linear' || original.gradient.type === 'reflected' || original.gradient.type === 'diamond')
     const effect: RustPixelPocGradientOverlay = { ...gradientEffect,
       angle: original.angle, scale: original.scale, opacity: original.opacity, reverse: original.reverse,
       gradient: { type: original.gradient.type, colorStops: [{ position: 0, color: [255, 0, 0, 255] }, { position: 1, color: [0, 0, 255, 255] }],
@@ -79,7 +79,7 @@ for (const type of types) {
   }
 }
 
-test('Tiles ímpares e paradas coincidentes preservam âncora global nos três gradientes', async () => {
+test('Tiles ímpares e paradas coincidentes preservam âncora global nos cinco gradientes', async () => {
   const width = 7, height = 5
   const source = Uint8Array.from({ length: width * height * 4 }, (_, index) => index * 19 % 256)
   const runtime = await createRustPixelPocRuntime(wasm)
@@ -100,6 +100,65 @@ test('Tiles ímpares e paradas coincidentes preservam âncora global nos três g
         for (let row = 0; row < region.height; row++) assembled.set(tile.subarray(row * region.width * 4, (row + 1) * region.width * 4), ((y + row) * width + x) * 4)
       }
       assert.deepEqual(assembled, expected)
+    }
+  } finally { runtime.dispose() }
+})
+
+for (const type of ['radial', 'angle'] as const) {
+  test(`Gradiente ${type}: paradas estreitas junto ao pixel mantêm o arredondamento TS`, async () => {
+    const runtime = await createRustPixelPocRuntime(wasm)
+    let generation = 0
+    try {
+      for (const [width, height] of [[3, 5], [7, 11], [32, 17], [63, 41], [127, 101]] as const) {
+        for (const [x, y] of [[0, 0], [1, 1], [width - 2, 1], [1, height - 2], [width - 2, height - 2]]) {
+          const dx = x! + 0.5 - width / 2, dy = y! + 0.5 - height / 2
+          const position = type === 'radial' ? Math.hypot(dx / (width / 2), dy / (height / 2))
+            : (Math.atan2(dy, dx) / (Math.PI * 2) + 1) % 1
+          if (position <= 0 || position >= 1) continue
+          const source = new Uint8Array(width * height * 4)
+          source.set([40, 60, 80, 255], (y! * width + x!) * 4)
+          const staged = runtime.stageSource(source, width, height, ++generation)
+          const region = { x: x!, y: y!, width: 1, height: 1 }
+          for (const epsilon of [0, 1e-16, 1e-14]) {
+            const effect: RustPixelPocGradientOverlay = { ...gradientEffect, angle: 0, scale: 100, opacity: 100,
+              gradient: { type, colorStops: [{ position: 0, color: [0, 0, 0, 255] },
+                { position: position - epsilon, color: [0, 0, 0, 255] },
+                { position: position + epsilon, color: [255, 255, 255, 255] },
+                { position: 1, color: [255, 255, 255, 255] }],
+              opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }] } }
+            const expected = gradientTile(new Uint8Array(gradientReference(source, width, height, 0, [gradientStyle(effect)]).data), width, region)
+            assert.deepEqual(runtime.gradientOverlayStagedRegion(staged.sourceId, region, new Uint8Array(4), effect).rgba,
+              expected, `${type}/${width}x${height}/${x},${y}/${epsilon}`)
+          }
+        }
+      }
+    } finally { runtime.dispose() }
+  })
+}
+
+test('Angular preserva paradas rígidas em 300 geometrias e rotações determinísticas', async () => {
+  const runtime = await createRustPixelPocRuntime(wasm)
+  let seed = 0x12345678
+  const next = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed }
+  try {
+    for (let generation = 1; generation <= 300; generation++) {
+      const width = next() % 95 + 1, height = next() % 95 + 1
+      const x = next() % width, y = next() % height
+      const angle = ((next() % 360000 / 1000 + 180) % 360 + 360) % 360 - 180
+      const position = ((Math.atan2(y + 0.5 - height / 2, x + 0.5 - width / 2) - angle * Math.PI / 180) / (Math.PI * 2) + 1) % 1
+      const scaled = Math.max(0, Math.min(1, 0.5 + (position - 0.5) * 100 / 100))
+      const source = new Uint8Array(width * height * 4)
+      source.set([40, 60, 80, 255], (y * width + x) * 4)
+      const staged = runtime.stageSource(source, width, height, generation)
+      const effect: RustPixelPocGradientOverlay = { ...gradientEffect, angle, scale: 100, opacity: 100,
+        gradient: { type: 'angle', colorStops: [{ position: 0, color: [0, 0, 0, 255] },
+          { position: scaled, color: [0, 0, 0, 255] }, { position: scaled, color: [255, 255, 255, 255] },
+          { position: 1, color: [255, 255, 255, 255] }],
+        opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }] } }
+      const region = { x, y, width: 1, height: 1 }
+      const expected = gradientTile(new Uint8Array(gradientReference(source, width, height, 0, [gradientStyle(effect)]).data), width, region)
+      assert.deepEqual(runtime.gradientOverlayStagedRegion(staged.sourceId, region, new Uint8Array(4), effect).rgba,
+        expected, `${generation}/${width}x${height}/${x},${y}/${angle}`)
     }
   } finally { runtime.dispose() }
 })
@@ -135,7 +194,7 @@ test('Adapter rejeita paradas/regiões/tipos inválidos e recupera sem trocar a 
     const staged = runtime.stageSource(source, 1, 1, 1)
     const invalidEffects: unknown[] = [null, { ...gradientEffect, angle: 180 }, { ...gradientEffect, reverse: 1 },
       { ...gradientEffect, scale: 0 }, { ...gradientEffect, opacity: NaN }, { ...gradientEffect, blendMode: 'constructor' }]
-    for (const type of ['radial', 'angle', 'constructor']) invalidEffects.push({ ...gradientEffect, gradient: { ...gradientEffect.gradient, type } })
+    for (const type of ['unknown', 'constructor']) invalidEffects.push({ ...gradientEffect, gradient: { ...gradientEffect.gradient, type } })
     for (const colorStops of [[], new Array(2), Array.from({ length: 33 }, () => ({ position: 0, color: [0, 0, 0, 255] })),
       [{ position: -1, color: [0, 0, 0, 255] }, { position: 1, color: [0, 0, 0, 255] }],
       [{ position: 1, color: [0, 0, 0, 255] }, { position: 0, color: [0, 0, 0, 255] }],
@@ -217,6 +276,22 @@ test('Cor → gradiente → padrão → filtros mantém máscara e ordem dos est
   } finally { runtime.dispose() }
 })
 
+test('Adapter rejeita a assinatura antiga do gradiente antes de preparar pixels', async (context) => {
+  const real = await WebAssembly.instantiate(wasm, {})
+  const oldExports = { ...real.instance.exports,
+    axia_poc_gradient_overlay_region: function oldGradient() { return 0 } }
+  Object.defineProperty(oldExports.axia_poc_gradient_overlay_region, 'length', { value: 23 })
+  const replacement = context.mock.method(WebAssembly, 'instantiate', async () => ({
+    module: real.module, instance: { exports: oldExports }
+  } as unknown as WebAssembly.WebAssemblyInstantiatedSource))
+  try {
+    await assert.rejects(createRustPixelPocRuntime(wasm),
+      (error: unknown) => error instanceof RustPixelPocError && error.code === 'wasm-unavailable')
+  } finally { replacement.mock.restore() }
+  const runtime = await createRustPixelPocRuntime(wasm)
+  runtime.dispose()
+})
+
 test('ABI do gradiente rejeita buffers, paradas e overlap sem escrever', async () => {
   const { instance } = await WebAssembly.instantiate(wasm, {})
   const exports = instance.exports as unknown as { memory: WebAssembly.Memory;
@@ -233,7 +308,7 @@ test('ABI do gradiente rejeita buffers, paradas e overlap sem escrever', async (
   doubles.setFloat64(opacities + 8, 100, true)
   doubles.setFloat64(opacities + 16, 1, true)
   doubles.setFloat64(opacities + 24, 100, true)
-  const args = [source, 4, 1, 1, 0, 0, 1, 1, target, 4, output, 4, colors, 32, opacities, 32, 0, 1, 0, 100, 0, 100, 0]
+  const args = [source, 4, 1, 1, 0, 0, 1, 1, target, 4, output, 4, colors, 32, opacities, 32, 0, 1, 0, 100, 0, 100, 0, 0]
   const sentinel = () => bytes.fill(99, output, output + 4)
   const check = (parameters: number[], status: number) => {
     sentinel()
@@ -242,7 +317,8 @@ test('ABI do gradiente rejeita buffers, paradas e overlap sem escrever', async (
   }
   try {
     for (const [index, value, status] of [[0, 0, 3], [13, 16, 1], [15, 528, 1], [2, 2, 1], [4, 1, 1],
-      [16, 3, 2], [17, NaN, 2], [18, Infinity, 2], [19, 0, 2], [20, 2, 2], [21, 101, 2], [22, 6, 2]]) {
+      [16, 5, 2], [17, NaN, 2], [18, Infinity, 2], [19, 0, 2], [20, 2, 2], [21, 101, 2], [22, 6, 2],
+      [23, NaN, 2], [23, Infinity, 2], [23, Math.PI, 2]]) {
       const changed = [...args]; changed[index!] = value!; check(changed, status!)
     }
     for (const pointer of [source, target, colors + 8, opacities + 8]) {

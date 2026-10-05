@@ -380,8 +380,8 @@ integração reativa, orçamento/batch e os demais gates. Detalhes na
 
 Uma sétima fatia adiciona **Sobreposição de gradiente** linear, refletido e
 diamante ao caminho Rust isolado, com paradas independentes de cor/opacidade,
-seis modos de mesclagem e tiles na grade completa da máscara original. Radial
-e angular são rejeitados explicitamente, não aproximados. Matrizes com
+seis modos de mesclagem e tiles na grade completa da máscara original. Nessa
+primeira versão, radial e angular eram rejeitados explicitamente. Matrizes com
 4.718.592 pixels, dois novos goldens, tiles/halos preparados no TS e Worker real
 passaram byte a byte. A sonda isolada 1024² mediu fill + gradiente linear em
 1.217,18 ms no TS e 122,10 ms no adapter Rust, incluindo cópias intermediárias;
@@ -390,6 +390,17 @@ não mede FPS nem justifica ativação no editor. O corpus puro tem 15 casos;
 Faltam dois tipos de gradiente, demais efeitos/halos, executor/batch,
 transformações e orçamento agregado. Nenhum gate foi fechado e preview normal,
 exportação e `.axia` permanecem inalterados. Contrato e medição completos na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
+Uma oitava fatia estende o mesmo passe aos gradientes **radial e angular**,
+completando os cinco tipos atuais da sobreposição no POC. Um teste de paradas
+rígidas revelou diferença de arredondamento no radial; o cálculo Rust agora
+preserva a referência JS de dois argumentos. Centro, emenda angular, rotações,
+reversão e tiles são testados; o adapter rejeita a assinatura WASM anterior.
+O corpus tem 17 goldens e a matriz dos cinco tipos compara 7.864.320 pixels
+contra TS. Isso não conclui o compositor de documento nem ativa o caminho no
+preview normal. Faltam demais efeitos/halos, executor/batch, cache/orçamento,
+transformações e validação multiplataforma. Detalhes e medições na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo

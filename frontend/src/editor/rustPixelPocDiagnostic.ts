@@ -101,18 +101,21 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         [...new Uint8Array(patterned.rgba)].join(',') !== '0,0,255,255,0,0,0,0') {
       throw new Error('Worker Rust produziu Sobreposição de padrão diferente do golden.')
     }
-    const gradientTarget = new Uint8Array(8)
-    const gradientRequest = send({ type: 'gradient-overlay-staged-region', sourceId: staged.sourceId,
-      region: { x: 1, y: 0, width: 1, height: 2 }, target: gradientTarget.buffer, effect: {
-        gradient: { type: 'linear', colorStops: [{ position: 0, color: [0, 0, 0, 255] }, { position: 1, color: [255, 255, 255, 255] }],
-          opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }] },
-        angle: 0, scale: 100, reverse: false, opacity: 100, blendMode: 'normal'
-      } }, [gradientTarget.buffer])
-    const gradientToken = gate.captureTile('gradiente-direita', gradientRequest.id)
-    const gradientResult = await gradientRequest
-    if (!gradientToken?.isCurrent(gradientResult) || gradientTarget.byteLength !== 0 ||
-        [...new Uint8Array(gradientResult.rgba)].join(',') !== '191,191,191,255,0,0,0,0') {
-      throw new Error('Worker Rust produziu Sobreposição de gradiente diferente do golden.')
+    for (const [type, gray] of [['linear', 191], ['reflected', 128], ['diamond', 255],
+      ['radial', 180], ['angle', 223]] as const) {
+      const gradientTarget = new Uint8Array(8)
+      const gradientRequest = send({ type: 'gradient-overlay-staged-region', sourceId: staged.sourceId,
+        region: { x: 1, y: 0, width: 1, height: 2 }, target: gradientTarget.buffer, effect: {
+          gradient: { type, colorStops: [{ position: 0, color: [0, 0, 0, 255] }, { position: 1, color: [255, 255, 255, 255] }],
+            opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }] },
+          angle: 0, scale: 100, reverse: false, opacity: 100, blendMode: 'normal'
+        } }, [gradientTarget.buffer])
+      const gradientToken = gate.captureTile('gradiente-direita', gradientRequest.id)
+      const gradientResult = await gradientRequest
+      if (!gradientToken?.isCurrent(gradientResult) || gradientTarget.byteLength !== 0 ||
+          [...new Uint8Array(gradientResult.rgba)].join(',') !== `${gray},${gray},${gray},255,0,0,0,0`) {
+        throw new Error(`Worker Rust produziu gradiente ${type} diferente do golden.`)
+      }
     }
     const backdrop = new Uint8Array([75, 0, 0, 255, 100, 0, 0, 0])
     const blendRequest = send({ type: 'blend-if-staged-region', sourceId: staged.sourceId,
@@ -204,6 +207,32 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     if (observer.observe(changedThresholds).kind !== 'view' || styledToken.isCurrent(styledResult) ||
         !gate.captureTile('fonte-estilizada', nextId + 1)) {
       throw new Error('Observador Rust não reutilizou pixels ao mudar somente as faixas.')
+    }
+    const boundaryPixels = new Uint8Array(7 * 11 * 4)
+    boundaryPixels.set([40, 60, 80, 101], (1 * 7 + 1) * 4)
+    const boundarySource = await send({ type: 'stage-source', rgba: boundaryPixels.buffer,
+      sourceWidth: 7, sourceHeight: 11, generation: gate.beginSourceChange() }, [boundaryPixels.buffer])
+    if (boundarySource.type !== 'source-staged' || !gate.adoptSource(boundarySource)) {
+      throw new Error('Worker Rust não preparou a fonte dos limites de gradiente.')
+    }
+    for (const type of ['radial', 'angle'] as const) {
+      const angle = type === 'radial' ? 0 : -77.75
+      const raw = type === 'radial' ? Math.hypot(-2 / 3.5, -4 / 5.5)
+        : ((Math.atan2(-4, -2) - angle * Math.PI / 180) / (Math.PI * 2) + 1) % 1
+      const position = Math.max(0, Math.min(1, 0.5 + (raw - 0.5) * 100 / 100))
+      const request = send({ type: 'gradient-overlay-staged-region', sourceId: boundarySource.sourceId,
+        region: { x: 1, y: 1, width: 1, height: 1 }, target: new ArrayBuffer(4), effect: {
+          gradient: { type, colorStops: [{ position: 0, color: [0, 0, 0, 255] },
+            { position, color: [0, 0, 0, 255] }, { position, color: [255, 255, 255, 255] },
+            { position: 1, color: [255, 255, 255, 255] }],
+          opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }] },
+          angle, scale: 100, reverse: false, opacity: 100, blendMode: 'normal'
+        } })
+      const token = gate.captureTile('gradiente-limite', request.id)
+      const result = await request
+      if (!token?.isCurrent(result) || [...new Uint8Array(result.rgba)].join(',') !== '0,0,0,101') {
+        throw new Error(`Worker Rust divergiu do arredondamento JS no gradiente ${type}.`)
+      }
     }
     const disposed = await send({ type: 'dispose' })
     if (disposed.type !== 'disposed') throw new Error('Worker Rust não descartou o estado.')

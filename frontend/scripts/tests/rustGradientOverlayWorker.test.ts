@@ -48,7 +48,7 @@ test('Worker gradiente transfere target, reusa máscara e rejeita respostas e ti
       target: new ArrayBuffer(12), effect: { ...effect, scale: 0 } })
     assert.deepEqual(invalid, { type: 'error', id: invalid.id, code: 'invalid-input' })
     const unsupported = await send({ type: 'gradient-overlay-staged-region', sourceId: staged.sourceId, region,
-      target: new ArrayBuffer(12), effect: { ...effect, gradient: { ...effect.gradient, type: 'radial' as 'linear' } } })
+      target: new ArrayBuffer(12), effect: { ...effect, gradient: { ...effect.gradient, type: 'unknown' as 'linear' } } })
     assert.deepEqual(unsupported, { type: 'error', id: unsupported.id, code: 'invalid-input' })
     const recovered = await send({ type: 'gradient-overlay-staged-region', sourceId: staged.sourceId, region,
       target: new ArrayBuffer(12), effect })
@@ -61,3 +61,45 @@ test('Worker gradiente transfere target, reusa máscara e rejeita respostas e ti
     assert.equal((await send({ type: 'dispose' })).type, 'disposed')
   } finally { await harness.close() }
 })
+
+for (const type of ['radial', 'angle'] as const) {
+  test(`Worker ${type} mantém tiles e a mesma fonte ao mudar ângulo/escala/reversão`, async () => {
+    const harness = createRustPixelWorkerHarness()
+    const { send } = harness
+    const width = 7, height = 5
+    const source = Uint8Array.from({ length: width * height * 4 }, (_, index) => index * 19 % 256)
+    const original = source.slice()
+    try {
+      const wasm = Uint8Array.from(readFileSync(new URL(
+        '../../../rust/axia-pixel-core/target/wasm32-unknown-unknown/release/axia_pixel_core.wasm', import.meta.url
+      ))).buffer
+      assert.equal((await send({ type: 'init', wasm }, [wasm])).type, 'ready')
+      const staged = await send({ type: 'stage-source', rgba: source.buffer, sourceWidth: width,
+        sourceHeight: height, generation: 1 }, [source.buffer])
+      assert.equal(source.byteLength, 0)
+      assert.equal(staged.type, 'source-staged')
+      for (const angle of [-180, 0, 90, 179.999]) {
+        const effect = { ...structuredClone(gradientEffect), angle, scale: 73.5, reverse: true }
+        effect.angle = ((angle + 180) % 360 + 360) % 360 - 180
+        effect.gradient.type = type
+        const expected = new Uint8Array(gradientReference(original, width, height, 0, [gradientStyle(effect)]).data)
+        const assembled = new Uint8Array(original.length)
+        for (let y = 0; y < height; y += 2) for (let x = 0; x < width; x += 3) {
+          const region = { x, y, width: Math.min(3, width - x), height: Math.min(2, height - y) }
+          const target = new Uint8Array(region.width * region.height * 4)
+          const result = await send({ type: 'gradient-overlay-staged-region', sourceId: staged.sourceId,
+            region, target: target.buffer, effect }, [target.buffer])
+          assert.equal(target.byteLength, 0)
+          assert.equal(result.type, 'rendered-staged-region')
+          assert.equal(result.sourceId, staged.sourceId)
+          assert.equal(result.generation, 1)
+          const tile = new Uint8Array(result.rgba)
+          for (let row = 0; row < region.height; row++) assembled.set(tile.subarray(row * region.width * 4, (row + 1) * region.width * 4),
+            ((y + row) * width + x) * 4)
+        }
+        assert.deepEqual(assembled, expected, `${type}/${angle}`)
+      }
+      assert.equal((await send({ type: 'dispose' })).type, 'disposed')
+    } finally { await harness.close() }
+  })
+}

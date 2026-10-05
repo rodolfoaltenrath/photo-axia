@@ -136,10 +136,11 @@ corromper o documento nem bloquear salvar.
   ser inspecionada com `node --experimental-strip-types
   scripts/print-layer-style-goldens.mjs` a partir de `frontend/`, mas **não**
   atualizar esperados automaticamente em CI: diferenças exigem revisão.
-- O corpus agora tem 15 casos: ao menos um de cada um dos dez tipos atuais de
+- O corpus agora tem 17 casos: ao menos um de cada um dos dez tipos atuais de
   efeito, além dos filtros `Blend If` da própria camada e subjacente e uma
   sobreposição de cor isolada com preenchimento parcial para validar o porte
-  Rust e dois gradientes isolados (refletido e diamante). Inclui padrão decodificado, halo,
+  Rust e quatro gradientes isolados (refletido, diamante, radial e angular).
+  Inclui padrão decodificado, halo,
   arredondamento e ordem de passes. Um teste de tipos exige atualizar a matriz
   quando um novo efeito for acrescentado. Ainda faltam combinações mais amplas,
   zoom/escala e casos de erro antes de apagar o compositor antigo.
