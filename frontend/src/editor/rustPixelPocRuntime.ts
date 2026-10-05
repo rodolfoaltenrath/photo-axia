@@ -5,12 +5,16 @@ import { alphaMaskLayout, type RustPixelPocAlphaMask } from './rustPixelPocAlpha
 import { encodeDropShadow, dropShadowLayout, type RustPixelPocDropShadow } from './rustPixelPocDropShadow.ts'
 import { encodeInnerShadow, innerShadowLayout, type RustPixelPocInnerShadow } from './rustPixelPocInnerShadow.ts'
 import { encodeGlow, glowLayout, type RustPixelPocGlow } from './rustPixelPocGlow.ts'
+import { encodeSatin, satinLayout, type RustPixelPocSatin } from './rustPixelPocSatin.ts'
 export { RustPixelPocError } from './rustPixelPocError.ts'
 
 const MAX_POC_BYTES = 64 * 1024 * 1024
 let nextSourceId = 0
 
 interface RustPixelPocExports {
+  axia_poc_satin_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
+    x: number, y: number, width: number, height: number, targetPointer: number, targetLength: number,
+    packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
   axia_poc_glow_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
     x: number, y: number, width: number, height: number, targetPointer: number, targetLength: number,
     packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
@@ -105,7 +109,7 @@ const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
 }
 
 type TilePass =
-  | { type: 'drop-shadow' | 'inner-shadow' | 'glow'; pointer: number; length: number; packetPointer: number; packetLength: number }
+  | { type: 'drop-shadow' | 'inner-shadow' | 'glow' | 'satin'; pointer: number; length: number; packetPointer: number; packetLength: number }
   | { type: 'alpha-mask'; config: RustPixelPocAlphaMask }
   | { type: 'local-batch'; pointer: number; length: number }
   | { type: 'blend-if'; pointer: number; length: number; config: RustPixelPocUnderlyingBlendIf }
@@ -139,7 +143,8 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_alpha_mask_region !== 'function' || candidate.axia_poc_alpha_mask_region.length !== 13 ||
       typeof candidate.axia_poc_drop_shadow_region !== 'function' || candidate.axia_poc_drop_shadow_region.length !== 14 ||
       typeof candidate.axia_poc_inner_shadow_region !== 'function' || candidate.axia_poc_inner_shadow_region.length !== 14 ||
-      typeof candidate.axia_poc_glow_region !== 'function' || candidate.axia_poc_glow_region.length !== 14) {
+      typeof candidate.axia_poc_glow_region !== 'function' || candidate.axia_poc_glow_region.length !== 14 ||
+      typeof candidate.axia_poc_satin_region !== 'function' || candidate.axia_poc_satin_region.length !== 14) {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -217,6 +222,11 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
           outputPointer, outputLength, fillOpacity)
       } else {
         switch (pass.type) {
+          case 'satin':
+            status = exports.axia_poc_satin_region(sourcePointer, sourceLength,
+              sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+              pass.pointer, pass.length, pass.packetPointer, pass.packetLength, outputPointer, outputLength)
+            break
           case 'glow':
             status = exports.axia_poc_glow_region(sourcePointer, sourceLength,
               sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
@@ -278,7 +288,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         }
       }
       if (status !== 0) {
-        if ((pass?.type === 'local-batch' || pass?.type === 'alpha-mask' || pass?.type === 'drop-shadow' || pass?.type === 'inner-shadow' || pass?.type === 'glow') && status === 6) throw new RustPixelPocError('memory-limit')
+        if ((pass?.type === 'local-batch' || pass?.type === 'alpha-mask' || pass?.type === 'drop-shadow' || pass?.type === 'inner-shadow' || pass?.type === 'glow' || pass?.type === 'satin') && status === 6) throw new RustPixelPocError('memory-limit')
         throw new RustPixelPocError('wasm-failure')
       }
       computed = performance.now()
@@ -315,13 +325,18 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
 
   function maskedEffectStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array,
     job: { type: 'drop-shadow'; shadow: RustPixelPocDropShadow } | { type: 'inner-shadow'; shadow: RustPixelPocInnerShadow }
-      | { type: 'glow'; glow: RustPixelPocGlow }) {
+      | { type: 'glow'; glow: RustPixelPocGlow } | { type: 'satin'; satin: RustPixelPocSatin }) {
     if (disposed) throw new RustPixelPocError('wasm-unavailable')
     if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
     const length = validateRegion(region, staged.width, staged.height, 100)
     if (!(target instanceof Uint8Array) || target.byteLength !== length) throw new RustPixelPocError('invalid-input')
     const bytes = (() => {
       switch (job.type) {
+        case 'satin': {
+          const packet = encodeSatin(job.satin)
+          satinLayout(staged.width, staged.height, region, job.satin, packet.length)
+          return packet
+        }
         case 'glow': {
           const packet = encodeGlow(job.glow)
           glowLayout(staged.width, staged.height, region, job.glow, packet.length)
@@ -605,6 +620,9 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     },
     glowStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array, glow: RustPixelPocGlow) {
       return maskedEffectStagedRegion(sourceId, region, target, { type: 'glow', glow })
+    },
+    satinStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array, satin: RustPixelPocSatin) {
+      return maskedEffectStagedRegion(sourceId, region, target, { type: 'satin', satin })
     },
     alphaMaskStagedRegion(sourceId: number, region: RustPixelPocRegion, config: RustPixelPocAlphaMask) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')

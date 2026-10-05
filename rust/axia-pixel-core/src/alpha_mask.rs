@@ -18,7 +18,12 @@ pub(crate) struct AlphaMaskJob {
     pub extra_bytes: usize,
 }
 
-fn context_region(width: usize, height: usize, region: RasterRegion, halo: usize) -> RasterRegion {
+pub(crate) fn context_region(
+    width: usize,
+    height: usize,
+    region: RasterRegion,
+    halo: usize,
+) -> RasterRegion {
     let x = region.x.saturating_sub(halo);
     let y = region.y.saturating_sub(halo);
     let right = (region.x + region.width).saturating_add(halo).min(width);
@@ -31,7 +36,12 @@ fn context_region(width: usize, height: usize, region: RasterRegion, halo: usize
     }
 }
 
-fn budget(source: usize, output: usize, context: RasterRegion, spread: usize) -> Result<(), u32> {
+pub(crate) fn budget(
+    source: usize,
+    output: usize,
+    context: RasterRegion,
+    spread: usize,
+) -> Result<(), u32> {
     let masks = context
         .width
         .checked_mul(context.height)

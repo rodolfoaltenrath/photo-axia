@@ -26,6 +26,10 @@ Os [brilhos regionais](contrato-brilhos-v1.md) externos/internos compartilham
 filtros e interpolação, mas têm recortes/estágios próprios. O degradê segue
 intensidade, não coordenadas do documento; a gestão da pilha continua pendente.
 
+O [acetinado regional](contrato-acetinado-v1.md) calcula a diferença assinada
+de duas máscaras espelhadas, antes dos overlays. Inclui terceira máscara no
+orçamento enquanto filtra a segunda; não integra a pilha nem o preview normal.
+
 ## 1. Vocabulário e unidades
 
 - Documento: espaço contínuo em pixels documentais, origem `(0, 0)` no canto

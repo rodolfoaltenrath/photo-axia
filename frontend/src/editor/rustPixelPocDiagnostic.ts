@@ -153,6 +153,20 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         throw new Error(`Worker Rust produziu brilho ${kind} diferente da referência fixa.`)
       }
     }
+    for (const invert of [false, true]) {
+      const satinTarget = new Uint8Array(8)
+      const satinRequest = send({ type: 'satin-staged-region', sourceId: staged.sourceId,
+        region: { x: 1, y: 0, width: 1, height: 2 }, target: satinTarget.buffer, satin: {
+          radius: 0, offsetX: 1, offsetY: 0, invert, color: [51, 102, 153, 255],
+          opacity: 75, blendMode: 'normal', contour: { preset: 'linear', points: [] }
+        } }, [satinTarget.buffer])
+      const satinToken = gate.captureTile(`acetinado-${invert}`, satinRequest.id), satinResult = await satinRequest
+      const expected = invert ? '0,0,0,0,0,0,0,0' : '51,102,153,191,0,0,0,0'
+      if (!satinToken?.isCurrent(satinResult) || satinTarget.byteLength !== 0 ||
+          [...new Uint8Array(satinResult.rgba)].join(',') !== expected) {
+        throw new Error('Worker Rust produziu acetinado diferente da referência fixa.')
+      }
+    }
     const maskRequest = send({ type: 'alpha-mask-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, config: { spreadRadius: 0, blurRadius: 1, precise: false } })
     const maskToken = gate.captureTile('máscara-direita', maskRequest.id)

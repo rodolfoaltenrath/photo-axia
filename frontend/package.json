@@ -51,6 +51,8 @@
     "benchmark:rust-inner-shadow": "node --experimental-strip-types benchmarks/rustInnerShadow.ts",
     "prebenchmark:rust-glow": "node scripts/buildRustPixelPoc.mjs",
     "benchmark:rust-glow": "node --experimental-strip-types benchmarks/rustGlow.ts",
+    "prebenchmark:rust-satin": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-satin": "node --experimental-strip-types benchmarks/rustSatin.ts",
     "test:types": "tsc --project tsconfig.test.json",
     "benchmark:quick-selection": "node --experimental-strip-types benchmarks/quickSelection4k.mjs"
   },

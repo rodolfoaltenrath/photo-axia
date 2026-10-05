@@ -1322,3 +1322,107 @@ integrada, cache/orçamento agregado, transformação e medições end-to-end/
 multiplataforma. Preview normal, exportação e `.axia` permanecem inalterados;
 C0/C1/C2 continuam abertos. Validação manual da migração vem após integração
 experimental, não é exigida para estes passes isolados.
+
+## Décima quarta fatia: acetinado regional
+
+Em 2026-10-05, o comando experimental `satin-staged-region` passou a calcular
+acetinado CPU Rust/WASM sobre fonte/target preparados. O
+[contrato SAT1](contrato-acetinado-v1.md) define parâmetros, máscara, halo,
+ordem, ABI e orçamento. Preview normal, exportação, texto e `.axia` não mudam.
+
+### Implementação
+
+- TS resolve raio, trigonometria e arredondamento de dx/dy; Rust espelha
+  **depois** do arredondamento, filtra as duas máscaras, calcula a diferença
+  assinada e aplica invert, contorno, min com alfa original, cor e mesclagem.
+- Sem abs, descarte antecipado de raw zero ou no-op por distância/raio zero:
+  contorno positivo em zero continua contribuindo. Máscara participa no min
+  e no alfa final. Máscaras seguem os limites completos da fonte, antes do
+  blur, mesmo quando a amostra deslocada está fora do contexto do tile.
+- Compartilha filtros, contorno e compositor de pixels existentes. Apenas
+  expõe context_region/budget internamente; não muda suas operações nem os
+  contratos anteriores. `renderSatin` TS foi exportado sem alterar o corpo.
+- Pacote SAT1 de 64..576 bytes, pontos f64 e reservados zero; bounds/counts
+  limitados antes da aritmética/reserva. Export e aridade próprios, sem
+  interpretar pacotes de outros efeitos como acetinado.
+- Orçamento 96 MiB/job inclui fonte, target, pacote, saída, **três máscaras**
+  de contexto e 512 bytes para pontos. Primeira máscara permanece retida
+  durante a reserva atual/scratch da segunda. TS/Rust recusam um caso que
+  caberia se contassem duas; buffers externos até 64 MiB cada. Não é RSS,
+  cache agregado nem orçamento global. Reservas precedem escrita da saída.
+- Integra o mesmo lifecycle finally/RAII de efeitos por máscara, sem alterar
+  fonte original. Publicação continua dependente de generation/sourceId,
+  vista/efeito e pedido atual; kernel síncrono não é interrompido por cancel.
+
+### Testes e pacote
+
+- `npm test`: 514 testes frontend e checagem de tipos passaram.
+- `npm run test:rust-poc`: 190 testes (5 standalone, 1 Worker básico e 184
+  dos scripts), incluindo 17 novos do acetinado. Fatias anteriores verdes.
+- `cargo test --offline --locked`: 49 testes nativos; fmt/check e
+  clippy/all-targets com `-D warnings` passaram.
+- Build de produção, integridade do WASM e `npm run smoke:rust-wails`
+  passaram. Diagnóstico do executável Wails/WebView2 usa buffers transferidos,
+  gate e RGBA fixo para invert false/true, além dos passes anteriores.
+  Smoke removeu seu executável temporário; nenhum instalador/portável foi
+  gerado. Único aviso de build: chunk acima de 500 kB já existente.
+- Golden versionado `satin-inverted` passou sem regeneração. Preparação do
+  target respeita Fill/limpeza de RGB oculto; isso é distinto do passe de
+  efeito, que preserva target sem contribuição. Corpus original de 17 goldens
+  passou também pelo comparador independente e permanece inalterado.
+- Matriz 256² × seis modos × seis contornos × duas inversões × três
+  distâncias: **14.155.776 pixels**, todos os pares de alfa original/target,
+  equivalência byte a byte com a função TS real. Alfa original x XOR y
+  exercita diferença deslocada no interior, não somente nas bordas.
+- Tiles 7×5 em 37×29, 1×17, 19×1 e 1×1: três raios, duas inversões e quatro
+  ângulos, 96 configurações; integral e cada tile equivalem ao TS.
+- Escalas 0,125/1,375/8; ângulos/meio pixel e espelho após arredondar;
+  size/distance máximos; contornos de 32 pontos estreitos/duplicados,
+  sem cobertura dos endpoints; cor com alfa zero/pleno; RGB oculto e
+  contorno positivo com diferença zero. Caso fixo alfa 101 gera alfa 40,
+  cobrindo os dois fatores da máscara.
+- Cadeia acetinado → overlay com Fill zero e efeitos em outra ordem compara
+  com compositor TS, verificando fonte original reutilizável após os passes.
+- ABI: magic/versão, raio/invert/blend, reservados, counts enormes, pontos
+  NaN, comprimento, geometria, null, overlap e saída sentinela; nenhum pixel
+  parcialmente escrito. Adapter rejeita assinatura antiga, parâmetros não
+  normalizados e orçamento excessivo; efeito de entrada não é mutado.
+- Três falhas de alocação e status 6 injetados: fonte continua reutilizável,
+  temporários liberados, zero pares vivos após dispose. Parâmetros inválidos
+  não alocam no WASM. Teste nativo cobre também overflow da contabilidade.
+- Worker real transfere buffers; muda invert/ângulo/distância/size/contorno,
+  rejeita resultados ultrapassados, invalida vista/fonte, recupera de erro e
+  faz dispose. Não depende de seed/id para produzir pixels de acetinado.
+
+### Sonda isolada
+
+`npm run benchmark:rust-satin -- 1024 20`, release, Windows, Node 24.14.1,
+Intel i7-3770, WASM **75.197 bytes**. Três warmups, 20 amostras, ordem TS/Rust
+alternada; cada saída integral/tile comparada byte a byte fora da medição.
+Nenhum build/teste concorrente durante a sonda. Limites do script: lado
+16..2048, amostras 5..100.
+
+Fonte/target preparados 1024², multiply `#33669980`, size 16, distância 11,25,
+ângulo -77,75°, invert true, opacidade 73,5%, contorno linear. Upload da fonte
+uma vez: 1,61 ms, fora dos passes.
+
+| Caminho | Mediana (ms) | p95 (ms) |
+| --- | ---: | ---: |
+| TS integral | 180,26 | 186,89 |
+| Adapter Rust integral | 155,29 | 175,34 |
+| Kernel Rust integral | 153,12 | 173,35 |
+| Cópia de entradas do adapter | 0,57 | 1,03 |
+| Cópia de saída integral | 1,03 | 1,75 |
+| Adapter Rust tile 512², contexto 544² | 37,51 | 38,81 |
+| Kernel Rust tile | 36,92 | 37,55 |
+
+Contabilidade integral/tile: 15.729.216/7.179.840 bytes, halo 16. Não é memória
+medida. Tile retorna um quarto da saída. Ganho integral observado é modesto;
+não atribuir a Rust/SIMD isoladamente, nem extrapolar para todos os efeitos.
+Sonda não mede preparação/insets, Worker, Canvas, interatividade, zoom/FPS,
+GPU, composição documental ou RSS; p95 não é pior caso.
+
+Ainda faltam traçado, bisel, conteúdo/executor de estágios integrado ao lote,
+preparação/insets, cache/orçamento agregado, transformação e medições
+end-to-end/multiplataforma. C0/C1/C2 continuam abertos. Validação manual da
+migração fica para depois da integração experimental ao editor.

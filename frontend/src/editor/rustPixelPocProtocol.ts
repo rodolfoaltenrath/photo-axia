@@ -4,9 +4,12 @@ import type { RustPixelPocAlphaMask } from './rustPixelPocAlphaMask.ts'
 import type { RustPixelPocDropShadow } from './rustPixelPocDropShadow.ts'
 import type { RustPixelPocInnerShadow } from './rustPixelPocInnerShadow.ts'
 import type { RustPixelPocGlow } from './rustPixelPocGlow.ts'
+import type { RustPixelPocSatin } from './rustPixelPocSatin.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
+  | { type: 'satin-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;
+      target: ArrayBuffer; satin: RustPixelPocSatin }
   | { type: 'glow-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;
       target: ArrayBuffer; glow: RustPixelPocGlow }
   | { type: 'inner-shadow-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;

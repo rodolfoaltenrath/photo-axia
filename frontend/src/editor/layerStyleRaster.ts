@@ -765,7 +765,7 @@ function renderColorOverlay(
   }
 }
 
-function renderSatin(
+export function renderSatin(
   target: Uint8ClampedArray,
   sourceAlpha: Uint8ClampedArray,
   width: number,

@@ -467,6 +467,20 @@ transformação e gates C0/C1/C2. Preview normal/exportação/`.axia` inalterado
 Detalhes no [contrato dos brilhos](contrato-brilhos-v1.md) e na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
+Uma décima quarta fatia porta o **acetinado**: dois desfoques com halo,
+deslocamentos espelhados depois de arredondar, diferença assinada, inversão,
+contorno, recorte pelo alfa original e seis modos de mesclagem. SAT1 e comando
+Worker separados; não descarta raw zero antes do contorno. O orçamento conta
+três máscaras no pico, preservando saída/fonte em falhas. Golden existente,
+14.155.776 pixels da matriz, tiles, escala e composição antes do overlay com
+Fill zero passaram byte a byte. Sonda isolada Node 1024²: mediana 180,26 ms no
+TS, 155,29 ms no adapter Rust; tile 512²/contexto 544²: 37,51 ms. Não mede FPS.
+Traçado, bisel, conteúdo/estágios no lote, preparação integrada, cache/orçamento
+global, transformação e gates C0/C1/C2 seguem pendentes. Preview normal,
+exportação e `.axia` inalterados. Detalhes no
+[contrato do acetinado](contrato-acetinado-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os
