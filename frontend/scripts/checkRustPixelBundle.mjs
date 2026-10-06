@@ -31,9 +31,27 @@ assert.equal(instance.exports.axia_poc_local_batch_region?.length, 12, 'Assinatu
 assert.equal(instance.exports.axia_poc_gradient_overlay_region?.length, 24,
   'A assinatura do gradiente deve corresponder ao adapter atual')
 
-const diagnostic = readFileSync(join(assetsRoot, diagnosticName), 'utf8')
+function reachableJavaScript(start) {
+  const seen = new Set(), pending = [start], texts = []
+  while (pending.length) {
+    const name = pending.pop()
+    if (seen.has(name)) continue
+    seen.add(name)
+    const source = readFileSync(join(assetsRoot, name), 'utf8')
+    texts.push(source)
+    for (const dependency of names) if (dependency.endsWith('.js') && source.includes(dependency) && !seen.has(dependency)) pending.push(dependency)
+  }
+  return texts.join('\n')
+}
+const diagnostic = reachableJavaScript(diagnosticName)
 assert.ok(diagnostic.includes(wasmName), 'O diagnóstico deve apontar ao WASM com hash')
 assert.ok(diagnostic.includes(workerName), 'O diagnóstico deve apontar ao Worker com hash')
+const previewName = exactlyOne('rustLayerStylePreview-', '.js')
+const preview = reachableJavaScript(previewName)
+assert.ok(preview.includes(wasmName) && preview.includes(workerName), 'Preview opt-in deve alcançar o WASM/Worker local')
+const html = readFileSync(join(frontendRoot, 'dist', 'index.html'), 'utf8')
+assert.ok(!html.includes(wasmName) && !html.includes(workerName) && !html.includes(previewName),
+  'HTML padrão não deve carregar/precarregar o runtime experimental')
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_fill_opacity'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_blend_if_underlying_region'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_blend_if_this_layer_region'))

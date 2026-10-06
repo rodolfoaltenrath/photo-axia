@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -29,15 +30,11 @@ func main() {
 	service := NewApp()
 	rustPocSmoke := slices.Contains(os.Args[1:], "--axia-rust-poc-smoke")
 	previewSmoke := slices.Contains(os.Args[1:], "--axia-preview-smoke")
+	rustStylePreview := slices.Contains(os.Args[1:], "--axia-rust-styles-preview")
 	if rustPocSmoke && previewSmoke {
 		log.Fatal("Selecione apenas um modo de smoke WebView2.")
 	}
-	mainURL := "/"
-	if rustPocSmoke {
-		mainURL = "/?axiaRustPoc=1"
-	} else if previewSmoke {
-		mainURL = "/?axiaPreviewSmoke=1"
-	}
+	mainURL := mainWindowURL(rustPocSmoke, previewSmoke, rustStylePreview)
 	windowsOptions := application.WindowsOptions{}
 	if rustPocSmoke || previewSmoke {
 		portEnv := "AXIA_RUST_POC_CDP_PORT"
@@ -128,4 +125,20 @@ func main() {
 	if err := desktop.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func mainWindowURL(rustPocSmoke, previewSmoke, rustStylePreview bool) string {
+	parameters := url.Values{}
+	if rustPocSmoke {
+		parameters.Set("axiaRustPoc", "1")
+	} else if previewSmoke {
+		parameters.Set("axiaPreviewSmoke", "1")
+	}
+	if rustStylePreview {
+		parameters.Set("axiaRustStyles", "1")
+	}
+	if len(parameters) == 0 {
+		return "/"
+	}
+	return "/?" + parameters.Encode()
 }

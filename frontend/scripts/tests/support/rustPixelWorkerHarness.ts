@@ -1,5 +1,6 @@
 import { Worker } from 'node:worker_threads'
 import type { RustPixelPocRequest, RustPixelPocResponse } from '../../../src/editor/rustPixelPocProtocol.ts'
+import type { RustPixelPocWorkerPort } from '../../../src/editor/rustPixelPocWorkerClient.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
@@ -22,7 +23,17 @@ export function createRustPixelWorkerHarness(options: { mediaFixtures?: boolean;
   })
   worker.on('error', rejectPending)
   worker.on('exit', code => rejectPending(new Error(`Worker encerrado: ${code}`)))
+  const port: RustPixelPocWorkerPort = {
+    postMessage: (message, transfers) => worker.postMessage(message, transfers),
+    onMessage: listener => { worker.on('message', listener); return () => { worker.off('message', listener) } },
+    onFailure: listener => {
+      worker.on('error', listener); worker.on('messageerror', listener); worker.on('exit', listener)
+      return () => { worker.off('error', listener); worker.off('messageerror', listener); worker.off('exit', listener) }
+    },
+    terminate: async () => { await worker.terminate() }
+  }
   return {
+    port,
     releaseEncoding() { worker.postMessage({ type: 'fixture-release-encoding' }) },
     waitForEncoding() {
       return new Promise<void>((resolve, reject) => {

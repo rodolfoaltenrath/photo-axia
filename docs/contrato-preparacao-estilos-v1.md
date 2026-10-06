@@ -357,8 +357,14 @@ Fill, padrão atualizado e texto não vazio, com reuso da fonte e offsets. Casos
 fixos têm pixels representáveis no Canvas; não são uma promessa de paridade
 universal de alfa/cores ou desempenho do encoder.
 
-Faltam serviço/integração do consumidor, coalescência/prioridade, cache/orçamento agregado, limites
-intrínsecos das imagens e integração/medição do serviço real. Medir decode
+Um [serviço experimental exclusivo](contrato-servico-estilos-rust-v1.md) agora
+envolve a sessão: abre/reutiliza Worker, coalesce pedidos (um ativo e um pendente),
+retira conexão falha e contabiliza entradas/fase ativa/leases de PNG por serviço.
+Além do diagnóstico, a 23ª fatia tem um [consumidor opt-in do canvas](contrato-preview-estilos-rust-v1.md),
+restrito a um dono por janela; os demais consumidores e o padrão continuam no legado.
+
+Faltam ampliação/QA da integração, prioridade entre camadas/exportações, cache e
+orçamento global, limites intrínsecos das imagens e medição do serviço real. Medir decode
 → preparação → Worker → encode → handoff e verificar regressões na interface.
 Não basta os testes desta fatia para fechar C2; pilha/backdrop/transforms são
 C3, canvas único é C4. Nenhuma aceleração/FPS foi medido nesta mudança.

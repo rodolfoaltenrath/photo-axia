@@ -583,6 +583,34 @@ e `.axia` permanecem inalterados; faltam consumidor/serviço real, orçamento gl
 coalescência/prioridade, limites intrínsecos e medições/QA para encerrar C2.
 Pilha documental e canvas único continuam C3/C4, sem remover renderizadores antigos.
 
+Uma vigésima segunda fatia adiciona **serviço consumidor experimental**:
+Worker exclusivo aberto sob demanda/reutilizado, RPC correlacionado/bounded,
+um ativo + um pendente (último pedido vence), snapshots, cancelamento visual
+sem cancelar staging, invalidate/dispose e retomada no próximo pedido após falha.
+Watchdog/épocas impedem adoção de abertura tardia. Leases de PNG têm release
+idempotente e orçamento lógico de entradas/fase ativa/resultados por serviço;
+não é teto de RSS ou orçamento global. O diagnóstico Wails usa a factory browser
+e PNG real para integral/tile/Fill/reuso, obsolescência e leases.
+Preview/exportação/`.axia` continuam inalterados. Próximos passos: consumidor
+real atrás de flag, handoff/fallback/métricas, pool/orçamento global/cache e
+limites intrínsecos; não criar um Worker por camada sem política global.
+C0/C1/C2 continuam abertos e C3/C4 ainda não foram substituídos.
+Detalhes no [contrato do serviço](contrato-servico-estilos-rust-v1.md).
+
+Uma vigésima terceira fatia liga **estilos de um canvas real ao serviço Rust**,
+somente com `--axia-rust-styles-preview`/`?axiaRustStyles=1`. Um dono por janela;
+outros canvases, miniaturas e exportação continuam no legado. PNG e lease ficam
+juntos da URL até retirada pelo handoff/unmount. Preparação abortável, tokens,
+fechamento antes da troca de dono e circuito de fallback protegem cancelamento,
+falhas e reinstanciação sem criar Worker por camada. Chave compacta da fonte
+compara a identidade original exata; cache legado não recebe resultados Rust.
+Smokes Wails percorrem UI real, pixels visíveis, handoff, fallback com WASM
+indisponível e remoção da camada com zero leases pendentes. Timings agrupados
+não são benchmark de FPS ou porcentagem de ganho. Default permanece desligado;
+faltam pool/orçamento global/cache, limites intrínsecos, matriz visual e medições
+repetidas antes do rollout. C0/C1/C2 permanecem abertos e C3/C4 não mudam.
+Detalhes no [contrato do preview](contrato-preview-estilos-rust-v1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

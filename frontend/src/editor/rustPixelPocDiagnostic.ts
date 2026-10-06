@@ -6,6 +6,8 @@ import { styledRasterPreviewSnapshot } from './rustPixelPocStyledSource.ts'
 import { normalizeLayerStyleConfig } from './layerStyles.ts'
 import { RustPixelPocStyleSession } from './rustPixelPocStyleSession.ts'
 import { DEFAULT_TEXT_LAYER } from './text.ts'
+import { createRustPixelPocStyleService } from '../services/rustPixelPocStyleService.ts'
+import { RustPixelPocStyleCancelledError } from './rustPixelPocStyleSession.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
@@ -466,6 +468,32 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     await mediaSession.dispose()
     const disposed = await send({ type: 'dispose' })
     if (disposed.type !== 'disposed') throw new Error('Worker Rust não descartou o estado.')
+    worker.terminate()
+    const service = createRustPixelPocStyleService()
+    function requireLeases(count: number) {
+      if (service.stats.leases !== count) throw new Error('Serviço reteve quantidade inesperada de resultados.')
+    }
+    try {
+      const request = { ...mediaRequest, source: { type: 'raster' as const, blob: mediaBlob } }
+      const first = await service.render(request)
+      const next = await service.render({ ...request, styles: normalizeLayerStyleConfig({ ...preparedStyles, fillOpacity: 100 }),
+        region: { x: 1, y: 0, width: 1, height: 1 } })
+      requireLeases(2)
+      if (first.result.sourceId !== next.result.sourceId ||
+          (await readPng(first.result.blob, 2, 1)).join(',') !== '255,0,0,255,0,0,255,128' ||
+          (await readPng(next.result.blob, 1, 1)).join(',') !== '20,30,168,255') {
+        throw new Error('Serviço Rust divergiu no PNG real/reuso/leases.')
+      }
+      first.release(); first.release(); next.release()
+      const obsolete = service.render(request).then(() => { throw new Error('Serviço publicou pedido obsoleto.') }, error => {
+        if (!(error instanceof RustPixelPocStyleCancelledError)) throw error
+      })
+      const latest = await service.render(request)
+      await obsolete
+      requireLeases(1)
+      latest.release()
+      if (service.stats.retainedResultBytes !== 0) throw new Error('Serviço não liberou leases.')
+    } finally { await service.dispose() }
     return { elapsedMs: performance.now() - started, wasmBytes }
   } finally {
     worker.terminate()

@@ -10,6 +10,8 @@ import { runPreviewWailsProbe, summarizePreviewFrames } from '../benchmarks/prev
 if (process.platform !== 'win32') throw new Error('Smoke do preview Wails/WebView2 disponível apenas no Windows.')
 
 const benchmarkMode = process.argv.includes('--benchmark')
+const rustMode = process.argv.includes('--rust-styles') || process.argv.includes('--rust-styles-fallback')
+const rustFallback = process.argv.includes('--rust-styles-fallback')
 const sizeArgument = process.argv.find((argument) => argument.startsWith('--size='))
 const cyclesArgument = process.argv.find((argument) => argument.startsWith('--cycles='))
 const imageSize = sizeArgument ? Number(sizeArgument.slice('--size='.length)) : 512
@@ -144,7 +146,7 @@ try {
   if (build.status !== 0) throw new Error(`go build falhou: ${build.status}`)
 
   const port = await unusedLocalPort()
-  app = spawn(binary, ['--axia-preview-smoke'], {
+  app = spawn(binary, ['--axia-preview-smoke', ...(rustMode ? ['--axia-rust-styles-preview'] : [])], {
     cwd: repoRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env,
       AXIA_PREVIEW_CDP_PORT: String(port), AXIA_PREVIEW_WEBVIEW_DATA: webviewData }
@@ -161,8 +163,19 @@ try {
     socket.addEventListener('error', reject, { once: true })
   })
   const evaluate = evaluator(socket)
+  if (rustMode) {
+    await waitFor(evaluate, 'new URLSearchParams(location.search).get("axiaRustStyles") === "1"', Boolean, 'Flag Rust no preview')
+  }
   const environment = await evaluate('({ devicePixelRatio, hardwareConcurrency: navigator.hardwareConcurrency })')
   await waitFor(evaluate, 'Boolean(document.querySelector(".project-home"))', Boolean, 'Tela inicial')
+  if (rustFallback) {
+    await evaluate(`(() => {
+      const original = window.fetch.bind(window)
+      window.fetch = (resource, options) => String(resource).endsWith('.wasm')
+        ? Promise.resolve(new Response('', { status: 503 })) : original(resource, options)
+      return true
+    })()`)
+  }
 
   const dropped = await evaluate(`(async () => {
     const canvas = document.createElement('canvas')
@@ -331,14 +344,47 @@ try {
     return { width: before.width, height: before.height, changedPixels }
   })()`)
   assert.ok(visual.changedPixels > 100, 'O estilo não mudou pixels visíveis no screenshot do canvas.')
+  const rustStats = rustMode ? await evaluate('JSON.parse(document.documentElement.dataset.axiaRustStylePreview || "null")') : null
+  if (rustMode) {
+    assert.ok(rustStats, 'Preview não publicou diagnóstico do backend experimental.')
+    assert.equal(rustStats.last.backend, rustFallback ? 'legacy' : 'rust')
+    assert.equal(rustStats.fallbacks, rustFallback ? 1 : 0)
+    assert.equal(rustStats.circuitOpen, rustFallback)
+    if (!rustFallback) assert.ok(rustStats.service.leases >= 1 && rustStats.service.leases <= 2)
+  }
   const frameSamples = benchmarkMode
     ? await evaluate(`(${runPreviewWailsProbe.toString()})(${JSON.stringify(layerId)}, ${cycles})`)
     : null
   const frameMetrics = frameSamples?.map(summarizePreviewFrames)
+  let rustCleanup = null
+  if (rustMode) {
+    const added = await evaluate(`(() => {
+      const button = document.querySelector('button[title="Adicionar camada"]')
+      if (!button || button.disabled) return false
+      button.click()
+      return true
+    })()`)
+    assert.equal(added, true, 'Não foi possível adicionar camada para preservar o documento.')
+    await waitFor(evaluate, 'document.querySelectorAll(".layer-row").length', value => value >= 2, 'Camada auxiliar')
+    await evaluate(`document.querySelector('.layer-row[data-layer-id=${JSON.stringify(layerId)}] .layer-button').click()`)
+    await waitFor(evaluate,
+      `Boolean(document.querySelector('.layer-row[data-layer-id=${JSON.stringify(layerId)}].layer-row--active'))`, Boolean, 'Camada estilizada para remoção')
+    const deleted = await evaluate(`(() => {
+      const button = document.querySelector('button[title="Excluir camada (Delete)"]')
+      if (!button || button.disabled) return false
+      button.click()
+      return true
+    })()`)
+    assert.equal(deleted, true, 'Não foi possível remover a camada do smoke.')
+    rustCleanup = await waitFor(evaluate,
+      'JSON.parse(document.documentElement.dataset.axiaRustStylePreview || "null")',
+      value => value && !value.occupied && value.resultLeases === 0, 'Liberação das leases no unmount')
+  }
   process.stdout.write(`${JSON.stringify({ status: 'pass', browser: browserVersion,
     platform: process.platform, osRelease: release(), cpu: cpus()[0]?.model,
     node: process.version, go: goVersion, totalMemoryBytes: totalmem(), ...environment, imageBytes: dropped.bytes,
     ...observed.result, screenshot: visual,
+    ...(rustMode ? { rustPreview: rustStats, rustCleanup } : {}),
     ...(benchmarkMode ? { benchmark: { imageSize, cycles, minimumSampleWindowMs: 500,
       measurement: 'rAF callback cadence, not presented GPU FPS',
       input: 'synthetic wheel and native viewport scroll', samples: frameMetrics } } : {}) })}\n`)

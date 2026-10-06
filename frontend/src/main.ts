@@ -11,7 +11,7 @@ async function bootstrap() {
     : (await import('./App.vue')).default
   createApp(component).mount('#app')
 
-  // Explicit diagnostic only. Normal editing never starts the Rust POC Worker.
+  // Separate ABI diagnostic; not the opt-in style preview.
   if (params.get('axiaRustPoc') === '1') {
     void import('./editor/rustPixelPocDiagnostic.ts')
       .then(({ runRustPixelPocDiagnostic }) => runRustPixelPocDiagnostic())

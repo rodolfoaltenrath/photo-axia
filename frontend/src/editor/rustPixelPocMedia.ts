@@ -29,26 +29,15 @@ async function bitmapFrom(blob: Blob, options?: ImageBitmapOptions) {
 export async function decodeRustStyleSource(source: LayerStyleWorkerSource,
   layout: RustPixelPocStyleSourceLayout, ensureCurrent: () => void) {
   ensureCurrent()
-  if (!source || source.type !== 'raster' && source.type !== 'text') throw new RustPixelPocError('invalid-input')
+  validateRustStyleMediaSource(source)
   validatePlatform(source.type === 'raster')
   let bitmap: ImageBitmap | undefined
   let canvas: OffscreenCanvas | undefined
   try {
     if (source.type === 'raster') {
-      validateBlob(source.blob)
       bitmap = await bitmapFrom(source.blob, { resizeWidth: layout.sourceWidth, resizeHeight: layout.sourceHeight,
         resizeQuality: layout.quality === 'interactive' ? 'medium' : 'high' })
       ensureCurrent()
-    } else {
-      const text = source.text
-      if (!text || typeof text.content !== 'string' || typeof text.fontFamily !== 'string' ||
-          text.content.length > MAX_TEXT_CONTENT_LENGTH || text.content.split('\n').length > MAX_TEXT_LINE_COUNT ||
-          text.fontFamily.length > MAX_TEXT_FONT_FAMILY_LENGTH || typeof text.color !== 'string' ||
-          ![source.drawScaleX, source.drawScaleY, text.fontSize, text.lineHeight, text.baseWidth, text.baseHeight]
-            .every(value => Number.isFinite(value) && value > 0) ||
-          !Number.isFinite(text.fontWeight) || !Number.isFinite(text.letterSpacing ?? 0)) {
-        throw new RustPixelPocError('invalid-input')
-      }
     }
     canvas = new OffscreenCanvas(layout.sourceWidth, layout.sourceHeight)
     const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true })
@@ -61,6 +50,22 @@ export async function decodeRustStyleSource(source: LayerStyleWorkerSource,
   } finally {
     bitmap?.close()
     if (canvas) { canvas.width = 1; canvas.height = 1 }
+  }
+}
+
+export function validateRustStyleMediaSource(source: LayerStyleWorkerSource) {
+  if (!source || source.type !== 'raster' && source.type !== 'text') throw new RustPixelPocError('invalid-input')
+  if (source.type === 'raster') validateBlob(source.blob)
+  else {
+    const text = source.text
+    if (!text || typeof text.content !== 'string' || typeof text.fontFamily !== 'string' ||
+        text.content.length > MAX_TEXT_CONTENT_LENGTH || text.content.split('\n').length > MAX_TEXT_LINE_COUNT ||
+        text.fontFamily.length > MAX_TEXT_FONT_FAMILY_LENGTH || typeof text.color !== 'string' ||
+        ![source.drawScaleX, source.drawScaleY, text.fontSize, text.lineHeight, text.baseWidth, text.baseHeight]
+          .every(value => Number.isFinite(value) && value > 0) ||
+        !Number.isFinite(text.fontWeight) || !Number.isFinite(text.letterSpacing ?? 0)) {
+      throw new RustPixelPocError('invalid-input')
+    }
   }
 }
 

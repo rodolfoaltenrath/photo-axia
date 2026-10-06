@@ -8,10 +8,10 @@ import {
 import { sourceScaleFactor } from '../../../editor/selection'
 import { textLayerSourceIdentity, textStyleRasterPlan, textStyleRasterSource } from '../../../editor/textCanvas'
 import {
-  invalidateLayerStyleRender,
-  releaseLayerStyleRenderConsumer,
-  renderLayerStyle
-} from '../../../services/layerStyleCompositor'
+  invalidatePreviewLayerStyle,
+  releasePreviewLayerStyleConsumer,
+  renderPreviewLayerStyle
+} from '../../../services/layerStylePreview'
 import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../../../types/editor'
 
 export interface StyledImageGeometry {
@@ -26,6 +26,7 @@ export interface StyledImageGeometry {
 interface StyledImageSource extends StyledImageGeometry {
   originalSource: string
   url: string
+  release: () => void
 }
 
 interface LayerStyleRasterOptions {
@@ -68,6 +69,7 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
     const owned = ownedSources.get(source)
     if (!owned || styledSource.value?.url === source) return
     URL.revokeObjectURL(source)
+    owned.release()
     ownedSources.delete(source)
   }
 
@@ -91,6 +93,7 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
       effects.some((effect) => !layerStyleEffectIsRasterSupported(effect))
     ) {
       if (generation === localGeneration) styledSource.value = undefined
+      releasePreviewLayerStyleConsumer(consumerId)
       return
     }
 
@@ -101,10 +104,11 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
       const preview = Boolean(image && source === image.previewUrl)
       const sourceWidth = image ? (preview ? image.previewWidth ?? image.width : image.width) : textSource!.width
       const sourceHeight = image ? (preview ? image.previewHeight ?? image.height : image.height) : textSource!.height
-      const result = await renderLayerStyle({
+      const result = await renderPreviewLayerStyle({
         consumerId,
         layerId: layer.id,
         sourceIdentity: image ? `${source}|${image.editToken ?? ''}` : textSource!.identity,
+        sourceUrl: image ? source ?? undefined : undefined,
         source: image ? async () => {
           const response = await fetch(source!)
           if (!response.ok) throw new Error('Não foi possível carregar a camada para o preview de estilo.')
@@ -119,8 +123,10 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
           : textSource!.effectScale,
         quality: 'interactive'
       })
-      if (generation !== localGeneration) return
-      const url = URL.createObjectURL(result.blob)
+      if (generation !== localGeneration) { result.release(); return }
+      let url: string
+      try { url = URL.createObjectURL(result.blob) }
+      catch (error) { result.release(); throw error }
       const next: StyledImageSource = {
         url,
         originalSource: source ?? `text:${layer.id}`,
@@ -129,7 +135,8 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
         renderedWidth: result.width,
         renderedHeight: result.height,
         offsetX: result.offsetX,
-        offsetY: result.offsetY
+        offsetY: result.offsetY,
+        release: result.release
       }
       ownedSources.set(url, next)
       styledSource.value = next
@@ -158,7 +165,7 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
     () => {
       localGeneration++
       clearTimeout(renderTimer)
-      invalidateLayerStyleRender(consumerId)
+      invalidatePreviewLayerStyle(consumerId)
       const generation = localGeneration
       // Durante Ctrl+T, manter o último buffer pronto é mais fluido do que
       // converter texto e recompor efeitos a cada movimento do ponteiro. A
@@ -172,8 +179,8 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
   onBeforeUnmount(() => {
     localGeneration++
     clearTimeout(renderTimer)
-    releaseLayerStyleRenderConsumer(consumerId)
-    for (const source of ownedSources.keys()) URL.revokeObjectURL(source)
+    releasePreviewLayerStyleConsumer(consumerId)
+    for (const [source, owned] of ownedSources) { URL.revokeObjectURL(source); owned.release() }
     ownedSources.clear()
   })
 

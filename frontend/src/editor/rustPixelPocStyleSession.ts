@@ -163,6 +163,11 @@ export class RustPixelPocStyleSession {
     if (result.type !== 'source-invalidated' || result.generation !== generation) throw new RustPixelPocError('wasm-failure')
   }
 
+  cancelPendingRender() {
+    this.revision++
+    this.gate.beginViewChange()
+  }
+
   dispose() {
     if (this.disposal) return this.disposal
     this.disposal = this.invalidate()

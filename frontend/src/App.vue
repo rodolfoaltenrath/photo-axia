@@ -136,6 +136,7 @@ import { applyBrushStroke, disposeBrushEngine } from './services/brushEngine'
 import { applyGradient, disposeGradientEngine } from './services/gradientEngine'
 import { applyPaintBucket, applySolidFill, disposePaintBucketEngine } from './services/paintBucketEngine'
 import { clearLayerStyleRenderCache, disposeLayerStyleCompositor } from './services/layerStyleCompositor'
+import { resetLayerStylePreview } from './services/layerStylePreview'
 import {
   openLayerStyleNativeWindow,
   registerLayerStyleWindowHost,
@@ -1013,6 +1014,7 @@ function releaseAllEditorAssets(preserveSmartCache = false) {
   floatingSelectionSession.value = null
   clearPreparedImageCache()
   clearLayerStyleRenderCache()
+  resetLayerStylePreview()
   if (!preserveSmartCache) clearSmartLayerRenderCache()
   const releasedLayers = [...layers.value, ...retainedHistoryLayers()]
   copiedLayerStyles.value = undefined
@@ -4536,6 +4538,7 @@ onBeforeUnmount(() => {
   disposeSelectionMoveEngine()
   disposeImagePreviewWorker()
   disposeLayerStyleCompositor()
+  resetLayerStylePreview()
   releaseAllEditorAssets()
   window.removeEventListener('wheel', blockBrowserWheelZoom, true)
   window.removeEventListener('keydown', handleShortcut)

@@ -2003,3 +2003,106 @@ O fluxo experimental de camada agora devolve pixels ou PNG. Ainda faltam serviç
 consumidor real, política de cache/orçamento agregado, coalescência/prioridade,
 limites intrínsecos de imagem e medições/QA. Nada fecha C0/C1/C2 por si só;
 pilha documental/backdrop/transforms são C3 e canvas único é C4.
+
+## 22ª fatia — Serviço exclusivo, coalescência e leases de PNG
+
+O novo serviço experimental passa a ser dono da abertura/fechamento do Worker,
+da sessão e da fila de um consumidor. A factory browser usa somente WASM local,
+com abertura lazy. O RPC correlaciona IDs, limita pendências, não cancela staging/
+lifecycle e limpa timers/listeners na falha/timeout/terminação.
+
+Há um trabalho ativo e um pendente; novas edições substituem o pendente e
+invalidam a publicação do ativo. Snapshots protegem estilos, texto, região e
+mapa de assets contra mutação posterior. Fonte é reutilizada pela identidade/
+geometria existentes; assets atuais recompoem sem cache de resultado.
+
+Entradas, reserva ativa e PNGs publicados têm orçamento lógico por serviço.
+Leases exigem release explícito/idempotente; dispose não revoga Blobs já
+entregues. Watchdog/AbortSignal/épocas de conexão impedem travamento na abertura
+ou adoção tardia; próxima solicitação pode recriar Worker após falha. Contrato,
+defaults e exclusões de memória no [documento do serviço](contrato-servico-estilos-rust-v1.md).
+
+Não houve alteração Rust/ABI/stack, rollout normal ou benchmark de desempenho.
+Preview/exportação/`.axia` continuam intactos. Orçamento global/pool/cache,
+limites intrínsecos de mídia, integração/handoff/fallback e métricas/QA reais
+continuam pendentes; não criar um Worker por camada sem resolver essa política.
+
+### Validação
+
+- `npm test`: **515** testes frontend e checagem de tipos.
+- `npm run test:rust-poc`: **319** casos (5 standalone, 1 Worker básico,
+  313 scripts); **27** casos novos de serviço/RPC, com Worker/WASM reais e
+  doubles explícitos das APIs de imagem sob Node. Goldens não foram alterados.
+- Testes cobrem 17 pedidos durante encode bloqueado, snapshots, erro de entrada
+  que cancela resultado antigo, padrões/texto/tiles, memória ativa/pendente/leases,
+  limites de quantidade/bytes, release/retry, invalidate/dispose, reinício, deadline,
+  abertura tardia e factory que nunca resolve. RPC cobre ruído/correlação,
+  transferências, oito pendentes, falha de clone, lifecycle, erro/timeout e cleanup.
+- As duas suítes novas foram repetidas **cinco vezes consecutivas** sem falha.
+- Build de produção, integridade do bundle e smoke **Wails/WebView2** passaram.
+  A factory browser abre Worker exclusivo; o smoke redecodifica PNG real de
+  integral/tile/Fill, confirma mesmo handle, último pedido e contagem/release
+  de leases, além dos testes de imagem/padrão/texto anteriores.
+- `cargo test --offline --locked`: **61** testes nativos passaram. WASM mantém
+  **100.281 bytes**, `axia_pixel_core-674Kws7T.wasm`; Worker normal de estilos
+  mantém `layerStyleCompositor.worker-BALgYBwV.js`. Aviso existente de chunk
+  >500 kB permanece. Executável do smoke é temporário, não instalador/release.
+
+A organização do consumidor experimental está pronta para a próxima integração,
+não para substituir todo o editor. Contabilidade lógica não mede RSS/GC/Canvas;
+testes de deadlines não são benchmarks. C0/C1/C2 permanecem abertos e C3/C4
+continuam sendo a pilha documental e o compositor de superfície única.
+
+## 23ª fatia — Preview real de estilos opt-in, handoff e fallback
+
+O canvas pode usar o serviço Rust ao iniciar com `--axia-rust-styles-preview`
+ou `?axiaRustStyles=1`. A integração é desligada por padrão e tem **um dono
+por janela**, sem Worker por camada. Os demais canvases, miniaturas, exportação,
+amostragem e persistência continuam no caminho anterior.
+
+Preparação de Blob/assets é abortável; snapshot e tokens protegem cancelamento,
+troca de documento e abertura tardia. Identidade compacta é versionada por
+comparação exata da identidade original, sem truncamento/hash curto. PNGs Rust
+não entram no cache compartilhado legado. A URL do raster guarda a lease;
+handoff mantém buffer anterior até decode/ativação e libera URL/PNG ao retirá-lo.
+Unmount libera todas as fontes de posse do hook. Diagnóstico não pode falhar
+renderização/perder lease, mesmo se seu observador lançar erro.
+
+Falhas encerram o serviço adotado antes de solicitar o estilo ao compositor
+atual. Circuito por dono evita repetir falha de WASM/limite/timeout a cada edição.
+Cancelamento não dispara fallback. Novo dono espera a terminação anterior;
+factory lazy que resolve sem dono é descartada antes de abrir Worker.
+
+Diagnóstico limita-se a contagens/contas e último backend/motivo/timings,
+sem conteúdo/URL/texto editorial. Timings agrupam preparação e serviço, com
+kernel/encode separados; o smoke observa publicação/load/ativação do buffer.
+Não há benchmark repetido de FPS ou afirmação de ganho percentual.
+
+### Validação
+
+- `npm test`: **530** casos frontend e checagem de tipos; **15** novos casos
+  de roteamento, opt-in, snapshot/texto, identidades, cancelamento, lease tardia,
+  fallback/circuito, posse, teardown e observador de diagnóstico.
+- A suíte nova foi repetida **cinco vezes consecutivas** sem falha.
+- `npm run test:rust-poc`: **319** casos; `cargo test --offline --locked`:
+  **61** nativos. Algoritmos/ABI Rust e goldens não mudaram.
+- `go test ./...` passou, incluindo seis combinações de URL/flags. O argumento
+  normal do preview não ativa CDP/debugger; smokes continuam em perfil temporário.
+- Build e integridade do bundle passaram, incluindo dependências divididas em
+  chunks e ausência de runtime experimental no HTML/preload padrão. WASM continua
+  com **100.281 bytes**, `axia_pixel_core-674Kws7T.wasm`; Worker normal conserva
+  `layerStyleCompositor.worker-BALgYBwV.js`. Aviso existente de chunk >500 kB.
+- Smoke **Wails/WebView2** de canvas: modo normal, modo Rust e WASM indisponível
+  passaram. PNG real mudou pixels visíveis; nenhum modo perdeu o buffer ativo.
+  Rust exige backend `rust`, uma lease atual e zero fallback. Falha simulada
+  exige backend `legacy`, motivo `wasm-unavailable` e circuito aberto.
+- Smokes opt-in adicionam camada auxiliar (documento não pode ficar sem camadas),
+  removem a camada estilizada pela UI e exigem dono retirado e **zero leases**.
+- A sonda ABI/mídia/PNG Wails anterior também passou. Executáveis são temporários,
+  não houve geração de instalador/portável de release.
+
+Escopo/QA manual no [contrato do preview](contrato-preview-estilos-rust-v1.md).
+Faltam pool/prioridades, orçamento global/cache e assets, limites intrínsecos,
+matriz de paridade visual e medições isoladas/repetidas antes do rollout. Contas
+por serviço e contador de leases não medem RSS. C0/C1/C2 permanecem abertos;
+C3/C4 ainda não substituíram pilha/DOM/`renderDocument.ts`.
