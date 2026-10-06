@@ -30,6 +30,10 @@ O [acetinado regional](contrato-acetinado-v1.md) calcula a diferença assinada
 de duas máscaras espelhadas, antes dos overlays. Inclui terceira máscara no
 orçamento enquanto filtra a segunda; não integra a pilha nem o preview normal.
 
+O [traçado regional](contrato-tracado-v1.md) compartilha pinturas espaciais
+com overlays, mas gera sua própria máscara circular/erosão e compõe depois
+deles. Suas três posições também não constituem um executor documental.
+
 ## 1. Vocabulário e unidades
 
 - Documento: espaço contínuo em pixels documentais, origem `(0, 0)` no canto

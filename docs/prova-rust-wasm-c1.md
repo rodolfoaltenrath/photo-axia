@@ -1426,3 +1426,115 @@ Ainda faltam traçado, bisel, conteúdo/executor de estágios integrado ao lote,
 preparação/insets, cache/orçamento agregado, transformação e medições
 end-to-end/multiplataforma. C0/C1/C2 continuam abertos. Validação manual da
 migração fica para depois da integração experimental ao editor.
+
+## Décima quinta fatia: traçado regional
+
+Em 2026-10-06, o comando experimental `stroke-staged-region` passou a calcular
+traçado interno/central/externo com cor, degradê espacial e padrão. O
+[contrato STK1](contrato-tracado-v1.md) define máscaras, grade de amostragem,
+ABI, limites e orçamento. Não liga Rust ao preview normal/exportação/`.axia`.
+
+### Implementação
+
+- TS prepara espessura/raios, cores, paradas, trigonometria e textura decodificada.
+  Rust calcula expansão circular por EDT quadrada, erosão interna separável,
+  subtração de máscaras, amostragem espacial e mesclagem. Center mantém
+  ceil/floor da espessura e mínimo de um pixel mesmo em escala pequena.
+- Halo = max(raios), fonte original, grade global e limites completos da fonte.
+  Não aplica a dilatação quadrada das sombras ao externo; interno preserva
+  o mínimo quadrado legado, com zeros fora da fonte. Alfa > 0 já é uma origem
+  da expansão. Não muda algoritmos/semântica visual no TS durante este porte.
+- Sentinel da EDT usa dimensões completas da fonte; preserva o comportamento
+  legado em grade pequena/vazia sem padding quando raio² >= sentinel. Guard
+  adicional TS/Rust rejeita externo se width²+height²+1 exceder i32, evitando
+  overflow da representação da referência em grades extremamente finas/largas.
+- Pintura usa centro de pixel e largura/altura completos, depois da preparação
+  de padding. Cinco tipos espaciais, reverse e paradas f64; textura usa rotação
+  negativa, escala e duplo resto. Compartilha posição/interpolação com gradiente
+  overlay e extrai sample_pattern sem alterar a aritmética do pattern overlay.
+- Padrão sem asset configurado é no-op explícito. Asset configurado mas não
+  decodificado é invalid-input no adapter, nunca no-op silencioso. TS mantém
+  LayerStylePatternMissingError. Decode/origem/padding seguem fora deste passe.
+- STK1 tem cabeçalho 96 bytes e payload próprio, até 64 MiB. Campos de paint
+  não utilizado e padding de stops devem ser zero; counts/length/geometria
+  são limitados antes da aritmética. Export próprio com 14 argumentos.
+- Orçamento 96 MiB/job: fonte, target, saída, pacote, reserva 2048, três máscaras,
+  matriz i32, linhas/sites/fronteiras f64 e fila com padding. Reserva antes de
+  escrever saída; buffers reutilizados por linha, sem alocação por pixel.
+  Adapter verifica orçamento antes de materializar/copiar pacote da textura.
+  Fonte staged permanece original; cache agregado/texturas ainda pendentes.
+- `renderStroke` TS foi apenas exportado para o oráculo real. UI, algoritmos
+  normais de texto e formatos de projeto não foram alterados.
+
+### Testes e empacotamento
+
+- `npm test`: 514 testes frontend e checagem de tipos passaram.
+- `npm run test:rust-poc`: 208 testes (5 standalone, 1 Worker básico e 202 dos
+  scripts), incluindo 18 novos do traçado; passes anteriores continuam verdes.
+- `cargo test --offline --locked`: 54 testes nativos. Fmt/check e
+  clippy/all-targets com `-D warnings` passaram.
+- Build de produção, integridade do bundle e smoke Wails/WebView2 passaram.
+  Diagnóstico do executável verifica três pinturas contra RGBA fixo, target
+  transferido e gate válido, além das fatias anteriores. Smoke removeu o
+  executável temporário; nenhum instalador/portável foi gerado. Build mostrou
+  aviso de chunk >500 kB já existente e relatório de tempo dos plugins.
+- Golden `overlay-before-outer-stroke` passou com Fill/overlay/traçado e
+  padding/insets esperados, sem regenerar pixels. Comparador independente dos
+  17 goldens originais também passou; fixtures permanecem inalteradas.
+- Matriz 256² × seis modos × três posições × três espessuras × três pinturas:
+  **10.616.832 pixels**, todos os pares de alfa máscara/target. Cor com alfa,
+  degradê com transparência e textura 3×2 com alfa zero/parcial/pleno, comparados
+  byte a byte à função TS real.
+- Tiles 7×5 em quatro geometrias (37×29, 1×17, 19×1, 1×1): 72 configurações
+  com três posições/espessuras, gradiente ou padrão. Integral e cada tile
+  concordam; padrão com ângulo -180/scale 1 cobre fronteiras de texel.
+- Outros 128 jobs determinísticos com ilhas, buracos, transparência e máscaras
+  vazias, geometrias/tiles variáveis e escalas 0,125/1,375/8. Cobre expansão
+  circular fora das bordas do tile, não apenas máscaras densas.
+- Alfa mínimo 1, disco que não preenche cantos quadrados, cinco tipos espaciais,
+  escalas/size máximos, espessura mínima, máscara vazia com raio grande, RGB
+  oculto e pintura transparente; 32 paradas estreitas/duplicadas, reverse e
+  extrapolação legada nos cinco tipos, comparando integral e região.
+- Cadeia overlay → traçado com Fill zero e array em outra ordem, com gradiente
+  e padrão, concorda com compositor TS sobre fonte/padding preparados.
+- ABI malformada: magic/versão, raios, paint/blend/kind/reverse, reservados,
+  counts enormes, NaN, padding dos stops, comprimento/geometria/null/overlap;
+  saída sentinela e target permanecem intactos após falhas, com recuperação.
+- Aridade antiga e parâmetros inválidos são rejeitados. Três falhas de alocação
+  e status 6 injetados liberam temporários; fonte reutilizável, zero pares vivos
+  após dispose. Orçamento e overflow da EDT/contabilidade são testados.
+- Worker real transfere fonte/target/textura, muda posição/size/paint, rejeita
+  pedido antigo após edição/vista/fonte, recupera erro e faz invalidate/dispose.
+  Cancelamento continua sem interromper kernel síncrono já ativo.
+
+### Sondas isoladas
+
+`npm run benchmark:rust-stroke -- 1024 20 PAINT`, com PAINT color/gradient/pattern,
+release, Windows, Node 24.14.1, Intel i7-3770, WASM **85.727 bytes**. Três warmups,
+20 amostras por caso, ordem TS/Rust alternada; cada saída integral/tile comparada
+byte a byte fora da janela medida. Nenhum build/teste concorrente durante as
+sondas. Script limita lado 16..2048, amostras 5..100 e as três pinturas.
+
+Fonte/target preparados 1024², normal, center size 16, opacidade 73,5%. Cor
+`#33669980`; gradiente radial invertido, scale 137,5%, três paradas de cor/alfa
+com duplicatas/cobertura parcial; padrão 3×2, ângulo -77,75°, scale 137,5%.
+Upload da fonte uma vez: 1,55..2,35 ms, fora dos passes.
+
+| Caso | TS mediana/p95 (ms) | Adapter Rust mediana/p95 (ms) | Kernel Rust mediana/p95 (ms) | Tile Rust mediana/p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Cor sólida | 208,42 / 307,08 | 132,92 / 146,05 | 130,79 / 144,05 | 31,85 / 34,15 |
+| Degradê | 1095,89 / 1123,03 | 190,97 / 228,22 | 188,26 / 225,75 | 47,36 / 58,45 |
+| Padrão | 323,36 / 350,32 | 203,13 / 226,35 | 200,95 / 224,21 | 49,17 / 54,25 |
+
+Tile 512²/contexto 528², halo 8. Contabilidade integral/tile: cor
+19.949.736/8.257.832 bytes; gradiente 19.949.832/8.257.928; padrão
+19.949.760/8.257.856. Não é memória/RSS medida. Tile retorna um quarto da saída.
+Sonda não inclui preparação/insets, decode, Worker, Canvas, UI/zoom/FPS, GPU
+ou composição documental. P95 não é pior caso. Não atribuir ganhos apenas
+à linguagem/SIMD; TS do gradiente também materializa objetos por pixel.
+
+Agora nove dos dez tipos atuais de efeito têm passes Rust isolados. Bisel,
+conteúdo/executor de estágios, preparação/insets integrada, cache/orçamento
+global, transformação e validação end-to-end/multiplataforma seguem pendentes.
+C0/C1/C2 continuam abertos; validação manual da migração vem após integração
+experimental ao editor, não é exigida para estes passes isolados.

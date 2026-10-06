@@ -150,6 +150,7 @@ estreitas/duplicadas, cadeia externa/interna/overlay e falhas de ABI/allocator.
 Medições isoladas e validações estão na [prova](prova-rust-wasm-c1.md).
 
 Acetinado possui agora um [passe separado](contrato-acetinado-v1.md).
-Ainda faltam traçado, bisel, composição de conteúdo e executor dos
+Traçado possui agora um [passe separado](contrato-tracado-v1.md).
+Ainda faltam bisel, composição de conteúdo e executor dos
 estágios/lote, preparação/insets integrada, transformação, cache/orçamento
 global e validação end-to-end/multiplataforma. Nenhum gate C0/C1/C2 é encerrado.

@@ -167,6 +167,25 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         throw new Error('Worker Rust produziu acetinado diferente da referência fixa.')
       }
     }
+    for (const [paint, expected] of [
+      [{ type: 'color', color: [51, 102, 153, 255] }, '0,0,0,0,51,102,153,191'],
+      [{ type: 'gradient', angle: 0, scale: 100, reverse: false, gradient: { type: 'linear',
+        colorStops: [{ position: 0, color: [0, 0, 0, 255] }, { position: 1, color: [255, 255, 255, 255] }],
+        opacityStops: [{ position: 0, opacity: 100 }, { position: 1, opacity: 100 }] } }, '0,0,0,0,191,191,191,191'],
+      [{ type: 'pattern', angle: 0, scale: 100, pattern: { width: 2, height: 1,
+        rgba: new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]) } }, '0,0,0,0,0,0,255,191']
+    ] satisfies [import('./rustPixelPocStroke.ts').RustPixelPocStroke['paint'], string][]) {
+      const strokeTarget = new Uint8Array(8)
+      const strokeRequest = send({ type: 'stroke-staged-region', sourceId: staged.sourceId,
+        region: { x: 1, y: 0, width: 1, height: 2 }, target: strokeTarget.buffer, stroke: {
+          outsideRadius: 1, insideRadius: 0, opacity: 75, blendMode: 'normal', paint
+        } }, [strokeTarget.buffer])
+      const strokeToken = gate.captureTile(`traçado-${paint.type}`, strokeRequest.id), strokeResult = await strokeRequest
+      if (!strokeToken?.isCurrent(strokeResult) || strokeTarget.byteLength !== 0 ||
+          [...new Uint8Array(strokeResult.rgba)].join(',') !== expected) {
+        throw new Error(`Worker Rust produziu traçado ${paint.type} diferente da referência fixa.`)
+      }
+    }
     const maskRequest = send({ type: 'alpha-mask-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, config: { spreadRadius: 0, blurRadius: 1, precise: false } })
     const maskToken = gate.captureTile('máscara-direita', maskRequest.id)

@@ -23,6 +23,7 @@ assert.equal(instance.exports.axia_poc_drop_shadow_region?.length, 14, 'Assinatu
 assert.equal(instance.exports.axia_poc_inner_shadow_region?.length, 14, 'Assinatura da sombra interna incompatível')
 assert.equal(instance.exports.axia_poc_glow_region?.length, 14, 'Assinatura dos brilhos incompatível')
 assert.equal(instance.exports.axia_poc_satin_region?.length, 14, 'Assinatura do acetinado incompatível')
+assert.equal(instance.exports.axia_poc_stroke_region?.length, 14, 'Assinatura do traçado incompatível')
 assert.equal(instance.exports.axia_poc_alpha_mask_region?.length, 13, 'Assinatura da máscara com halo incompatível')
 assert.equal(instance.exports.axia_poc_local_batch_region?.length, 12, 'Assinatura do lote local incompatível')
 assert.equal(instance.exports.axia_poc_gradient_overlay_region?.length, 24,

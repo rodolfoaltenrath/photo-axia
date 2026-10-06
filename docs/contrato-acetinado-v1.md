@@ -134,6 +134,7 @@ contorno positivo em zero, RGB oculto, composição antes do overlay com Fill
 zero, falhas de ABI/allocator e worker real. Verificações e medições na
 [prova C1](prova-rust-wasm-c1.md).
 
-Ainda faltam traçado, bisel, composição de conteúdo/executor de estágios,
+Traçado possui agora um [passe separado](contrato-tracado-v1.md).
+Ainda faltam bisel, composição de conteúdo/executor de estágios,
 preparação/insets integrada, transformação, cache/orçamento global e validação
 end-to-end/multiplataforma. C0/C1/C2 não são encerrados por este passe isolado.

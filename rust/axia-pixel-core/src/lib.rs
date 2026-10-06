@@ -11,6 +11,7 @@ pub mod glow;
 pub mod gradient_overlay;
 pub mod pattern_overlay;
 pub mod satin;
+pub mod stroke;
 
 /// Zero-alpha fill pixels must not retain hidden RGB.
 pub fn apply_fill_opacity_in_place(rgba: &mut [u8], fill_opacity: u8) -> Result<(), &'static str> {

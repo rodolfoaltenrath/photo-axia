@@ -705,7 +705,7 @@ function renderBevelEmboss(
   }
 }
 
-function renderStroke(
+export function renderStroke(
   target: Uint8ClampedArray,
   sourceAlpha: Uint8ClampedArray,
   width: number,

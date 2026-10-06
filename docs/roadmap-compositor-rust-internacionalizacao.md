@@ -481,6 +481,21 @@ exportação e `.axia` inalterados. Detalhes no
 [contrato do acetinado](contrato-acetinado-v1.md) e na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
+Uma décima quinta fatia porta o **traçado interno/central/externo**, com cor,
+cinco tipos de degradê espacial e padrão. Mantém expansão circular via distância
+quadrada, erosão interna legada, espessura mínima e pintura na grade completa;
+não usa o tile como origem de gradiente/textura. STK1 transporta parâmetros e
+payloads validados; orçamento soma máscaras, EDT, linhas/fronteiras e fila.
+Golden combinado e 10.616.832 pixels da matriz passaram byte a byte, além de
+tiles esparsos, 32 paradas estreitas e cadeia overlay → traçado com Fill zero.
+Sondas Node 1024²: sólido 208,42 → 132,92 ms, degradê 1095,89 → 190,97 ms,
+padrão 323,36 → 203,13 ms; tiles 512²/contexto 528²: 31,85/47,36/49,17 ms.
+Não mede FPS/documento. Bisel, conteúdo/estágios no lote, preparação integrada,
+cache/orçamento global, transformação e gates C0/C1/C2 continuam pendentes.
+Preview normal, exportação e `.axia` não mudaram. Detalhes no
+[contrato do traçado](contrato-tracado-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

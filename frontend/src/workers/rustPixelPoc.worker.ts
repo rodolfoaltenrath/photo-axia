@@ -58,7 +58,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     request.type === 'blend-if-this-layer-staged-region' ||
     request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
     request.type === 'gradient-overlay-staged-region' || request.type === 'local-batch-staged-region' ||
-    request.type === 'alpha-mask-staged-region' || request.type === 'drop-shadow-staged-region' || request.type === 'inner-shadow-staged-region' || request.type === 'glow-staged-region' || request.type === 'satin-staged-region'
+    request.type === 'alpha-mask-staged-region' || request.type === 'drop-shadow-staged-region' || request.type === 'inner-shadow-staged-region' || request.type === 'glow-staged-region' || request.type === 'satin-staged-region' || request.type === 'stroke-staged-region'
   if (isRender) pending.add(request.id)
   void runtime.then((engine) => {
     if (current !== generation || cancelled.has(request.id)) {
@@ -85,9 +85,11 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
         request.type === 'blend-if-this-layer-staged-region' ||
         request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
         request.type === 'gradient-overlay-staged-region' || request.type === 'local-batch-staged-region' ||
-        request.type === 'alpha-mask-staged-region' || request.type === 'drop-shadow-staged-region' || request.type === 'inner-shadow-staged-region' || request.type === 'glow-staged-region' || request.type === 'satin-staged-region') {
+        request.type === 'alpha-mask-staged-region' || request.type === 'drop-shadow-staged-region' || request.type === 'inner-shadow-staged-region' || request.type === 'glow-staged-region' || request.type === 'satin-staged-region' || request.type === 'stroke-staged-region') {
       const result = (() => {
         switch (request.type) {
+          case 'stroke-staged-region':
+            return engine.strokeStagedRegion(request.sourceId, request.region, new Uint8Array(request.target), request.stroke)
           case 'satin-staged-region':
             return engine.satinStagedRegion(request.sourceId, request.region, new Uint8Array(request.target), request.satin)
           case 'glow-staged-region':

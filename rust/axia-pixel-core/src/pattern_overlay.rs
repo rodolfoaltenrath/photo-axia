@@ -67,6 +67,28 @@ fn repeat_coordinate(value: f64, extent: usize) -> usize {
     (((value % extent) + extent) % extent).floor() as usize
 }
 
+pub(crate) fn sample_pattern(effect: PatternOverlay<'_>, x: usize, y: usize) -> ([u8; 3], f64) {
+    let x = x as f64;
+    let y = y as f64;
+    let px = repeat_coordinate(
+        (x * effect.cosine - y * effect.sine) / effect.scale_factor,
+        effect.pattern.width,
+    );
+    let py = repeat_coordinate(
+        (x * effect.sine + y * effect.cosine) / effect.scale_factor,
+        effect.pattern.height,
+    );
+    let offset = (py * effect.pattern.width + px) * 4;
+    (
+        [
+            effect.pattern.data[offset],
+            effect.pattern.data[offset + 1],
+            effect.pattern.data[offset + 2],
+        ],
+        f64::from(effect.pattern.data[offset + 3]) / 255.0,
+    )
+}
+
 pub fn apply_pattern_overlay_region(
     source: &[u8],
     source_width: usize,
@@ -108,19 +130,7 @@ pub fn apply_pattern_overlay_region(
             if mask == 0.0 {
                 continue;
             }
-            let x = x as f64;
-            let y = y as f64;
-            let rotated_x = (x * effect.cosine - y * effect.sine) / effect.scale_factor;
-            let rotated_y = (x * effect.sine + y * effect.cosine) / effect.scale_factor;
-            let px = repeat_coordinate(rotated_x, effect.pattern.width);
-            let py = repeat_coordinate(rotated_y, effect.pattern.height);
-            let pattern_offset = (py * effect.pattern.width + px) * 4;
-            let color = [
-                effect.pattern.data[pattern_offset],
-                effect.pattern.data[pattern_offset + 1],
-                effect.pattern.data[pattern_offset + 2],
-            ];
-            let pattern_alpha = f64::from(effect.pattern.data[pattern_offset + 3]) / 255.0;
+            let (color, pattern_alpha) = sample_pattern(effect, x, y);
             let alpha = (255.0 * mask * pattern_alpha * effect.opacity / 100.0 + 0.5).floor() as u8;
             composite_pixel(pixel, color, alpha, effect.blend_mode);
         }

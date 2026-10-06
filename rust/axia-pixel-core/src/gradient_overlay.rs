@@ -89,7 +89,7 @@ impl GradientOverlay<'_> {
         Ok(())
     }
 
-    fn position(&self, x: usize, y: usize, width: usize, height: usize) -> f64 {
+    pub(crate) fn position(&self, x: usize, y: usize, width: usize, height: usize) -> f64 {
         let radius_x = (width as f64 / 2.0).max(0.5);
         let radius_y = (height as f64 / 2.0).max(0.5);
         let dx = x as f64 + 0.5 - width as f64 / 2.0;
