@@ -1,7 +1,11 @@
 // Minimal browser-Worker bridge for testing the actual worker module in Node.
-import { parentPort } from 'node:worker_threads'
+import { parentPort, workerData } from 'node:worker_threads'
 
 if (!parentPort) throw new Error('Worker parent ausente')
+if (workerData?.mediaFixtures) {
+  const { installRustMediaFixtures } = await import('./tests/support/rustMediaFixture.ts')
+  installRustMediaFixtures()
+}
 const queued = []
 globalThis.self = {
   onmessage: null,

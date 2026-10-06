@@ -1865,3 +1865,73 @@ original no consumidor, RPC ou encode. Decode raster/texto/assets, encode,
 coalescência/agendamento e orçamento agregado do fluxo real são os próximos
 passos; medir end-to-end antes de ativar em interações. C0/C1/C2 continuam
 abertos. Pilha/backdrop/transforms são C3 e superfície única é C4.
+
+## Vigésima fatia: decode de mídia e assets no Worker
+
+Em 2026-10-06, a sessão experimental ganhou `composeMedia`: recebe Blob ou
+descrição editorial de texto e assets codificados, sem decode/cópia RGBA na UI.
+O Worker usa APIs browser para preparar a fonte, depois executa os mesmos
+estágios CPU Rust. Algoritmos/ABI WASM não mudam; nenhum rollout no preview
+normal, exportação ou `.axia`. Não há migração do shaping/layout para Rust.
+
+### Implementação e cuidados
+
+- `stage-style-media` desenha texto via `drawTextLayerContent` existente ou
+  redimensiona/decode imagem com `createImageBitmap`/`OffscreenCanvas`, prepara
+  padding e confirma chave/geometria. Qualidade medium/high segue o Worker normal.
+- `style-media-staged-region` confere fonte/identidade e região, decodifica os
+  padrões/texturas ativos, prepara STG1 no Worker e executa o núcleo Rust.
+  Mesmo ID compatível é decodificado uma vez por pedido; metadata conflitante,
+  Blob ausente/corrompido ou dimensões reais incompatíveis não vira pixel válido.
+- Fonte é reutilizada entre estilos/tiles. Padrões/texturas são atuais por pedido,
+  sem cache de assets/resultado; trocar Blob não exige upload da fonte se a
+  geometria continuar igual. Caminhos raw/media têm namespaces separados.
+- Factory assíncrona usa ticket de geração, invalida/libera fonte anterior antes
+  do decode e confere obsolescência antes do upload. Falha consome geração;
+  pedido atrasado não remove fonte nova. Barreira reservada continua aceitando
+  seu upload uma única vez, inclusive após decoder antigo terminar.
+- Decode/assets são serializados em fila de até oito trabalhos (incluindo ativo).
+  Falha não paralisa a fila; invalidate/init/dispose não esperam por ela.
+  Cancelamento de render é checado em fronteiras assíncronas, sem liberar a
+  fonte atual. Decoder/kernel ativos não têm interrupção real.
+- Bitmap é fechado e Canvas reduzido em `finally` em sucesso, falha e obsolescência.
+  Assets são decodificados em sequência; dimensões verificadas antes de readback.
+  Limites por Blob/lista/rasters e fases JS/WASM estão detalhados no
+  [contrato da preparação](contrato-preparacao-estilos-v1.md).
+- Orçamento de metadata **não** comprova tamanho intrínseco da imagem: browser
+  pode alocar antes de resize/rejeição. Cabeçalhos/limites intrínsecos, orçamento
+  global de filas/cache e pressão de memória ainda precisam de desenho/validação
+  antes do rollout. Não há teto de RSS nem proteção completa de descompressão.
+- `preparationMs` de mídia inclui decode/desenho/readback/padding, sem espera
+  na fila. Timings do tile não incluem decode de assets/RPC/encode. Não há
+  benchmark end-to-end ou afirmação de aceleração/FPS nesta fatia.
+
+### Validação
+
+- `npm test`: **514** testes frontend e tipos passaram.
+- `npm run test:rust-poc`: **277** testes (5 standalone, 1 Worker básico, 271
+  nos scripts), incluindo **20 novos** de mídia/fila/lifecycle. Os 16 goldens
+  puros históricos continuam sem regeneração.
+- Node usa doubles explícitos de Canvas/decoder com **Worker/WASM reais**:
+  limites/preflight, qualidade, texto, deduplicação, decode sequencial,
+  cleanup após falha/obsolescência, fila cheia/recuperação, geração atrasada/
+  reservada, invalidação/substituição/dispose/reinit/cancelamento.
+- Sessão cobre preparação compartilhada com último pedido vencedor, namespaces
+  raw/media, retry corrompido, reuso entre Fill/estilos/tiles e padrão alterado sem
+  reupload. Textura de bisel/traçado de padrão e tiles concordam byte a byte com
+  o raster TS sobre pixels das fixtures; isso **não** prova o decoder real.
+- Build e integridade do bundle passaram. Smoke **Wails/WebView2** usa PNG real
+  opaco com pixels fixos: fonte → padding → STG1, Fill/tile com mesmo handle,
+  padrão vermelho/verde sem resultado antigo e texto não vazio no Worker.
+  Não exige nem afirma paridade de fontes/antialiasing entre plataformas.
+- `cargo test --offline --locked`: **61** testes nativos passaram. Nenhum arquivo
+  Rust ou versão da stack mudou. WASM segue **100.281 bytes**, hash
+  `axia_pixel_core-674Kws7T.wasm`; Worker normal de estilos continua
+  `layerStyleCompositor.worker-BALgYBwV.js`. Aviso de chunk >500 kB permanece.
+- Testes de mídia/lifecycle repetidos cinco vezes consecutivas sem falha;
+  executável do smoke era temporário e foi limpo, sem gerar release distribuível.
+
+Próximos passos: encode de saída e serviço experimental completo, coalescência/
+prioridade, cache/orçamento agregado e limites intrínsecos; só depois integrar e
+medir decode → preparação → Rust → encode → handoff com gates de regressão.
+C0/C1/C2 continuam abertos; pilha/backdrop/transforms são C3 e canvas único C4.

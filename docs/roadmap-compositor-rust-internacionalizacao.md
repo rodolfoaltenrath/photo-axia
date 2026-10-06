@@ -553,6 +553,22 @@ cópia original; decode/encode reais, fila, orçamento agregado e benchmark
 end-to-end seguem pendentes. Nada muda no preview normal/exportação/`.axia`,
 nem fecha C2/C3/C4. Contrato e provas registram alcance e limites desta fatia.
 
+Uma vigésima fatia adiciona **decode de imagens, texto e assets no Worker**.
+`composeMedia` envia Blob/texto editorial, sem decode/cópia RGBA na UI; Worker
+usa APIs browser e o desenhador de texto existente, prepara padding e executa
+STG1 em Rust. Padrões/texturas ativos são deduplicados e decodificados em sequência,
+com dimensões e orçamentos validados. Bitmaps/Canvas temporários são liberados em
+sucesso, erro e obsolescência. Fonte reutilizada entre estilos/tiles; assets atuais
+sempre recompõem, sem cache de resultado.
+Factory assíncrona protege geração e impede upload após invalidação/substituição/
+dispose. Fila de mídia limitada a oito trabalhos não bloqueia barreiras de lifecycle.
+Testes Node distinguem doubles de decoder do Worker/WASM real; smoke WebView2 usa
+PNG real, mudança de padrão e texto. C0/C1/C2 permanecem abertos: encode, limites
+intrínsecos de imagens, coalescência, cache/orçamento global, serviço real e medições
+end-to-end ainda faltam. Preview normal/exportação/`.axia` continuam inalterados.
+Detalhes no [contrato da preparação](contrato-preparacao-estilos-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

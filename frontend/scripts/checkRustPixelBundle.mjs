@@ -42,6 +42,10 @@ assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_gradient_overlay_region'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('stage-style-source'),
   'O Worker deve incluir preparação da fonte original')
+assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('stage-style-media'),
+  'O Worker deve incluir decode de imagem/texto')
+assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('style-media-staged-region'),
+  'O Worker deve incluir decode de assets e execução regional')
 assert.ok(names.some((name) => name.startsWith('index-') && name.endsWith('.js') &&
   readFileSync(join(assetsRoot, name), 'utf8').includes(diagnosticName)),
   'O ponto de entrada deve referenciar o chunk diagnóstico')

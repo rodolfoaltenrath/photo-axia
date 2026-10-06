@@ -1,6 +1,6 @@
 # Preparação e sessão de estilos Rust — experimental
 
-Esta fatia aceita uma fonte RGBA **original**, calcula as margens e executa o
+Esta fronteira aceita fonte RGBA **original** ou mídia/texto editorial, calcula as margens e executa o
 [STG1](contrato-estagios-v1.md) pelo Worker existente. Não é compositor da pilha
 documental nem troca do preview normal. A ABI WASM e os algoritmos Rust não
 mudam. O contrato continua privado, sem estabilidade prometida para mods.
@@ -11,12 +11,14 @@ mudam. O contrato continua privado, sem estabilidade prometida para mods.
   insets, geometria, região e preflight sem DOM/Canvas; layout compartilhado
   entre consumidor/Worker e padding em buffer próprio no Worker.
 - `rustPixelPocStyleSession.ts`: um consumidor com posse exclusiva do slot de
-  fonte de um Worker, decode assíncrono compartilhado, upload e descarte.
+  fonte de um Worker, preparação assíncrona compartilhada, upload e descarte.
+- `rustPixelPocMedia.ts`/`rustPixelPocMediaQueue.ts`: decode browser de imagens e
+  assets, desenho de texto existente, recursos temporários e fila serial limitada.
 - Worker/runtime/STG1: fonte staged, filtros regionais, conteúdo, ordem dos
   estágios, preparação do padding, publicação atômica e liberação das alocações.
-- Chamador: identidade de conteúdo, origem RGBA, assets decodificados, qualidade,
-  escala e transformação posterior. Texto/forma permanecem rasterizados pelos
-  caminhos atuais; Rust não recebe strings/fontes nem assume shaping/layout.
+- Chamador: identidade de conteúdo, origem RGBA ou Blob/texto, assets, qualidade,
+  escala e transformação posterior. Rust não recebe strings/fontes nem assume
+  shaping/layout; texto continua usando `drawTextLayerContent` do navegador.
 
 Entrada de `compose`:
 
@@ -39,6 +41,49 @@ com a mesma identidade são uma promessa de mesmos pixels, não são verificadas
 por hash. O chamador não pode editar/transferir os pixels ou assets emprestados
 durante o pedido; uma edição exige nova revisão e pedido. A sessão não modifica
 nem transfere o buffer pertencente ao editor.
+
+Entrada alternativa de `composeMedia`:
+
+```ts
+{
+  sourceIdentity, sourceWidth, sourceHeight,
+  source: () => Promise<
+    { type: 'raster', blob: Blob } |
+    { type: 'text', text: TextLayerContent, drawScaleX, drawScaleY }
+  >,
+  styles, globalLight,
+  resolutionScale?, quality?, patterns?: Record<string, Blob>, region?
+}
+```
+
+Este loader obtém mídia codificada ou descrição de texto, **não** decodifica
+pixels na UI. Blob passa por structured clone, sem transfer de RGBA do editor.
+Identidade de texto inclui conteúdo, fonte/fallback, métricas e escalas de desenho;
+fontes carregadas/trocadas também exigem revisão nova. Texto e seus parâmetros
+devem permanecer estáveis até o envio. Texto usa os limites existentes de conteúdo,
+linhas/família e exige escalas/métricas finitas positivas. A camada continua editável.
+
+Fonte raster é redimensionada para as dimensões solicitadas pelo decoder browser,
+como no Worker normal: qualidade `medium` em interação e `high` em final.
+Texto usa o desenhador atual no `OffscreenCanvas` com contexto fornecido, sem
+introduzir um segundo shaping. Canvas pode alterar RGB invisível e antialiasing;
+a promessa de preservar RGB oculto byte a byte pertence ao caminho **RGBA**, não
+ao decode/browser. Ausência de APIs retorna `wasm-unavailable`, mídia corrompida
+retorna `invalid-input`; não há fallback novo nesta sessão experimental.
+
+`stage-style-media` recebe fonte e a mesma descrição reduzida de geometria.
+`style-media-staged-region` recebe handle, descrição editorial completa de estilos,
+região e Blobs dos assets por ID. Worker valida identidade/dimensões da fonte,
+decodifica assets e prepara o plano STG1; não depende de pixels decodificados na UI.
+O consumidor conserva preflight leve de geometria/região/metadata dos assets.
+
+Somente padrões/texturas usados pelo pipeline ativo são decodificados: overlay,
+traçado de padrão e textura de bisel habilitada. Mesmo ID com metadata de origem
+ou dimensões conflitantes falha; usos compatíveis compartilham um decode por
+pedido. Assets são decodificados **sequencialmente**. Dimensões reais devem
+coincidir com metadata antes de criar Canvas/readback. Não há fetch de URL no
+Worker, cache de assets ou cache de resultado: mudança de Blob recompõe a partir
+dos pixels atuais, sem invalidar a fonte se suas margens continuarem iguais.
 
 ## 2. Preparação e coordenadas
 
@@ -66,9 +111,11 @@ offsets e `preparationMs`. A sessão valida esses campos antes de adotar o handl
 O caminho `stage-source` de baixo nível permanece compatível e não tem esse
 campo; um ack antigo não satisfaz o contrato da sessão de estilos.
 
-`preparationMs` mede layout/padding dentro do Worker; `stagingMs` segue medindo
-alocação/cópia no WASM. Nenhum inclui decode, cópia original no consumidor,
-transferência/RPC ou tempo total de UI. Não somar como benchmark end-to-end.
+No caminho RGBA, `preparationMs` mede layout/padding dentro do Worker. No caminho
+de mídia, inclui layout, decode/desenho, readback e padding, **sem espera na fila**.
+`stagingMs` mede somente alocação/cópia da fonte no WASM. Timings do tile medem
+o adapter/kernel, incluindo cópia do pacote, mas não decode de assets/fila/RPC.
+Nenhum é tempo total de UI; não somar como benchmark end-to-end.
 
 Região omitida significa raster expandido inteiro. Região fornecida é absoluta
 na **grade expandida da camada**, não no documento. Gradientes, padrões, ruído
@@ -97,6 +144,9 @@ JSON([sourceIdentity, originalWidth, originalHeight,
       left, top, right, bottom, exactScale, quality])
 ```
 
+A sessão distingue namespaces `raw:` e `media:` para não confundir origens
+Canvas e RGBA com a mesma descrição editorial. Trocar o modo refaz o upload.
+
 | Mudança | Upload |
 | --- | --- |
 | Cor, Fill, Blend If desta camada, ordem/parâmetros que mantêm margens | Reusa fonte; prepara novo plano e recompõe |
@@ -123,8 +173,8 @@ duas sessões para o mesmo slot de Worker não é suportado.
 1. Cada compose avança revisão visual e gate, inclusive se o preflight falhar.
 2. Troca de fonte avança geração e envia `invalidate-source` antes do loader.
 3. Após cada await, a preparação confere se a entrada ainda é atual.
-4. Upload usa geração reservada e transfere apenas cópia original própria;
-   runtime invalida antes de executar a factory de preparação do Worker.
+4. Upload usa geração reservada; RGBA transfere cópia original própria, mídia
+   envia Blob/texto. Runtime invalida antes da factory de preparação do Worker.
 5. Só ack atual com chave/geometria/preparationMs válidos pode ser adotado.
 6. Render confere revisão, entrada, pedido, sourceId, geração, dimensões e
    comprimento RGBA antes de devolver pixels.
@@ -150,6 +200,19 @@ O kernel é síncrono: obsolescência **não** interrompe trabalho ativo nem ret
 pedidos já enviados da fila. Coalescência/prioridade/cancelamento cooperativo
 continuam pendentes antes de integrar interações do editor.
 
+O runtime tem factory assíncrona com ticket de geração. Invalidação, substituição
+e dispose tornam esse ticket obsoleto; ele é verificado após cada await e antes
+de alocar/copiar no WASM. Factory que falha consome geração e não pode repor fonte
+anterior. Decoder browser já ativo não é interrompido; seu bitmap é fechado ao
+terminar mesmo se obsoleto, sem readback/upload posteriores.
+
+Uma fila exclusiva de mídia permite até **oito trabalhos, incluindo o ativo**.
+Decode e render com assets são serializados; falha não paralisa o próximo.
+Barreiras de fonte/init/dispose não entram nessa fila e continuam imediatas.
+Render cancelado é checado antes/depois do decode; não libera a fonte válida.
+Trabalhos de runtime anterior não publicam após reinit. A fila é limitada por
+quantidade, sem prioridade/coalescência ou orçamento agregado em bytes ainda.
+
 ## 5. Preflight de memória
 
 Antes do loader ou padding, validar dimensões, margens, região, assets e plano
@@ -170,6 +233,31 @@ expandidos são padding JS do Worker e fonte WASM. O buffer emprestado do editor
 com dois originais vivos durante a cópia; esse pico também cabe na estimativa
 pois o expandido nunca é menor que o original. Isso não elimina todas as cópias.
 
+No caminho de mídia, bitmap e Canvas são fechados/reduzidos a 1×1 em `finally`,
+antes de preparar padding. Na fase de decode, três originais representam bitmap,
+Canvas e readback; cabem na mesma estimativa pois expanded ≥ original. A fase
+posterior cobra original lido, padding e staged. Referências externas, coleta de
+lixo e buffers internos do decoder não são um limite rígido de memória.
+
+Cada Blob de fonte tem limite codificado de 64 MiB. Um pedido de assets permite
+até 64 Blobs e 64 MiB codificados no total, **incluindo Blobs extras** que não serão
+decodificados. Preflight de decode de assets cobra, até 96 MiB:
+
+```text
+stagedSource + retainedDecodedAssets + 3 × largestAssetRGBA
+```
+
+Após decode e antes de serializar/executar STG1, o caminho de mídia também cobra
+`workingBytes + decodedAssetsBytes + packetBytes` até 96 MiB: soma retenção JS de
+assets e a cópia JS do pacote ao orçamento do núcleo. Estimativa conservadora;
+não elimina a diferença entre memória lógica e RSS.
+
+Metadata não comprova as dimensões intrínsecas de um Blob. O browser pode alocar
+memória de decode antes de redimensionar/rejeitar uma imagem incompatível.
+Validar cabeçalhos/limites intrínsecos e orçamento global de filas/cache permanece
+necessário antes do rollout. Não tratar limite de Blob como proteção completa
+contra imagens de descompressão excessiva.
+
 `stagePreparedSource` valida/consome geração antes da factory e retira a fonte
 anterior, mesmo se layout/padding/bytes falharem. Geração inválida/atrasada não
 executa a factory nem retira fonte atual. Factory que falha consome a geração;
@@ -181,8 +269,11 @@ pacote, três tiles, metadata e pico dos filtros, até 96 MiB. Não alocar pacot
 grande só para descobrir depois que excede o limite.
 
 Esses valores são contabilidade lógica conservadora por fase, **não RSS nem
-teto global do app**. Não incluem buffers externos de Canvas/Blob, cópias JS de
-assets/pacote/resultado, páginas WASM já crescidas, filas ou outros Workers.
+teto global do app**. Cobrem somente os buffers explicitamente cobrados em cada
+caminho: não incluem armazenamento de Blob, buffers implícitos do decoder/Canvas,
+metadata/URLs, páginas WASM já crescidas, filas ou outros Workers. No caminho
+RGBA, assets/pacote/resultado JS continuam externos ao orçamento do núcleo;
+no caminho de mídia, assets e pacote JS têm a cobrança adicional descrita acima.
 Orçamento agregado, leases de cache e pressão de memória continuam abertos.
 
 ## 6. Validação e próxima integração
@@ -195,9 +286,15 @@ resposta tardia, retry, invalidate/dispose e reinício de Worker. O diagnóstico
 Wails/WebView2 tem entrada/resultado RGBA fixos e confirma reuso com Fill/tile.
 
 Ainda não liga esta sessão a `renderLayerStyle`, exportação ou preview normal.
-Padding/layout de staging já executam no Worker; consumidor ainda normaliza e
-valida plano, decodifica via loader e copia original. Falta adaptar decode
-raster/texto/assets ao Worker, controlar fila/orçamento agregado, medir decode
+Padding/layout e decode raster/texto/assets já executam no Worker na alternativa
+`composeMedia`. O caminho RGBA continua compatível. Testes Node de mídia usam
+doubles explícitos de Canvas/decoder e Worker/WASM reais; não provam fidelidade
+do decoder browser. O diagnóstico Wails/WebView2 usa **PNG real**, confere bytes
+opacos fixos, padding, tiles/reuso, mudança de padrão e texto não vazio. Isso não
+comprova paridade de fontes/antialiasing entre plataformas.
+
+Falta output encode, coalescência/prioridade, cache/orçamento agregado, limites
+intrínsecos das imagens e integração/medição do serviço real. Medir decode
 → preparação → Worker → encode → handoff e verificar regressões na interface.
 Não basta os testes desta fatia para fechar C2; pilha/backdrop/transforms são
 C3, canvas único é C4. Nenhuma aceleração/FPS foi medido nesta mudança.

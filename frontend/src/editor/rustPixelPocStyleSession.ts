@@ -1,6 +1,10 @@
 import type { LayerStyleRaster } from './layerStyleCompositor.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
-import { copyRustStyleSource, describeRustStyleSource, prepareRustStyleJob, type RustPixelPocStyleInput, type RustPixelPocStyleJob } from './rustPixelPocStylePreparation.ts'
+import { copyRustStyleSource, describeRustStyleSource, prepareRustStyleJob, prepareRustStyleSourceLayout,
+  type RustPixelPocStyleInput, type RustPixelPocStyleSourceInput, type RustPixelPocStyleSourceLayout } from './rustPixelPocStylePreparation.ts'
+import { prepareRustStyleAssets } from './rustPixelPocMedia.ts'
+import type { LayerStyleWorkerSource } from './layerStyleRenderProtocol.ts'
+import type { RustPixelPocRegion } from './rustPixelPocRuntime.ts'
 import { RustPixelPocTileGate } from './rustPixelPocTileGate.ts'
 import type { RustPixelPocRequest, RustPixelPocResponse } from './rustPixelPocProtocol.ts'
 
@@ -15,6 +19,12 @@ export class RustPixelPocStyleCancelledError extends Error {
 
 export interface RustPixelPocStyleRequest extends RustPixelPocStyleInput {
   source: () => Promise<LayerStyleRaster>
+}
+
+export interface RustPixelPocStyleMediaRequest extends RustPixelPocStyleSourceInput {
+  source: () => Promise<LayerStyleWorkerSource>
+  patterns?: Record<string, Blob>
+  region?: RustPixelPocRegion
 }
 
 /** One consumer and one exclusive Worker source slot. */
@@ -33,18 +43,23 @@ export class RustPixelPocStyleSession {
     return response
   }
 
-  private prepareSource(job: RustPixelPocStyleJob, load: () => Promise<LayerStyleRaster>) {
+  private prepareSource(job: RustPixelPocStyleSourceLayout,
+    load: () => Promise<LayerStyleRaster | LayerStyleWorkerSource>, media = false) {
     const generation = this.gate.beginSourceChange()
-    const token = Symbol(job.sourceKey)
+    const key = `${media ? 'media' : 'raw'}:${job.sourceKey}`
+    const token = Symbol(key)
     const promise: Promise<Staged> = (async () => {
       const barrier = this.checked(await this.send({ type: 'invalidate-source', generation }))
       if (barrier.type !== 'source-invalidated' || barrier.generation !== generation) throw new RustPixelPocError('wasm-failure')
       if (this.disposed || this.entry?.token !== token) throw new RustPixelPocStyleCancelledError()
       const source = await load()
       if (this.disposed || this.entry?.token !== token) throw new RustPixelPocStyleCancelledError()
-      const rgba = copyRustStyleSource(source, job)
-      const staged = this.checked(await this.send({ type: 'stage-style-source', rgba: rgba.buffer,
-        input: describeRustStyleSource(job), generation }, [rgba.buffer]))
+      const input = describeRustStyleSource(job)
+      const staged = this.checked(await (() => {
+        if (media) return this.send({ type: 'stage-style-media', source: source as LayerStyleWorkerSource, input, generation })
+        const rgba = copyRustStyleSource(source as LayerStyleRaster, job)
+        return this.send({ type: 'stage-style-source', rgba: rgba.buffer, input, generation }, [rgba.buffer])
+      })())
       if (this.disposed || this.entry?.token !== token) throw new RustPixelPocStyleCancelledError()
       if (staged.type !== 'source-staged' || staged.prepared?.sourceKey !== job.sourceKey ||
           staged.prepared.width !== job.width || staged.prepared.height !== job.height ||
@@ -53,7 +68,7 @@ export class RustPixelPocStyleSession {
           !this.gate.adoptSource(staged)) throw new RustPixelPocError('wasm-failure')
       return staged
     })()
-    const entry = { key: job.sourceKey, token, promise }
+    const entry = { key, token, promise }
     this.entry = entry
     void promise.catch(() => { if (this.entry === entry) this.entry = null })
     return entry
@@ -64,10 +79,35 @@ export class RustPixelPocStyleSession {
     const revision = ++this.revision
     this.gate.beginViewChange()
     const job = prepareRustStyleJob(request)
-    const entry = this.entry?.key === job.sourceKey ? this.entry : this.prepareSource(job, request.source)
+    const entry = this.entry?.key === `raw:${job.sourceKey}` ? this.entry : this.prepareSource(job, request.source)
+    return this.finish(job, entry, revision, staged => this.send({ type: 'style-stages-staged-region',
+      sourceId: staged.sourceId, region: job.region, plan: job.plan }))
+  }
+
+  async composeMedia(request: RustPixelPocStyleMediaRequest) {
+    if (this.disposed) throw new RustPixelPocError('wasm-unavailable')
+    const revision = ++this.revision
+    this.gate.beginViewChange()
+    const layout = prepareRustStyleSourceLayout(request)
+    const region = request.region ? { ...request.region } : { x: 0, y: 0, width: layout.width, height: layout.height }
+    if (![region.x, region.y, region.width, region.height].every(Number.isSafeInteger) ||
+        region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
+        region.x + region.width > layout.width || region.y + region.height > layout.height) throw new RustPixelPocError('invalid-input')
+    const patterns = { ...request.patterns }
+    prepareRustStyleAssets(layout, patterns)
+    const input = { sourceIdentity: layout.sourceIdentity, sourceWidth: layout.sourceWidth, sourceHeight: layout.sourceHeight,
+      styles: layout.styles, globalLight: layout.light, resolutionScale: layout.scale, quality: layout.quality }
+    const entry = this.entry?.key === `media:${layout.sourceKey}` ? this.entry : this.prepareSource(layout, request.source, true)
+    return this.finish({ ...layout, region }, entry, revision, staged => this.send({ type: 'style-media-staged-region',
+      sourceId: staged.sourceId, input, region, patterns }))
+  }
+
+  private async finish(job: RustPixelPocStyleSourceLayout & { region: RustPixelPocRegion },
+    entry: NonNullable<RustPixelPocStyleSession['entry']>, revision: number,
+    execute: (source: Staged) => ReturnType<RustPixelPocSend>) {
     const staged = await entry.promise
     if (revision !== this.revision || this.disposed || this.entry !== entry) throw new RustPixelPocStyleCancelledError()
-    const execution = this.send({ type: 'style-stages-staged-region', sourceId: staged.sourceId, region: job.region, plan: job.plan })
+    const execution = execute(staged)
     const token = this.gate.captureTile('style', execution.id)
     const result = await execution
     if (revision !== this.revision || this.disposed || this.entry !== entry) throw new RustPixelPocStyleCancelledError()

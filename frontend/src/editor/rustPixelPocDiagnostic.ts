@@ -5,6 +5,7 @@ import { RustPixelPocTileGate } from './rustPixelPocTileGate.ts'
 import { styledRasterPreviewSnapshot } from './rustPixelPocStyledSource.ts'
 import { normalizeLayerStyleConfig } from './layerStyles.ts'
 import { RustPixelPocStyleSession } from './rustPixelPocStyleSession.ts'
+import { DEFAULT_TEXT_LAYER } from './text.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
@@ -379,6 +380,51 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
       throw new Error('Sessão Rust não reutilizou a fonte original entre estilos e tiles.')
     }
     await session.dispose()
+    const mediaSession = new RustPixelPocStyleSession(send, gate)
+    async function pngFixture(rgba: number[]) {
+      const canvas = new OffscreenCanvas(1, 1)
+      try {
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('Canvas indisponível no diagnóstico de mídia.')
+        context.putImageData(new ImageData(new Uint8ClampedArray(rgba), 1, 1), 0, 0)
+        return await canvas.convertToBlob({ type: 'image/png' })
+      } finally { canvas.width = 1; canvas.height = 1 }
+    }
+    const mediaBlob = await pngFixture([40, 60, 80, 255])
+    let mediaLoads = 0
+    const mediaRequest = { ...preparedRequest, sourceIdentity: 'png-diagnostic-v1', source: async () => {
+      mediaLoads++; return { type: 'raster' as const, blob: mediaBlob }
+    } }
+    const media = await mediaSession.composeMedia(mediaRequest)
+    if (media.width !== prepared.width || media.offsetX !== prepared.offsetX ||
+        [...new Uint8Array(media.rgba)].join(',') !== '255,0,0,255,0,0,255,128') {
+      throw new Error('Decode PNG no Worker Rust divergiu da fixture RGBA.')
+    }
+    const mediaTile = await mediaSession.composeMedia({ ...mediaRequest,
+      styles: normalizeLayerStyleConfig({ ...preparedStyles, fillOpacity: 100 }), region: { x: 1, y: 0, width: 1, height: 1 } })
+    if (mediaTile.sourceId !== media.sourceId || mediaLoads !== 1 ||
+        [...new Uint8Array(mediaTile.rgba)].join(',') !== '20,30,168,255') {
+      throw new Error('Worker Rust não reutilizou fonte PNG entre estilos/tiles.')
+    }
+    const assetBlob = await pngFixture([255, 0, 0, 255])
+    const mediaPattern = { id: 'diagnostic-pattern', name: 'diagnostic', width: 1, height: 1,
+      mimeType: 'image/png', sourceUrl: 'data:image/png;base64,AA==' }
+    const assetRequest = { ...mediaRequest, styles: normalizeLayerStyleConfig({ fillOpacity: 0,
+      effects: [{ type: 'pattern-overlay', pattern: mediaPattern, opacity: 100 }] }) }
+    const red = await mediaSession.composeMedia({ ...assetRequest, patterns: { [mediaPattern.id]: assetBlob } })
+    const green = await mediaSession.composeMedia({ ...assetRequest, patterns: { [mediaPattern.id]: await pngFixture([0, 255, 0, 255]) } })
+    if (red.sourceId !== green.sourceId || [...new Uint8Array(red.rgba)].join(',') !== '255,0,0,255' ||
+        [...new Uint8Array(green.rgba)].join(',') !== '0,255,0,255') {
+      throw new Error('Worker Rust não atualizou pixels do padrão sem cache de resultado.')
+    }
+    const text = await mediaSession.composeMedia({ sourceIdentity: 'text-diagnostic-v1', sourceWidth: 120, sourceHeight: 58,
+      styles: normalizeLayerStyleConfig({}), globalLight: { angle: 30, altitude: 30 }, source: async () => ({
+        type: 'text' as const, text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' }, drawScaleX: 1, drawScaleY: 1
+      }) })
+    if (!new Uint8Array(text.rgba).some((value, index) => index % 4 === 3 && value > 0)) {
+      throw new Error('Worker Rust recebeu fonte de texto vazia.')
+    }
+    await mediaSession.dispose()
     const disposed = await send({ type: 'dispose' })
     if (disposed.type !== 'disposed') throw new Error('Worker Rust não descartou o estado.')
     return { elapsedMs: performance.now() - started, wasmBytes }

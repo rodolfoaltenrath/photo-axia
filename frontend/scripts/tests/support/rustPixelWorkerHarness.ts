@@ -4,8 +4,8 @@ import type { RustPixelPocRequest, RustPixelPocResponse } from '../../../src/edi
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
 /** Shared harness runs the real TS Worker behind the Node self/postMessage bridge. */
-export function createRustPixelWorkerHarness() {
-  const worker = new Worker(new URL('../../rustPixelPoc.node-worker.mjs', import.meta.url))
+export function createRustPixelWorkerHarness(options: { mediaFixtures?: boolean } = {}) {
+  const worker = new Worker(new URL('../../rustPixelPoc.node-worker.mjs', import.meta.url), { workerData: options })
   const pending = new Map<number, { resolve: (value: RustPixelPocResponse) => void;
     reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }>()
   let nextId = 0
@@ -23,6 +23,7 @@ export function createRustPixelWorkerHarness() {
   worker.on('error', rejectPending)
   worker.on('exit', code => rejectPending(new Error(`Worker encerrado: ${code}`)))
   return {
+    cancel(id: number) { worker.postMessage({ type: 'cancel', id }) },
     send(request: WithoutId<RustPixelPocRequest>, transfers: ArrayBuffer[] = []) {
       const id = ++nextId
       const promise = new Promise<RustPixelPocResponse>((resolve, reject) => {

@@ -178,6 +178,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     width: number; height: number } | null = null
   let latestGeneration = 0
   let reservedGeneration: number | null = null
+  let preparation: symbol | null = null
   let disposed = false
 
   function validateNextGeneration(generation: number) {
@@ -416,14 +417,22 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     }
   }
 
-  function stagePreparedSource(prepare: () => { rgba: Uint8Array; width: number; height: number }, generation: number) {
+  function beginPreparation(generation: number) {
     if (disposed) throw new RustPixelPocError('wasm-unavailable')
     if (reservedGeneration === null || generation !== reservedGeneration) validateNextGeneration(generation)
     // Invalidate before preparation, even if the factory fails.
     latestGeneration = generation
     reservedGeneration = null
     discardStaged()
-    const { rgba: source, width, height } = prepare()
+    const token = Symbol()
+    preparation = token
+    return () => {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (preparation !== token || latestGeneration !== generation) throw new RustPixelPocError('invalid-input')
+    }
+  }
+
+  function uploadPreparedSource(source: Uint8Array, width: number, height: number, generation: number) {
     validateSource(source, width, height)
     const started = performance.now()
     const pointer = exports.axia_poc_alloc(source.byteLength)
@@ -437,11 +446,36 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     }
     const sourceId = ++nextSourceId
     staged = { id: sourceId, generation, pointer, length: source.byteLength, width, height }
+    preparation = null
     return { sourceId, generation, stagingMs: performance.now() - started }
+  }
+
+  function stagePreparedSource(prepare: () => { rgba: Uint8Array; width: number; height: number }, generation: number) {
+    const ensureCurrent = beginPreparation(generation)
+    try {
+      const { rgba, width, height } = prepare()
+      ensureCurrent()
+      return uploadPreparedSource(rgba, width, height, generation)
+    } finally { if (latestGeneration === generation) preparation = null }
   }
 
   return {
     stagePreparedSource,
+    async stagePreparedSourceAsync(prepare: (ensureCurrent: () => void) => Promise<{
+      rgba: Uint8Array; width: number; height: number
+    }>, generation: number) {
+      const ensureCurrent = beginPreparation(generation)
+      try {
+        const { rgba, width, height } = await prepare(ensureCurrent)
+        ensureCurrent()
+        return uploadPreparedSource(rgba, width, height, generation)
+      } finally { if (latestGeneration === generation) preparation = null }
+    },
+    sourceMetadata(sourceId: number) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
+      return { width: staged.width, height: staged.height, generation: staged.generation }
+    },
     render(source: Uint8Array, fillOpacity: number) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       if (!source.byteLength || source.byteLength > MAX_POC_BYTES || source.byteLength % 4 !== 0 ||
@@ -510,6 +544,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       validateNextGeneration(generation)
       latestGeneration = generation
+      preparation = null
       discardStaged()
       reservedGeneration = generation
     },
@@ -727,6 +762,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       if (disposed) return
       disposed = true
       reservedGeneration = null
+      preparation = null
       discardStaged()
     }
   }

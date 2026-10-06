@@ -60,7 +60,7 @@ export function prepareRustStyleJob(input: RustPixelPocStyleInput) {
 export type RustPixelPocStyleJob = ReturnType<typeof prepareRustStyleJob>
 export type RustPixelPocStyleSourceLayout = ReturnType<typeof prepareRustStyleSourceLayout>
 
-export function describeRustStyleSource(job: RustPixelPocStyleJob): RustPixelPocStyleSourceInput {
+export function describeRustStyleSource(job: RustPixelPocStyleSourceLayout): RustPixelPocStyleSourceInput {
   const pipeline = buildLayerStylePipeline(job.styles)
   const effects: Record<string, unknown>[] = []
   // Padding never needs decoded assets or their encoded URLs.

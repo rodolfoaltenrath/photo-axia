@@ -9,9 +9,13 @@ import type { RustPixelPocStroke } from './rustPixelPocStroke.ts'
 import type { RustPixelPocBevel } from './rustPixelPocBevel.ts'
 import type { RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
 import type { RustPixelPocStyleSourceInput } from './rustPixelPocStylePreparation.ts'
+import type { LayerStyleWorkerSource } from './layerStyleRenderProtocol.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
+  | { type: 'stage-style-media'; id: number; source: LayerStyleWorkerSource; input: RustPixelPocStyleSourceInput; generation: number }
+  | { type: 'style-media-staged-region'; id: number; sourceId: number; input: RustPixelPocStyleSourceInput;
+      region: RustPixelPocRegion; patterns: Record<string, Blob> }
   | { type: 'stage-style-source'; id: number; rgba: ArrayBuffer; input: RustPixelPocStyleSourceInput; generation: number }
   | { type: 'style-stages-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion; plan: RustPixelPocStagesPlan }
   | { type: 'bevel-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;

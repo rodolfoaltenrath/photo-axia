@@ -10,6 +10,47 @@ const region = { x: 0, y: 0, width: 1, height: 1 }
 const pixels = new Uint8Array([75, 20, 30, 101])
 const invalid = (error: unknown) => error instanceof RustPixelPocError && error.code === 'invalid-input'
 
+test('Preparação assíncrona não sobrevive à invalidação, substituição ou dispose', async () => {
+  for (const action of ['invalidate', 'replace', 'dispose'] as const) {
+    const runtime = await createRustPixelPocRuntime(wasm)
+    let release!: () => void
+    const wait = new Promise<void>(resolve => { release = resolve })
+    try {
+      const old = runtime.stageSource(pixels, 1, 1, 1)
+      const pending = runtime.stagePreparedSourceAsync(async check => {
+        await wait; check(); return { rgba: pixels, width: 1, height: 1 }
+      }, 2)
+      assert.throws(() => runtime.sourceMetadata(old.sourceId), invalid)
+      const newer = action === 'replace' ? runtime.stageSource(new Uint8Array([1, 2, 3, 255]), 1, 1, 3) : null
+      if (action === 'invalidate') runtime.invalidateSource(3)
+      if (action === 'dispose') runtime.dispose()
+      const rejected = assert.rejects(pending, (error: unknown) => error instanceof RustPixelPocError &&
+        error.code === (action === 'dispose' ? 'wasm-unavailable' : 'invalid-input'))
+      release(); await rejected
+      if (newer) assert.deepEqual(runtime.renderStagedRegion(newer.sourceId, region, 100).rgba, new Uint8Array([1, 2, 3, 255]))
+      if (action === 'invalidate') {
+        const next = runtime.stageSource(pixels, 1, 1, 3)
+        assert.deepEqual(runtime.sourceMetadata(next.sourceId), { width: 1, height: 1, generation: 3 })
+      }
+    } finally { release(); runtime.dispose() }
+  }
+})
+
+test('Falha de preparação assíncrona consome geração; duplicata falha antes de chamar decoder', async () => {
+  const runtime = await createRustPixelPocRuntime(wasm)
+  let calls = 0
+  try {
+    runtime.invalidateSource(1)
+    await assert.rejects(runtime.stagePreparedSourceAsync(async () => { calls++; throw new Error('decode-failed') }, 1), /decode-failed/)
+    await assert.rejects(runtime.stagePreparedSourceAsync(async () => {
+      calls++; return { rgba: pixels, width: 1, height: 1 }
+    }, 1), invalid)
+    assert.equal(calls, 1)
+    const next = await runtime.stagePreparedSourceAsync(async () => ({ rgba: pixels, width: 1, height: 1 }), 2)
+    assert.deepEqual(runtime.renderStagedRegion(next.sourceId, region, 100).rgba, pixels)
+  } finally { runtime.dispose() }
+})
+
 test('Invalidação reserva uma geração para seu upload, sem aceitar duplicatas', async () => {
   const runtime = await createRustPixelPocRuntime(wasm)
   try {
