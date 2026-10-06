@@ -2160,3 +2160,70 @@ Próximo passo é ligar a fila ao preview opt-in, com preparo abortável,
 admissão antes de fetch, lifecycle/fallback/handoff e smoke multicamadas.
 Prioridades, cache/eviction, limites intrínsecos e medições/QA continuam
 pendentes. C0/C1/C2 permanecem abertos; C3/C4 não mudaram.
+
+## 25ª fatia — Preview multicamadas, preparação deferida e circuito comum
+
+O preview opt-in agora usa `createRustPixelPocStyleScheduler`: camadas distintas
+compartilham uma instância, sem um Worker por camada. Miniaturas/exportação,
+texto nativo, composição DOM, modelo editorial e caminho padrão permanecem iguais.
+Factory compartilhada é lazy; retirar A não fecha o serviço de B/C. Retirar
+o último consumidor/resetar documento termina a instância; abertura tardia não
+adota contexto antigo e resultados já entregues conservam suas leases.
+
+`renderPrepared` coloca o fetch/preparo na fila. Geometria, PNG, conflitos de
+assets e metadados acima do limite falham antes de factory/fetch. Metadados
+usam o mesmo contador do serviço; 128 MiB de reserva lógica de mídia codificada
+precedem o loader exclusivo, substituídos pelos bytes reais após preparo.
+Fonte staged, fila, resultados e fase ativa entram nas conferências. Leitura
+em stream interrompe/cancela corpo acima do limite, com ou sem header correto.
+Abort libera o reader; resposta tardia não abre Worker nem publica.
+
+Cancelamento rejeita o consumidor cedo, mas fila espera drenagem antes de
+outro preparo/render. Timeout de preparação torna a instância terminal para
+não sobrepor novo loader a um antigo que ignora abort; dispose não espera esse
+loader. Código de timeout continua `wasm-unavailable` mesmo se abort rejeitar
+sincronicamente. Observador de métricas não pode quebrar render/release.
+
+Falha local de input/orçamento abre circuito da camada e mantém outras no Rust.
+Indisponibilidade WASM/deadline fecha o agendador e abre circuito comum; pedidos
+válidos cancelados por esse fechamento têm fallback, não desaparecem silenciosamente.
+Leases/bytes de contextos antigos descontam os limites da nova instância;
+limites conservadores não crescem automaticamente após liberar lease antiga.
+
+### Validação
+
+- `npm test`: **543** casos frontend, com checagem de tipos. São **22** casos
+  do adaptador de preview e **seis** do leitor de mídia, incluindo circuitos
+  locais/comum, teardown parcial, identidade/remount, orçamento entre contextos,
+  factory compartilhada, metadados enormes, stream/header/abort e resposta tardia.
+- `npm run test:rust-poc`: **345** casos — cinco standalone, um smoke Worker
+  e **339** casos nos scripts. A suíte do agendador agora tem **25** casos,
+  incluindo preparo serializado, admissão antes do loader, drenagem após cancel,
+  dispose/timeout de loader que não termina e observador com erro.
+- As três suítes de preview/mídia/agendador (**53** casos) passaram **cinco vezes
+  consecutivas**. Worker/WASM são reais nos scripts; mídia/Canvas/encoder Node
+  permanecem doubles explícitos. Repetições não são benchmarks de desempenho.
+- `cargo test --offline --locked`: **61** nativos; `go test ./...` passou.
+  ABI, algoritmos, goldens e versões da stack não mudaram.
+- Build e integridade do bundle passaram; runtime continua lazy/opt-in, sem
+  preload experimental no HTML padrão. WASM segue com **100.281 bytes**,
+  `axia_pixel_core-674Kws7T.wasm`; Workers POC/normal continuam
+  `rustPixelPoc.worker-CAO2pTod.js` e `layerStyleCompositor.worker-BALgYBwV.js`.
+  Aviso existente de chunk >500 kB permanece.
+- Smoke Wails/WebView2 com Rust duplicou a camada pela UI até **três consumidores**,
+  exigiu **três leases**, **uma criação de Worker/pico de um**, removeu um consumidor
+  mantendo os outros, editou estilo sem mudar o raster intocado e terminou com
+  **zero consumidores/leases/bytes/Workers adotados**. A primeira aplicação
+  mudou **3.176** pixels visíveis e manteve o buffer anterior durante o handoff.
+- Smoke com WASM bloqueado repetiu o fluxo multicamadas: uma tentativa experimental,
+  fallback nas camadas, circuito comum e **zero Workers Rust**. Smoke normal e
+  sonda ABI/mídia/PNG Wails também passaram. Contagem de Worker observa sua API,
+  não processos físicos, RSS ou uma garantia global do aplicativo.
+- Executáveis dos smokes são temporários; não foi gerado instalador/portável
+  de release. Capturas sintéticas não substituem QA de documentos reais.
+
+Contrato atualizado no [preview V1](contrato-preview-estilos-rust-v1.md) e na
+seção 8 do [agendador V1](contrato-agendador-estilos-rust-v1.md). Faltam
+prioridades/visibilidade, cache/assets, limites intrínsecos, orçamento entre
+janelas e medições/QA antes do rollout. C0/C1/C2 continuam abertos; C3/C4 ainda
+não substituíram pilha/DOM/exportação.

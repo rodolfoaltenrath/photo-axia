@@ -1,11 +1,19 @@
 import wasmUrl from '../generated/axia_pixel_core.wasm?url'
 import { RustPixelPocError } from '../editor/rustPixelPocError.ts'
 import { RustPixelPocStyleService, type RustPixelPocServiceLimits } from '../editor/rustPixelPocStyleService.ts'
+import { RustPixelPocStyleScheduler, type RustPixelPocSchedulerLimits } from '../editor/rustPixelPocStyleScheduler.ts'
 import { RustPixelPocWorkerClient, type RustPixelPocWorkerPort } from '../editor/rustPixelPocWorkerClient.ts'
 
 /** Lazy, local WASM only; not enabled in the editor's normal render path. */
 export function createRustPixelPocStyleService(limits: RustPixelPocServiceLimits = {}) {
-  return new RustPixelPocStyleService(async signal => {
+  return new RustPixelPocStyleService(connectRustStyleWorker, limits)
+}
+
+export function createRustPixelPocStyleScheduler(limits: RustPixelPocSchedulerLimits = {}, onChange?: () => void) {
+  return new RustPixelPocStyleScheduler(connectRustStyleWorker, limits, onChange)
+}
+
+async function connectRustStyleWorker(signal: AbortSignal) {
     let client: RustPixelPocWorkerClient | undefined
     const abort = () => { void client?.terminate() }
     signal.addEventListener('abort', abort, { once: true })
@@ -36,5 +44,4 @@ export function createRustPixelPocStyleService(limits: RustPixelPocServiceLimits
       await client?.terminate()
       throw new RustPixelPocError('wasm-unavailable')
     } finally { signal.removeEventListener('abort', abort) }
-  }, limits)
 }

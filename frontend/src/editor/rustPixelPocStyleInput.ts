@@ -34,7 +34,7 @@ export function rustPixelPocServiceLimits(input: RustPixelPocServiceLimits = {})
   return limits
 }
 
-function metadataBytes(value: unknown) {
+export function rustPixelPocStyleMetadataBytes(value: unknown) {
   let bytes = 0, nodes = 0
   function visit(item: unknown, depth: number) {
     if (++nodes > 100_000 || depth > 16) throw new RustPixelPocError('memory-limit')
@@ -63,7 +63,7 @@ export function snapshotRustPixelPocStyleRequest(input: RustPixelPocServiceReque
   rustStylePngLayout(region.width, region.height, layout.width * layout.height * 4 + assets.decodedBytes)
   const metadata = { sourceIdentity: input.sourceIdentity, styles: layout.styles, globalLight: layout.light,
     text: input.source.type === 'text' ? input.source.text : null, region }
-  const bytes = metadataBytes(metadata) + metadataBytes(Object.keys(patterns))
+  const bytes = rustPixelPocStyleMetadataBytes(metadata) + rustPixelPocStyleMetadataBytes(Object.keys(patterns))
   if (bytes > METADATA_BYTES) throw new RustPixelPocError('memory-limit')
   const copy = structuredClone(metadata)
   const source: LayerStyleWorkerSource = input.source.type === 'raster' ? { type: 'raster', blob: input.source.blob } :

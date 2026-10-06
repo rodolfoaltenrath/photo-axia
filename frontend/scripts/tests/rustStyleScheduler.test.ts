@@ -333,3 +333,101 @@ test('Watchdog retira encoder travado e continua a fila em novo Worker', async (
     await failed; const lease = await b; assert.equal(workers.length, 2); lease.release()
   } finally { await scheduler.dispose(); await Promise.all(workers.map(worker => worker.close())) }
 })
+
+test('Preparação ocorre depois da admissão e é serializada entre consumidores', async () => {
+  const f = fixture()
+  let unlock = () => {}, started = () => {}
+  const gate = new Promise<void>(resolve => { unlock = resolve }), entered = new Promise<void>(resolve => { started = resolve })
+  const preparations: string[] = []
+  try {
+    const a = f.scheduler.renderPrepared('A', { inputBytes: 4096, prepare: async () => { preparations.push('A'); started(); await gate; return input() } })
+    await entered
+    const b = f.scheduler.renderPrepared('B', { inputBytes: 4096, prepare: async () => { preparations.push('B'); return input([1, 2, 3, 255]) } })
+    assert.equal(f.connections(), 0); assert.deepEqual(preparations, ['A'])
+    assert.equal(f.scheduler.stats.preparing, 1); assert.equal(f.scheduler.stats.pending, 1)
+    assert.equal(f.scheduler.stats.reservedBytes, 128 * 1024 * 1024 + (4096 + 2) * 2)
+    unlock(); const leases = await Promise.all([a, b])
+    assert.deepEqual(preparations, ['A', 'B']); assert.equal(f.connections(), 1)
+    assert.deepEqual((await decoded(leases[1]!.result.blob)).rgba, [1, 2, 3, 255])
+    for (const lease of leases) lease.release()
+  } finally { unlock(); await f.close() }
+})
+
+test('Cancelar preparação aborta loader, mas espera drenagem antes de preparar B', async () => {
+  const f = fixture()
+  let unlock = () => {}, started = () => {}, signal: AbortSignal | undefined, preparedB = false
+  const gate = new Promise<void>(resolve => { unlock = resolve }), entered = new Promise<void>(resolve => { started = resolve })
+  try {
+    const cancelled = assert.rejects(f.scheduler.renderPrepared('A', { inputBytes: 4096,
+      prepare: async abort => { signal = abort; started(); await gate; return input() } }), RustPixelPocStyleCancelledError)
+    await entered
+    const b = f.scheduler.renderPrepared('B', { inputBytes: 4096, prepare: async () => { preparedB = true; return input() } })
+    f.scheduler.cancel('A'); await cancelled; await tick()
+    assert.equal(signal?.aborted, true); assert.equal(preparedB, false); assert.equal(f.connections(), 0)
+    unlock(); const lease = await b; lease.release(); assert.equal(preparedB, true)
+  } finally { unlock(); await f.close() }
+})
+
+test('Dispose não espera preparação que ignora abort; resultado tardio não abre Worker', async () => {
+  const f = fixture()
+  let unlock!: (request: RustPixelPocServiceRequest) => void, started = () => {}, signal: AbortSignal | undefined
+  const gate = new Promise<RustPixelPocServiceRequest>(resolve => { unlock = resolve }), entered = new Promise<void>(resolve => { started = resolve })
+  try {
+    const cancelled = assert.rejects(f.scheduler.renderPrepared('A', { inputBytes: 4096,
+      prepare: abort => { signal = abort; started(); return gate } }), RustPixelPocStyleCancelledError)
+    await entered
+    f.scheduler.cancel('A'); await cancelled
+    await f.scheduler.dispose(); assert.equal(signal?.aborted, true); assert.equal(f.scheduler.stats.active, 0)
+    unlock(input()); await tick(); assert.equal(f.connections(), 0); assert.equal(f.scheduler.stats.reservedBytes, 0)
+  } finally { unlock(input()); await f.close() }
+})
+
+test('Watchdog de preparação fecha instância para não sobrepor loader tardio com nova preparação', async () => {
+  let connectCalls = 0, prepareCalls = 0, signal: AbortSignal | undefined
+  const scheduler = new RustPixelPocStyleScheduler(async () => { connectCalls++; throw new Error('must not connect') }, { taskTimeoutMs: 25 })
+  try {
+    const failed = assert.rejects(scheduler.renderPrepared('A', { inputBytes: 4096,
+      prepare: abort => { signal = abort; return new Promise(() => {}) } }), code('wasm-unavailable'))
+    const b = assert.rejects(scheduler.renderPrepared('B', { inputBytes: 4096,
+      prepare: async () => { prepareCalls++; return input() } }), code('wasm-unavailable'))
+    await Promise.all([failed, b]); await tick()
+    assert.equal(signal?.aborted, true); assert.equal(scheduler.stats.disposed, true)
+    assert.equal(connectCalls, 0); assert.equal(prepareCalls, 0)
+    await assert.rejects(scheduler.renderPrepared('C', { inputBytes: 4096, prepare: async () => input() }), code('wasm-unavailable'))
+  } finally { await scheduler.dispose() }
+})
+
+test('Reserva de preparação e metadados inválidos rejeitam antes de chamar loader', async () => {
+  let calls = 0
+  const scheduler = new RustPixelPocStyleScheduler(async () => { throw new Error('must not connect') }, { maxResidentBytes: workingBytes })
+  const prepare = async () => { calls++; return input() }
+  try {
+    await assert.rejects(scheduler.renderPrepared('A', { inputBytes: 4096, prepare }), code('memory-limit'))
+    for (const inputBytes of [-1, 1.5, NaN, 4 * 1024 * 1024 + 1]) {
+      await assert.rejects(scheduler.renderPrepared('A', { inputBytes, prepare }), code('invalid-input'))
+    }
+    assert.equal(calls, 0); assert.equal(scheduler.stats.reservedBytes, 0)
+  } finally { await scheduler.dispose() }
+})
+
+test('Observador que lança erro não interrompe agendador nem perde release', async () => {
+  const harness = createRustPixelWorkerHarness({ mediaFixtures: true })
+  const scheduler = new RustPixelPocStyleScheduler(async () => {
+    const client = new RustPixelPocWorkerClient(harness.port)
+    await client.send({ type: 'init', wasm: wasm.slice(0) }); return client
+  }, {}, () => { throw new Error('observer-failure') })
+  try {
+    const lease = await scheduler.renderPrepared('A', { inputBytes: 4096, prepare: async () => input() })
+    assert.equal(scheduler.stats.leases, 1); lease.release(); lease.release(); assert.equal(scheduler.stats.leases, 0)
+  } finally { await scheduler.dispose(); await harness.close() }
+})
+
+test('Timeout preserva código de backend mesmo quando abort do loader rejeita sincronicamente', async () => {
+  const scheduler = new RustPixelPocStyleScheduler(async () => { throw new Error('must not connect') }, { taskTimeoutMs: 25 })
+  try {
+    await assert.rejects(scheduler.renderPrepared('A', { inputBytes: 4096, prepare: signal => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+    }) }), code('wasm-unavailable'))
+    assert.equal(scheduler.stats.disposed, true)
+  } finally { await scheduler.dispose() }
+})

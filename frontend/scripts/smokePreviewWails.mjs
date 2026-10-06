@@ -168,6 +168,24 @@ try {
   }
   const environment = await evaluate('({ devicePixelRatio, hardwareConcurrency: navigator.hardwareConcurrency })')
   await waitFor(evaluate, 'Boolean(document.querySelector(".project-home"))', Boolean, 'Tela inicial')
+  if (rustMode) {
+    await evaluate(`(() => {
+      const Original = window.Worker
+      const stats = window.__axiaRustWorkers = { created: 0, alive: 0, peak: 0 }
+      window.Worker = class extends Original {
+        constructor(url, options) {
+          super(url, options)
+          this.tracked = String(url).includes('rustPixelPoc.worker')
+          if (this.tracked) { stats.created++; stats.alive++; stats.peak = Math.max(stats.peak, stats.alive) }
+        }
+        terminate() {
+          if (this.tracked) { this.tracked = false; stats.alive-- }
+          return super.terminate()
+        }
+      }
+      return true
+    })()`)
+  }
   if (rustFallback) {
     await evaluate(`(() => {
       const original = window.fetch.bind(window)
@@ -356,6 +374,76 @@ try {
     ? await evaluate(`(${runPreviewWailsProbe.toString()})(${JSON.stringify(layerId)}, ${cycles})`)
     : null
   const frameMetrics = frameSamples?.map(summarizePreviewFrames)
+  let rustMultilayer = null
+  if (rustMode && !benchmarkMode) {
+    const duplicated = await evaluate(`(async () => {
+      for (let index = 0; index < 2; index++) {
+        const button = document.querySelector('button[title="Duplicar camada (Ctrl+J)"]')
+        if (!button || button.disabled) return false
+        button.click()
+        await new Promise(requestAnimationFrame)
+      }
+      return true
+    })()`)
+    assert.equal(duplicated, true, 'Não foi possível duplicar duas camadas estilizadas.')
+    const multicamadas = await waitFor(evaluate, `(() => {
+      const stats = JSON.parse(document.documentElement.dataset.axiaRustStylePreview || 'null')
+      const layers = [...document.querySelectorAll('.document-layer')].map(root => {
+        const image = root.querySelector('img.layer-image-buffer--active')
+        return { id: root.dataset.layerId, source: image?.getAttribute('src'), ready: image?.complete,
+          width: image?.naturalWidth }
+      })
+      return { stats, layers, workers: window.__axiaRustWorkers }
+    })()`, value => value?.stats?.consumers === 3 && value.layers.length === 3 &&
+      value.layers.every(layer => layer.ready && layer.width === observed.result.naturalWidth) &&
+      (rustFallback ? value.stats.fallbacks >= 3 : value.stats.rendered >= 3 && value.stats.resultLeases === 3 &&
+        value.stats.service?.active === 0 && value.stats.service?.pending === 0), 'Preview multicamadas')
+    assert.equal(multicamadas.workers.created, rustFallback ? 0 : 1)
+    assert.equal(multicamadas.workers.peak, rustFallback ? 0 : 1)
+    if (!rustFallback) assert.equal(multicamadas.stats.fallbacks, 0)
+    const extras = multicamadas.layers.filter(layer => layer.id !== layerId)
+    const removedId = extras[0].id, remainingId = extras[1].id, remainingSource = extras[1].source
+    async function removeLayer(id) {
+      await evaluate(`document.querySelector('.layer-row[data-layer-id=${JSON.stringify(id)}] .layer-button').click()`)
+      await waitFor(evaluate,
+        `Boolean(document.querySelector('.layer-row[data-layer-id=${JSON.stringify(id)}].layer-row--active'))`, Boolean, 'Camada para remoção')
+      assert.equal(await evaluate(`(() => {
+        const button = document.querySelector('button[title="Excluir camada (Delete)"]')
+        if (!button || button.disabled) return false
+        button.click(); return true
+      })()`), true)
+      await waitFor(evaluate,
+        `!document.querySelector('.layer-row[data-layer-id=${JSON.stringify(id)}]')`, Boolean, 'Remoção da camada')
+    }
+    await removeLayer(removedId)
+    const partial = await waitFor(evaluate, 'JSON.parse(document.documentElement.dataset.axiaRustStylePreview || "null")',
+      value => value?.consumers === 2 && value.resultLeases === (rustFallback ? 0 : 2), 'Liberação isolada da camada')
+    assert.equal(await evaluate('window.__axiaRustWorkers.alive'), rustFallback ? 0 : 1)
+    const oldSource = multicamadas.layers.find(layer => layer.id === layerId).source
+    await evaluate(`document.querySelector('.layer-row[data-layer-id=${JSON.stringify(layerId)}] .layer-button').click()`)
+    await waitFor(evaluate,
+      `Boolean(document.querySelector('.layer-row[data-layer-id=${JSON.stringify(layerId)}].layer-row--active'))`, Boolean, 'Camada para edição isolada')
+    assert.equal(await evaluate(`(() => {
+      const button = [...document.querySelectorAll('.style-thumbnail-apply')]
+        .find(item => item.title.startsWith('Aplicar Contorno escuro.'))
+      if (!button || button.disabled) return false
+      button.click(); return true
+    })()`), true)
+    const updated = await waitFor(evaluate, `(() => {
+      const image = document.querySelector('.document-layer[data-layer-id=${JSON.stringify(layerId)}] img.layer-image-buffer--active')
+      const other = document.querySelector('.document-layer[data-layer-id=${JSON.stringify(remainingId)}] img.layer-image-buffer--active')
+      return { changed: image?.getAttribute('src') !== ${JSON.stringify(oldSource)}, ready: image?.complete && image.naturalWidth > 0,
+        otherSource: other?.getAttribute('src'), stats: JSON.parse(document.documentElement.dataset.axiaRustStylePreview || 'null') }
+    })()`, value => value?.changed && value.ready && value.stats.resultLeases === (rustFallback ? 0 : 2), 'Edição isolada com handoff')
+    assert.equal(updated.otherSource, remainingSource, 'Editar A modificou o buffer da outra camada.')
+    assert.equal(updated.stats.last.backend, rustFallback ? 'legacy' : 'rust')
+    assert.equal(await evaluate('window.__axiaRustWorkers.created'), rustFallback ? 0 : 1)
+    await removeLayer(remainingId)
+    await waitFor(evaluate, 'JSON.parse(document.documentElement.dataset.axiaRustStylePreview || "null")',
+      value => value?.consumers === 1 && value.resultLeases === (rustFallback ? 0 : 1), 'Última camada estilizada')
+    rustMultilayer = { consumers: multicamadas.stats.consumers, leases: multicamadas.stats.resultLeases,
+      workers: multicamadas.workers, partialConsumers: partial.consumers, isolatedUpdate: true }
+  }
   let rustCleanup = null
   if (rustMode) {
     const added = await evaluate(`(() => {
@@ -379,12 +467,13 @@ try {
     rustCleanup = await waitFor(evaluate,
       'JSON.parse(document.documentElement.dataset.axiaRustStylePreview || "null")',
       value => value && !value.occupied && value.resultLeases === 0, 'Liberação das leases no unmount')
+    await waitFor(evaluate, 'window.__axiaRustWorkers.alive', value => value === 0, 'Término do Worker compartilhado')
   }
   process.stdout.write(`${JSON.stringify({ status: 'pass', browser: browserVersion,
     platform: process.platform, osRelease: release(), cpu: cpus()[0]?.model,
     node: process.version, go: goVersion, totalMemoryBytes: totalmem(), ...environment, imageBytes: dropped.bytes,
     ...observed.result, screenshot: visual,
-    ...(rustMode ? { rustPreview: rustStats, rustCleanup } : {}),
+    ...(rustMode ? { rustPreview: rustStats, rustMultilayer, rustCleanup } : {}),
     ...(benchmarkMode ? { benchmark: { imageSize, cycles, minimumSampleWindowMs: 500,
       measurement: 'rAF callback cadence, not presented GPU FPS',
       input: 'synthetic wheel and native viewport scroll', samples: frameMetrics } } : {}) })}\n`)

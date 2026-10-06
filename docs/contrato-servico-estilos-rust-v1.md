@@ -18,7 +18,8 @@ A 23ª fatia liga um [consumidor real do canvas atrás de flag](contrato-preview
 com URL/handoff/fallback, sem ativação padrão ou compositor documental único.
 
 A 24ª fatia adiciona um [agendador multicamadas isolado](contrato-agendador-estilos-rust-v1.md)
-com um serviço privado compartilhado. O preview ainda não usa essa fila. O
+com um serviço privado compartilhado. A 25ª liga essa fila ao preview opt-in,
+com preparação deferida e orçamento conjunto. O
 preflight foi extraído sem mudar validações e `whenIdle()` permite esperar
 drenagem física após cancelamento; reconexão espera o término anterior.
 

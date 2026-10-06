@@ -1,6 +1,6 @@
 # Roadmap: compositor único em Rust e Axia multilíngue
 
-Estado: **C0/I0 iniciados; C1/C2 com passes Rust isolados; nenhuma migração visual ou de compositor ativada**.
+Estado: **C0/I0 iniciados; C1/C2 com passes Rust e preview opt-in; compositor Rust não ativado por padrão**.
 Atualizado em 2026-10-06.
 
 Este plano tem duas trilhas independentes, com contratos compartilhados: (A) unificar
@@ -624,6 +624,20 @@ Próximo passo é ligar a fila ao preview opt-in e validar lifecycle/preparaçã
 orçamento e handoff multicamadas em Wails. Prioridades/cache, limites intrínsecos,
 medições e QA ainda faltam; C0/C1/C2 permanecem abertos. Detalhes no
 [contrato do agendador](contrato-agendador-estilos-rust-v1.md).
+
+Uma vigésima quinta fatia liga **preview multicamadas ao agendador compartilhado**,
+ainda opt-in. Preparação entra na fila antes de fetch, com metadados limitados,
+reserva de mídia codificada, leitura em stream bounded/abortável e conferência
+dos bytes reais antes do Worker. Cancelamento é por consumidor; drenagem evita
+sobrepor operações. Timeout de loader fecha a instância para impedir novas
+preparações sobre uma antiga que não terminou. Falha local abre circuito da
+camada; indisponibilidade WASM abre circuito comum e preserva fallback dos
+consumidores válidos. Leases antigas descontam orçamento da próxima instância.
+Smoke Wails exercita três camadas, um Worker, remoção parcial, edição isolada,
+fallback sem multiplicar Workers e limpeza final. Default/miniaturas/exportação,
+texto, ABI, algoritmos Rust e versões não mudaram. Faltam prioridades/visibilidade,
+cache/assets, limites intrínsecos, orçamento entre janelas e medições/QA.
+C0/C1/C2 continuam abertos; C3/C4 não substituíram pilha/DOM/exportação.
 
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a

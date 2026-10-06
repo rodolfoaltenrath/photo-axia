@@ -5,7 +5,14 @@ import { RustPixelPocStyleService, type RustPixelPocConnect, type RustPixelPocRe
 import { RustPixelPocStyleCancelledError } from './rustPixelPocStyleSession.ts'
 
 export interface RustPixelPocSchedulerLimits extends RustPixelPocServiceLimits { maxPendingConsumers?: number }
-type Ticket = ReturnType<typeof snapshotRustPixelPocStyleRequest> & {
+export interface RustPixelPocScheduledPreparation {
+  inputBytes: number
+  prepare(signal: AbortSignal): Promise<RustPixelPocServiceRequest>
+}
+const PREPARATION_BYTES = 128 * 1024 * 1024
+type Ticket = {
+  request?: RustPixelPocServiceRequest; preparation?: RustPixelPocScheduledPreparation; inputBytes: number
+  controller?: AbortController; preparing?: boolean
   consumerId: string; settled: boolean
   resolve: (lease: RustPixelPocResultLease) => void; reject: (error: unknown) => void
 }
@@ -19,10 +26,14 @@ export class RustPixelPocStyleScheduler {
   private active: Ticket | null = null
   private stopped = false
   private disposal: Promise<void> | null = null
+  private running: Promise<void> | null = null
+  private readonly lifecycle = new AbortController()
   private sourceKey: { consumerId: string; identity: string } | null = null
   private sourceVersion = 0
+  private readonly onChange?: () => void
 
-  constructor(connect: RustPixelPocConnect, limits: RustPixelPocSchedulerLimits = {}) {
+  constructor(connect: RustPixelPocConnect, limits: RustPixelPocSchedulerLimits = {}, onChange?: () => void) {
+    this.onChange = onChange
     this.limits = rustPixelPocServiceLimits(limits)
     this.maxPendingConsumers = limits.maxPendingConsumers ?? 16
     if (!Number.isSafeInteger(this.maxPendingConsumers) || this.maxPendingConsumers < 1 || this.maxPendingConsumers > 64) {
@@ -34,12 +45,26 @@ export class RustPixelPocStyleScheduler {
   get stats() {
     const service = this.service.stats
     const inputBytes = this.active?.inputBytes ?? 0
-    const workingBytes = service.active ? RUST_STYLE_WORKING_BYTES : service.sourceBytes
+    const workingBytes = this.active?.preparing ? PREPARATION_BYTES + service.sourceBytes :
+      service.active ? RUST_STYLE_WORKING_BYTES : service.sourceBytes
     return { ...service, active: Number(!!this.active), pending: this.pending.size,
+      preparing: Number(!!this.active?.preparing),
       queuedInputBytes: this.queuedBytes(), reservedBytes: workingBytes + inputBytes + service.retainedResultBytes + this.queuedBytes(), disposed: this.stopped }
   }
 
   render(consumerId: string, input: RustPixelPocServiceRequest): Promise<RustPixelPocResultLease> {
+    return this.submit(consumerId, () => snapshotRustPixelPocStyleRequest(input))
+  }
+
+  renderPrepared(consumerId: string, preparation: RustPixelPocScheduledPreparation): Promise<RustPixelPocResultLease> {
+    return this.submit(consumerId, () => {
+      if (!preparation || typeof preparation.prepare !== 'function' || !Number.isSafeInteger(preparation.inputBytes) ||
+          preparation.inputBytes < 0 || preparation.inputBytes > 4 * 1024 * 1024) throw new RustPixelPocError('invalid-input')
+      return { preparation: { ...preparation }, inputBytes: preparation.inputBytes }
+    })
+  }
+
+  private submit(consumerId: string, snapshot: () => Pick<Ticket, 'request' | 'preparation' | 'inputBytes'>): Promise<RustPixelPocResultLease> {
     if (this.stopped) return Promise.reject(new RustPixelPocError('wasm-unavailable'))
     if (typeof consumerId !== 'string' || !consumerId || consumerId.length > 512) {
       return Promise.reject(new RustPixelPocError('invalid-input'))
@@ -48,12 +73,12 @@ export class RustPixelPocStyleScheduler {
     if (previous) this.reject(previous, new RustPixelPocStyleCancelledError())
     this.cancelActive(consumerId)
     try {
-      const prepared = snapshotRustPixelPocStyleRequest(input)
+      const prepared = snapshot()
       prepared.inputBytes += consumerId.length * 2
       const queued = this.queuedBytes() - (previous?.inputBytes ?? 0)
       if (!previous && this.pending.size >= this.maxPendingConsumers ||
           this.stats.reservedBytes - (previous?.inputBytes ?? 0) + prepared.inputBytes > this.limits.maxResidentBytes ||
-          RUST_STYLE_WORKING_BYTES + this.service.stats.retainedResultBytes + queued + prepared.inputBytes > this.limits.maxResidentBytes) {
+          this.jobWorkingBytes(prepared) + this.service.stats.retainedResultBytes + queued + prepared.inputBytes > this.limits.maxResidentBytes) {
         throw new RustPixelPocError('memory-limit')
       }
       const promise = new Promise<RustPixelPocResultLease>((resolve, reject) => {
@@ -61,6 +86,7 @@ export class RustPixelPocStyleScheduler {
         this.pending.set(consumerId, { ...prepared, consumerId, settled: false, resolve, reject })
       })
       this.pump()
+      this.changed()
       return promise
     } catch (error) {
       if (previous) this.pending.delete(consumerId)
@@ -72,6 +98,7 @@ export class RustPixelPocStyleScheduler {
     const pending = this.pending.get(consumerId)
     if (pending) { this.reject(pending, new RustPixelPocStyleCancelledError()); this.pending.delete(consumerId) }
     this.cancelActive(consumerId)
+    this.changed()
   }
 
   dispose() {
@@ -79,8 +106,10 @@ export class RustPixelPocStyleScheduler {
     this.stopped = true
     this.rejectPending(new RustPixelPocStyleCancelledError())
     if (this.active) this.reject(this.active, new RustPixelPocStyleCancelledError())
+    this.active?.controller?.abort(); this.lifecycle.abort()
     this.sourceKey = null
-    this.disposal = this.service.dispose().then(() => this.service.whenIdle())
+    this.disposal = Promise.all([this.service.dispose(), this.running]).then(() => { this.changed() })
+    this.changed()
     return this.disposal
   }
 
@@ -98,7 +127,12 @@ export class RustPixelPocStyleScheduler {
   private cancelActive(consumerId: string) {
     if (this.active?.consumerId !== consumerId || this.active.settled) return
     this.reject(this.active, new RustPixelPocStyleCancelledError())
+    this.active.controller?.abort()
     this.service.cancel()
+  }
+
+  private jobWorkingBytes(ticket: Pick<Ticket, 'preparation'>) {
+    return ticket.preparation ? PREPARATION_BYTES + this.service.stats.sourceBytes : RUST_STYLE_WORKING_BYTES
   }
 
   private pump() {
@@ -106,29 +140,64 @@ export class RustPixelPocStyleScheduler {
     while (this.pending.size) {
       const ticket = this.pending.values().next().value!
       this.pending.delete(ticket.consumerId)
-      if (RUST_STYLE_WORKING_BYTES + ticket.inputBytes + this.queuedBytes() + this.service.stats.retainedResultBytes > this.limits.maxResidentBytes) {
+      if (this.jobWorkingBytes(ticket) + ticket.inputBytes + this.queuedBytes() + this.service.stats.retainedResultBytes > this.limits.maxResidentBytes) {
         this.reject(ticket, new RustPixelPocError('memory-limit'))
         continue
       }
       this.active = ticket
-      void this.run(ticket)
+      this.running = this.run(ticket)
       return
     }
   }
 
   private async run(ticket: Ticket) {
     try {
-      const identity = ticket.request.sourceIdentity
+      if (ticket.preparation) {
+        ticket.preparing = true
+        this.changed()
+        const controller = ticket.controller = new AbortController()
+        let timeout: ReturnType<typeof setTimeout> | undefined
+        let onDispose = () => {}
+        const disposed = new Promise<never>((_, reject) => {
+          onDispose = () => reject(new RustPixelPocStyleCancelledError())
+          this.lifecycle.signal.addEventListener('abort', onDispose, { once: true })
+        })
+        const deadline = new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(new RustPixelPocError('wasm-unavailable'))
+            controller.abort(); this.stopped = true
+            this.rejectPending(new RustPixelPocError('wasm-unavailable'))
+            void this.service.dispose().catch(() => {})
+          }, this.limits.taskTimeoutMs)
+        })
+        try {
+          if (ticket.settled || this.stopped) throw new RustPixelPocStyleCancelledError()
+          const input = await Promise.race([ticket.preparation.prepare(controller.signal), deadline, disposed])
+          if (ticket.settled || this.stopped || controller.signal.aborted) throw new RustPixelPocStyleCancelledError()
+          const prepared = snapshotRustPixelPocStyleRequest(input)
+          if (prepared.inputBytes > ticket.inputBytes + PREPARATION_BYTES) throw new RustPixelPocError('memory-limit')
+          ticket.request = prepared.request; ticket.inputBytes = prepared.inputBytes + ticket.consumerId.length * 2
+        } finally {
+          clearTimeout(timeout); this.lifecycle.signal.removeEventListener('abort', onDispose)
+          ticket.preparing = false; ticket.preparation = undefined
+        }
+        if (RUST_STYLE_WORKING_BYTES + ticket.inputBytes + this.queuedBytes() + this.service.stats.retainedResultBytes > this.limits.maxResidentBytes) {
+          throw new RustPixelPocError('memory-limit')
+        }
+      }
+      if (ticket.settled || this.stopped) throw new RustPixelPocStyleCancelledError()
+      const request = ticket.request!
+      const identity = request.sourceIdentity
       if (this.sourceKey?.consumerId !== ticket.consumerId || this.sourceKey.identity !== identity) {
         this.sourceKey = { consumerId: ticket.consumerId, identity }; this.sourceVersion++
       }
-      const lease = await this.service.render({ ...ticket.request, sourceIdentity: `scheduler-source:${this.sourceVersion}` })
+      const lease = await this.service.render({ ...request, sourceIdentity: `scheduler-source:${this.sourceVersion}` })
       if (ticket.settled || this.stopped) { lease.release(); return }
       if (this.stats.reservedBytes > this.limits.maxResidentBytes) {
         lease.release(); throw new RustPixelPocError('memory-limit')
       }
       ticket.settled = true
-      ticket.resolve(lease)
+      ticket.resolve({ result: lease.result, release: () => { lease.release(); this.changed() } })
     } catch (error) { this.reject(ticket, error) }
     finally {
       // Cancellation rejects early; wait for the old Worker job before dispatching another consumer.
@@ -140,6 +209,12 @@ export class RustPixelPocStyleScheduler {
       }
       if (this.active === ticket) this.active = null
       this.pump()
+      this.changed()
     }
+  }
+
+  private changed() {
+    // Diagnostics must not fail rendering or leak a lease.
+    try { this.onChange?.() } catch {}
   }
 }

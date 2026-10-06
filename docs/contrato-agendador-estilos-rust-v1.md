@@ -9,7 +9,10 @@ essa ampliação já ativada. A factory browser e o preview da 23ª fatia contin
 com um dono por janela. Não houve mudança no compositor documental, texto,
 exportação, histórico, `.axia`, idioma, ABI, algoritmos Rust ou versões da stack.
 
-O agendador recebe mídia já preparada, não loaders/fetches. Os testes passam
+Na entrega original da 24ª fatia, o agendador recebia somente mídia pronta.
+A 25ª acrescenta preparação deferida e integra a factory/preview browser;
+ver a seção 8 e o [contrato atual do preview](contrato-preview-estilos-rust-v1.md).
+Os testes passam
 pelo Worker TS e WASM reais; decoder, Canvas e encoder são doubles explícitos.
 O smoke Wails desta entrega verifica que o consumidor atual permanece íntegro,
 não representa um teste multicamadas do novo agendador no browser.
@@ -148,3 +151,38 @@ preparação abortável/admissão antes de fetch, lifecycle de documento, circui
 falha, métricas agregadas, URLs/handoff e smoke multicamadas Wails. Depois:
 prioridades/visibilidade, cache/eviction, limites intrínsecos e medições/QA.
 C0/C1/C2 continuam abertos; C3/C4 ainda não substituíram pilha/DOM/exportação.
+
+## 8. Atualização da 25ª fatia — preparação e integração opt-in
+
+`renderPrepared(consumerId, { inputBytes, prepare(signal) })` aceita uma função
+de preparação capturada pelo chamador. `inputBytes` estima os metadados guardados
+na fila (0 a 4 MiB), não inclui mídia ainda não buscada. O preview calcula essa
+estimativa com o mesmo contador do serviço; estilos/texto/metadados acima do
+limite e conflitos de assets falham antes de buscar mídia.
+
+Antes de invocar o loader, cobra-se fonte staged + 128 MiB de reserva codificada
++ entrada de metadados + fila + PNGs com lease. A preparação é exclusiva, sem
+fetches simultâneos de vários consumidores. Ao resolver, há snapshot/preflight
+completo e troca da reserva pelos bytes reais de origem/padrões/metadados;
+entrada ativa + 96 MiB + fila + PNGs precisam caber antes do despacho ao Worker.
+`render` com mídia pronta continua compatível com a 24ª fatia.
+
+Cancelamento aborta o loader e rejeita seu consumidor cedo, mas mantém o slot
+até o loader terminar ou seu watchdog expirar. Preparação que não termina em
+30 s encerra a instância e rejeita a fila; não libera um slot para começar outro
+loader enquanto o antigo pode continuar alocando. Loader que ignore abort pode
+continuar existindo externamente, mas nunca abre Worker/publica depois do timeout
+ou dispose. Isso não é interrupção de código arbitrário nem teto de RSS.
+Ao contrário do timeout de um trabalho do Worker, timeout de preparação é terminal.
+
+Dispose interrompe a espera do loader, remove watchdog/listeners e espera
+encerramento/drenagem do serviço. O código de timeout é preservado como
+`wasm-unavailable`, inclusive quando abort faz o fetch rejeitar imediatamente.
+O observador opcional de métricas recebe mudanças de fila/drenagem/releases;
+exceção do observador não pode quebrar renderização ou impedir release.
+
+A factory `createRustPixelPocStyleScheduler` usa o mesmo conector local/lazy de
+`createRustPixelPocStyleService`. No preview, todos os consumidores do contexto
+usam a mesma instância; limite conjunto de resultados inclui contextos retirados.
+Os novos smokes Wails verificam três camadas, um Worker, remoção parcial, edição
+isolada, fallback comum e zero leases/Workers após retirar o último consumidor.
