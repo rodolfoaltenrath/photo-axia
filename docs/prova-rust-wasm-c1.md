@@ -1538,3 +1538,103 @@ conteúdo/executor de estágios, preparação/insets integrada, cache/orçamento
 global, transformação e validação end-to-end/multiplataforma seguem pendentes.
 C0/C1/C2 continuam abertos; validação manual da migração vem após integração
 experimental ao editor, não é exigida para estes passes isolados.
+
+## Décima sexta fatia: bisel/relevo regional
+
+Em 2026-10-06, o comando experimental `bevel-staged-region` passou a calcular
+o último dos dez tipos atuais de efeito em Rust. O [contrato BEV1](contrato-bisel-v1.md)
+define rampa, iluminação, textura, ABI e orçamento. Preview normal, exportação,
+texto, shell Go/Vue e `.axia` permanecem no caminho atual.
+
+### Implementação
+
+- Três técnicas, quatro estilos, direção up/down, depth, size/soften, seis
+  presets e pontos customizados para gloss/contorno opcional. Highlight e
+  shadow têm cores, alfa, opacidades e seis modos independentes.
+- TS resolve trigonometria da luz, raios e cores. Rust filtra altura, aplica
+  contraste de chisel-hard após softening, modula textura, deriva normais e
+  compõe contribuição arredondada sobre target. Não é apenas transporte de
+  um efeito já calculado. `renderBevelEmboss` TS foi somente exportado para
+  o oráculo real; sua implementação visual não mudou.
+- Ângulo global mantém altitude do efeito, textura usa média RGB ignorando
+  alfa e repete na grade global. Dot zero não contribui; outer/emboss/pillow
+  não descartam máscara original zero. São contratos legados preservados.
+- Halo R+S+1 cobre os dois filtros e os vizinhos da derivada. Amostras de luz
+  usam clamp na borda real da fonte, nunca no tile. Dois buffers u8 são
+  reutilizados pelos filtros/contraste/textura, sem alocação por pixel.
+- BEV1 com header 160 bytes, até 32 pontos por contorno e textura RGBA,
+  pacote até 64 MiB. Fonte/target/saída até 64 MiB cada; orçamento 96 MiB/job
+  soma todos os buffers externos, duas máscaras e reserva 1024 para pontos.
+  TS valida antes de materializar textura; Rust reserva antes de escrever.
+  Não é limite agregado/RSS/cache nem ABI pública para mods.
+
+### Testes e empacotamento
+
+- `npm test`: 514 testes frontend, incluindo checagem de tipos, passaram.
+- `npm run test:rust-poc`: 226 testes (5 standalone, 1 Worker básico e 220
+  dos scripts), incluindo 18 novos do bisel; demais passes continuam verdes.
+- `cargo test --offline --locked`: 58 testes nativos. Fmt/check e clippy
+  all-targets com `-D warnings` passaram.
+- Produção, integridade do bundle e smoke Wails/WebView2 passaram. Diagnóstico
+  incorporado confere bisel interno/externo contra RGBA fixo, target transferido
+  e gate válido, além dos passes anteriores. Executável temporário removido
+  pelo smoke; nenhum instalador/portável distribuível foi gerado. Aviso de
+  chunk >500 kB já existente não impede build.
+- Golden `bevel-edge` existente passou sem regeneração; comparador independente
+  dos 17 goldens originais passou e fixtures permanecem intactas.
+- Matriz 64² × seis modos × três técnicas × quatro estilos × duas direções ×
+  seis contornos × contorno opcional ativo/inativo: **7.077.888 pixels**.
+  Outra matriz 256² × três técnicas × quatro estilos cobre todos os pares de
+  alfa fonte/target, depth 1000, altitude zero e modos distintos de highlight/shadow.
+- Tiles 7×5 em quatro geometrias (37×29, 1×17, 19×1, 1×1), três técnicas,
+  quatro estilos, três pares size/soften e textura ativa/inativa: integral e
+  recortes concordam byte a byte. Testa zero/minimum radius e halo da derivada.
+- Textura com alfa zero vs pleno e RGB igual produz os mesmos bytes. Depth
+  -1000/-17,5/0/17,5/1000, scale 1/137,5/1000 e inversão seguem o TS. Decode
+  ausente é erro quando há asset ativo; desabilitado/sem asset não o exige.
+- Escalas 0,125/1,375/8 e size/soften até 250, light global/altitude própria,
+  dot zero com gloss positivo, RGB oculto, dois contornos de 32 pontos, mais
+  64 jobs determinísticos de máscaras esparsas/vazias e contornos estreitos
+  com duplicatas/endpoints ausentes. Regiões aleatórias preservam contexto.
+- Cadeia acetinado → overlay → bisel → traçado com Fill zero, quatro estilos,
+  três escalas e padding/insets preparados concorda com o compositor TS.
+- ABI malformada, counts enormes, NaN, luz não unitária, geometria/null/overlap
+  preservam saída sentinela/target; aridade antiga é rejeitada. Falhas das três
+  alocações temporárias/status 6 liberam buffers, fonte continua reutilizável
+  e dispose não deixa pares vivos. Contabilidade nativa cobre overflow/limite.
+- Worker real transfere fonte/target/textura, troca técnica/estilo/direção,
+  descarta respostas antigas por vista/pedido/fonte, recupera erro e descarta
+  estado. Cancel não interrompe kernel síncrono em execução.
+
+### Sonda isolada
+
+`npm run benchmark:rust-bevel -- 1024 20`, release, Windows, Node 24.14.1,
+Intel i7-3770. WASM **92.098 bytes**. Três warmups, 20 amostras, ordem TS/Rust
+alternada e comparação byte a byte de integral/tile fora da janela medida.
+Nenhum build/teste concorrente durante a sonda.
+
+Fonte/target preparados 1024², inner-bevel smooth, size 16, soften 4, depth
+187,5, opacidade 73,5%; highlight screen `#33669980`, shadow multiply
+`#ee7722bb`, ambos 75%, altitude 30°, ângulo global 123,5°, sem textura.
+Staging uma vez: 2,42 ms, fora dos passes.
+
+| Caminho | Mediana (ms) | P95 (ms) |
+| --- | ---: | ---: |
+| TS integral | 295,94 | 316,97 |
+| Adapter Rust integral | 256,97 | 268,01 |
+| Kernel Rust integral | 254,63 | 265,97 |
+| Adapter Rust tile 512² | 63,22 | 66,87 |
+| Kernel Rust tile 512² | 62,37 | 66,27 |
+
+Halo 21, contexto do tile 554²; contabilidade integral/tile
+14.681.248/6.906.472 bytes. Não é memória/RSS medida. O ganho integral é
+moderado, aproximadamente 1,15× neste caso. Tile retorna um quarto da saída.
+Não extrapolar para textura/todas as técnicas, atribuir a SIMD ou chamar de
+FPS. Preparação/insets, decode, Worker, Canvas, UI, composição do documento
+e RSS não entram nesta medição; p95 não é pior caso.
+
+Todos os dez tipos atuais têm passes Rust isolados. O próximo passo é
+conteúdo/executor de estágios integrado, evitando cópias/reuploads por efeito,
+com preparação/insets e paridade de combinações. Cache/orçamento global,
+transformações, integração ao documento/preview e validação end-to-end/
+multiplataforma permanecem pendentes. C0/C1/C2 não foram encerrados.

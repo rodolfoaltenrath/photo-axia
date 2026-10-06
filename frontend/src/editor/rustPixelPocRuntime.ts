@@ -7,12 +7,16 @@ import { encodeInnerShadow, innerShadowLayout, type RustPixelPocInnerShadow } fr
 import { encodeGlow, glowLayout, type RustPixelPocGlow } from './rustPixelPocGlow.ts'
 import { encodeSatin, satinLayout, type RustPixelPocSatin } from './rustPixelPocSatin.ts'
 import { encodeStroke, strokePacketLength, strokeLayout, type RustPixelPocStroke } from './rustPixelPocStroke.ts'
+import { encodeBevel, bevelPacketLength, bevelLayout, type RustPixelPocBevel } from './rustPixelPocBevel.ts'
 export { RustPixelPocError } from './rustPixelPocError.ts'
 
 const MAX_POC_BYTES = 64 * 1024 * 1024
 let nextSourceId = 0
 
 interface RustPixelPocExports {
+  axia_poc_bevel_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
+    x: number, y: number, width: number, height: number, targetPointer: number, targetLength: number,
+    packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
   axia_poc_stroke_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
     x: number, y: number, width: number, height: number, targetPointer: number, targetLength: number,
     packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
@@ -113,7 +117,7 @@ const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
 }
 
 type TilePass =
-  | { type: 'drop-shadow' | 'inner-shadow' | 'glow' | 'satin' | 'stroke'; pointer: number; length: number; packetPointer: number; packetLength: number }
+  | { type: 'drop-shadow' | 'inner-shadow' | 'glow' | 'satin' | 'stroke' | 'bevel'; pointer: number; length: number; packetPointer: number; packetLength: number }
   | { type: 'alpha-mask'; config: RustPixelPocAlphaMask }
   | { type: 'local-batch'; pointer: number; length: number }
   | { type: 'blend-if'; pointer: number; length: number; config: RustPixelPocUnderlyingBlendIf }
@@ -149,7 +153,8 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_inner_shadow_region !== 'function' || candidate.axia_poc_inner_shadow_region.length !== 14 ||
       typeof candidate.axia_poc_glow_region !== 'function' || candidate.axia_poc_glow_region.length !== 14 ||
       typeof candidate.axia_poc_satin_region !== 'function' || candidate.axia_poc_satin_region.length !== 14 ||
-      typeof candidate.axia_poc_stroke_region !== 'function' || candidate.axia_poc_stroke_region.length !== 14) {
+      typeof candidate.axia_poc_stroke_region !== 'function' || candidate.axia_poc_stroke_region.length !== 14 ||
+      typeof candidate.axia_poc_bevel_region !== 'function' || candidate.axia_poc_bevel_region.length !== 14) {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -227,6 +232,11 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
           outputPointer, outputLength, fillOpacity)
       } else {
         switch (pass.type) {
+          case 'bevel':
+            status = exports.axia_poc_bevel_region(sourcePointer, sourceLength,
+              sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+              pass.pointer, pass.length, pass.packetPointer, pass.packetLength, outputPointer, outputLength)
+            break
           case 'stroke':
             status = exports.axia_poc_stroke_region(sourcePointer, sourceLength,
               sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
@@ -298,7 +308,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         }
       }
       if (status !== 0) {
-        if ((pass?.type === 'local-batch' || pass?.type === 'alpha-mask' || pass?.type === 'drop-shadow' || pass?.type === 'inner-shadow' || pass?.type === 'glow' || pass?.type === 'satin' || pass?.type === 'stroke') && status === 6) throw new RustPixelPocError('memory-limit')
+        if ((pass?.type === 'local-batch' || pass?.type === 'alpha-mask' || pass?.type === 'drop-shadow' || pass?.type === 'inner-shadow' || pass?.type === 'glow' || pass?.type === 'satin' || pass?.type === 'stroke' || pass?.type === 'bevel') && status === 6) throw new RustPixelPocError('memory-limit')
         throw new RustPixelPocError('wasm-failure')
       }
       computed = performance.now()
@@ -335,13 +345,19 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
 
   function maskedEffectStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array,
     job: { type: 'drop-shadow'; shadow: RustPixelPocDropShadow } | { type: 'inner-shadow'; shadow: RustPixelPocInnerShadow }
-      | { type: 'glow'; glow: RustPixelPocGlow } | { type: 'satin'; satin: RustPixelPocSatin } | { type: 'stroke'; stroke: RustPixelPocStroke }) {
+      | { type: 'glow'; glow: RustPixelPocGlow } | { type: 'satin'; satin: RustPixelPocSatin } | { type: 'stroke'; stroke: RustPixelPocStroke }
+      | { type: 'bevel'; bevel: RustPixelPocBevel }) {
     if (disposed) throw new RustPixelPocError('wasm-unavailable')
     if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
     const length = validateRegion(region, staged.width, staged.height, 100)
     if (!(target instanceof Uint8Array) || target.byteLength !== length) throw new RustPixelPocError('invalid-input')
     const bytes = (() => {
       switch (job.type) {
+        case 'bevel': {
+          const length = bevelPacketLength(job.bevel)
+          bevelLayout(staged.width, staged.height, region, job.bevel, length)
+          return encodeBevel(job.bevel)
+        }
         case 'stroke': {
           const length = strokePacketLength(job.stroke)
           strokeLayout(staged.width, staged.height, region, job.stroke, length)
@@ -641,6 +657,9 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     },
     strokeStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array, stroke: RustPixelPocStroke) {
       return maskedEffectStagedRegion(sourceId, region, target, { type: 'stroke', stroke })
+    },
+    bevelStagedRegion(sourceId: number, region: RustPixelPocRegion, target: Uint8Array, bevel: RustPixelPocBevel) {
+      return maskedEffectStagedRegion(sourceId, region, target, { type: 'bevel', bevel })
     },
     alphaMaskStagedRegion(sourceId: number, region: RustPixelPocRegion, config: RustPixelPocAlphaMask) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')

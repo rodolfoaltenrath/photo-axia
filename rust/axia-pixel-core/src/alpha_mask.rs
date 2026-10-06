@@ -136,6 +136,25 @@ fn box_blur(
     }
 }
 
+pub(crate) fn blur_in_place(
+    current: &mut [u8],
+    scratch: &mut [u8],
+    width: usize,
+    height: usize,
+    blur: usize,
+    precise: bool,
+) {
+    let passes = if precise {
+        [blur, 0, 0]
+    } else {
+        [blur / 3, (blur + 1) / 3, blur.div_ceil(3)]
+    };
+    for radius in passes.into_iter().filter(|radius| *radius > 0) {
+        box_blur(current, scratch, width, height, radius, false);
+        box_blur(scratch, current, width, height, radius, true);
+    }
+}
+
 pub(crate) fn filtered_alpha_context(
     source: &[u8],
     width: usize,
@@ -207,29 +226,14 @@ pub(crate) fn filtered_alpha_context(
             &mut queue,
         );
     }
-    let passes = if precise {
-        [blur, 0, 0]
-    } else {
-        [blur / 3, (blur + 1) / 3, blur.div_ceil(3)]
-    };
-    for radius in passes.into_iter().filter(|radius| *radius > 0) {
-        box_blur(
-            &current,
-            &mut scratch,
-            context.width,
-            context.height,
-            radius,
-            false,
-        );
-        box_blur(
-            &scratch,
-            &mut current,
-            context.width,
-            context.height,
-            radius,
-            true,
-        );
-    }
+    blur_in_place(
+        &mut current,
+        &mut scratch,
+        context.width,
+        context.height,
+        blur,
+        precise,
+    );
     Ok((current, context))
 }
 

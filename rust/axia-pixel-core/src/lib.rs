@@ -2,6 +2,7 @@
 
 pub mod alpha_mask;
 pub mod batch;
+pub mod bevel;
 pub mod blend_if;
 pub mod color_overlay;
 pub mod composite;

@@ -34,6 +34,11 @@ O [traçado regional](contrato-tracado-v1.md) compartilha pinturas espaciais
 com overlays, mas gera sua própria máscara circular/erosão e compõe depois
 deles. Suas três posições também não constituem um executor documental.
 
+O [bisel/relevo regional](contrato-bisel-v1.md) calcula rampa/textura e luz
+com diferenças centrais, preservando um pixel extra de halo. Completa os dez
+tipos de efeito em passes isolados; conteúdo/executor documental, integração
+ao preview e cache/orçamento global continuam pendentes.
+
 ## 1. Vocabulário e unidades
 
 - Documento: espaço contínuo em pixels documentais, origem `(0, 0)` no canto

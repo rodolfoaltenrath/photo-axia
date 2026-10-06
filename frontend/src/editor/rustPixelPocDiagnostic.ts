@@ -186,6 +186,24 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         throw new Error(`Worker Rust produziu traçado ${paint.type} diferente da referência fixa.`)
       }
     }
+    for (const style of ['inner-bevel', 'outer-bevel'] as const) {
+      const bevelTarget = new Uint8Array(8)
+      const bevelRequest = send({ type: 'bevel-staged-region', sourceId: staged.sourceId,
+        region: { x: 1, y: 0, width: 1, height: 2 }, target: bevelTarget.buffer, bevel: {
+          radius: 1, softenRadius: 0, technique: 'smooth', style, direction: 'up', opacity: 100,
+          strength: 4, light: [0, 0, 1], highlightMode: 'normal', shadowMode: 'normal',
+          highlightColor: [51, 102, 153, 255], shadowColor: [0, 0, 0, 255], highlightOpacity: 75, shadowOpacity: 75,
+          glossContour: { preset: 'linear', points: [] }, contourEnabled: false,
+          contour: { preset: 'linear', points: [] }, contourRange: 100,
+          textureScaleFactor: 1, textureDepthFactor: 0, textureInvert: false
+        } }, [bevelTarget.buffer])
+      const bevelToken = gate.captureTile(`bisel-${style}`, bevelRequest.id), bevelResult = await bevelRequest
+      const expected = style === 'inner-bevel' ? '51,102,153,191,0,0,0,0' : '0,0,0,0,51,102,153,191'
+      if (!bevelToken?.isCurrent(bevelResult) || bevelTarget.byteLength !== 0 ||
+          [...new Uint8Array(bevelResult.rgba)].join(',') !== expected) {
+        throw new Error(`Worker Rust produziu bisel ${style} diferente da referência fixa.`)
+      }
+    }
     const maskRequest = send({ type: 'alpha-mask-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, config: { spreadRadius: 0, blurRadius: 1, precise: false } })
     const maskToken = gate.captureTile('máscara-direita', maskRequest.id)

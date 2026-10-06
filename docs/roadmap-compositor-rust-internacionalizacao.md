@@ -496,6 +496,24 @@ Preview normal, exportação e `.axia` não mudaram. Detalhes no
 [contrato do traçado](contrato-tracado-v1.md) e na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
+Uma décima sexta fatia porta o **bisel/relevo**: três técnicas, quatro estilos,
+direção, profundidade, softening, contornos de brilho/recorte, textura e luz,
+com highlight/shadow independentes. BEV1 transporta vetor de luz resolvido no
+TS, dois contornos e textura decodificada. Halo R+S+1 cobre filtros e derivada;
+dois buffers são reutilizados sem alocação por pixel. Preserva peculiaridades
+do TS: altitude do efeito mesmo com ângulo global, textura pelo RGB sem alfa
+e dot zero sem contribuição. Golden existente, matrizes, tiles, raios máximos,
+contornos estreitos, máscaras esparsas e cadeia acetinado → overlay → bisel →
+traçado com Fill zero passaram byte a byte. Sonda isolada Node 1024²: mediana
+295,94 ms no TS e 256,97 ms no adapter Rust; tile 512²/contexto 554²: 63,22 ms.
+O ganho deste caso foi moderado; não mede FPS nem encerra gate de desempenho.
+Os dez tipos atuais têm passes Rust isolados, **não** um compositor integrado.
+Conteúdo/executor de estágios, preparação/insets, cache/orçamento global,
+transformação, integração e validação end-to-end/multiplataforma continuam
+pendentes. C0/C1/C2 permanecem abertos; preview normal/exportação/`.axia`
+inalterados. Detalhes no [contrato do bisel](contrato-bisel-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

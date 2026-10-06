@@ -153,6 +153,7 @@ pares de alfa, círculo, tiles/halos, máscaras esparsas/vazias, escalas, 32 sto
 estreitos/duplicados, ordem após overlay com Fill zero, falhas e worker real.
 Medições e verificações na [prova C1](prova-rust-wasm-c1.md).
 
-Faltam bisel, composição de conteúdo/executor de estágios, preparação/insets
+O bisel agora tem [passe separado](contrato-bisel-v1.md). Faltam composição
+de conteúdo/executor de estágios, preparação/insets
 integrada, transformação, cache/orçamento global e validação end-to-end/
 multiplataforma. C0/C1/C2 permanecem abertos; não é rollout no editor normal.

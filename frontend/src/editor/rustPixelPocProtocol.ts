@@ -6,9 +6,12 @@ import type { RustPixelPocInnerShadow } from './rustPixelPocInnerShadow.ts'
 import type { RustPixelPocGlow } from './rustPixelPocGlow.ts'
 import type { RustPixelPocSatin } from './rustPixelPocSatin.ts'
 import type { RustPixelPocStroke } from './rustPixelPocStroke.ts'
+import type { RustPixelPocBevel } from './rustPixelPocBevel.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
+  | { type: 'bevel-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;
+      target: ArrayBuffer; bevel: RustPixelPocBevel }
   | { type: 'stroke-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;
       target: ArrayBuffer; stroke: RustPixelPocStroke }
   | { type: 'satin-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;

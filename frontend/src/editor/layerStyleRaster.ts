@@ -611,7 +611,7 @@ function bevelHeightAt(ramp: Uint8ClampedArray, width: number, height: number, x
   return ramp[clampedY * width + clampedX]! / 255
 }
 
-function renderBevelEmboss(
+export function renderBevelEmboss(
   target: Uint8ClampedArray,
   sourceAlpha: Uint8ClampedArray,
   width: number,

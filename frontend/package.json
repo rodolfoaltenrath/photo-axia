@@ -55,6 +55,8 @@
     "benchmark:rust-satin": "node --experimental-strip-types benchmarks/rustSatin.ts",
     "prebenchmark:rust-stroke": "node scripts/buildRustPixelPoc.mjs",
     "benchmark:rust-stroke": "node --experimental-strip-types benchmarks/rustStroke.ts",
+    "prebenchmark:rust-bevel": "node scripts/buildRustPixelPoc.mjs",
+    "benchmark:rust-bevel": "node --experimental-strip-types benchmarks/rustBevel.ts",
     "test:types": "tsc --project tsconfig.test.json",
     "benchmark:quick-selection": "node --experimental-strip-types benchmarks/quickSelection4k.mjs"
   },
