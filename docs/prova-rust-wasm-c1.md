@@ -1738,3 +1738,67 @@ O item de porte/paridade dos passes CPU em C2 foi concluído nessa fronteira
 experimental. Preparação/insets ligada ao fluxo real, cache/agendamento/
 orçamento agregado, transformação, pilha/backdrop, C3/C4 e QA end-to-end/
 multiplataforma continuam pendentes. C0/C1/C2 permanecem gates abertos.
+
+## Décima oitava fatia: preparação e sessão da fonte original
+
+Em 2026-10-06 foi adicionada a fronteira entre RGBA original e executor STG1,
+sem trocar `renderLayerStyle`, preview normal, exportação ou `.axia`.
+O [contrato da preparação](contrato-preparacao-estilos-v1.md) detalha região,
+chave, posse de buffers, lifecycle e limites; o Rust/ABI permanecem inalterados.
+
+### Implementação
+
+- Preparador utiliza normalizadores e `layerStyleInsets` reais, calcula margens
+  direcionais/escala, valida assets/plano e faz preflight antes do loader.
+  Padding transparente próprio preserva RGBA original, incluindo RGB oculto.
+  Só esse buffer é transferido; pixels do editor não são destacados.
+- Sessão lazy compartilha decode pendente e conserva um handle de fonte
+  expandida no Worker/WASM. Chave exata de conteúdo, dimensões, margens,
+  escala e qualidade, sem hash curto ou quantização.
+- Fill/cor/faixas/assets mantêm fonte quando geometria é igual; planos e assets
+  são enviados novamente para recompor. Mudanças de conteúdo/geometria/escala/
+  qualidade invalidam antes do decode e upload. Não é cache do resultado.
+- Integral e tile retornam offsets locais corretos; gradiente/padrão/ruído
+  conservam a mesma grade expandida. Transformação/pilha não são implementadas.
+- Revisão/gate rejeitam resposta/preparação atrasada; render também valida
+  dimensões e bytes de saída. Retry de decode usa geração nova, erro de render
+  mantém fonte, dispose é idempotente e aguarda a mesma limpeza. Restart de
+  Worker exige sessão nova. O kernel ativo não pode ser interrompido.
+- Preparação cobra original + duas fontes expandidas, até 96 MiB, com limite
+  individual de 64 MiB; STG1 regional continua com orçamento próprio. Não é
+  contabilidade de RSS/global/Canvas/assets/filas.
+
+### Validação
+
+- `npm test`: **514** testes frontend e checagem de tipos passaram.
+- `npm run test:rust-poc`: **250** testes, sendo 5 standalone, 1 Worker básico
+  e 244 nos scripts. Dez novos casos cobrem preparação/sessão; todos os passes
+  e matrizes anteriores continuam verdes.
+- `cargo test --offline --locked`: **61** testes nativos passaram; fmt/check
+  e clippy all-targets com `-D warnings` passaram. Os sete testes assíncronos
+  da sessão passaram em cinco execuções adicionais consecutivas.
+- Os 16 goldens raster são executados pela sessão/Worker real a partir da
+  **fonte original**, sem helper de padding, sem regenerar expectativas.
+  Conferem pixels e offsets; o golden de Camada abaixo segue no passe separado.
+- Escalas 0,5/1/1,375/8, clamp/fallback, efeitos desabilitados, margens
+  direcionais, RGB invisível e propriedade de buffers. Preflight rejeita
+  dimensões/região/assets e preparação acima do limite antes de decodificar.
+- Reuso confirmado contando loaders/uploads: Fill, cor, faixas, textura e
+  tile não reuploadam a fonte; conteúdo, escala exata, qualidade e margens sim.
+- Decode pendente compartilhado, fonte antiga concluindo tarde, render antigo
+  respondendo tarde, invalidate/fechamento com decode pendente, resposta com
+  comprimento inválido, erro/retry e reinício de Worker foram exercitados.
+- Build de produção, integridade do bundle e smoke **Wails/WebView2** passaram.
+  Diagnóstico usa fonte 1×1, sombra direcional e overlay com RGBA/offsets fixos,
+  depois muda Fill/região e confirma um só decode e mesmo handle. Smoke gera
+  e remove apenas executável temporário; nenhum release distribuível criado.
+- WASM continua **100.281 bytes**, `axia_pixel_core-674Kws7T.wasm`; Worker
+  normal de estilos continua `layerStyleCompositor.worker-BALgYBwV.js`.
+  Aviso já existente de chunk >500 kB permanece sem impedir build.
+
+Não foi medida nova aceleração nesta fatia. Preparação executa no ambiente do
+chamador; hospedá-la em Worker e adaptar decode raster/texto/assets é o próximo
+passo antes do rollout. A sessão é de um consumidor com último pedido vencedor,
+não agendador multitile. Medição decode → preparação → Worker → encode → handoff,
+coalescência, orçamento agregado e QA real seguem pendentes. C2 não está fechado;
+pilha/backdrop/transformação são C3, superfície única é C4. C0/C1/C2 abertos.

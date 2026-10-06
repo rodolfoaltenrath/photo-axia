@@ -151,6 +151,12 @@ parte disso; não copiá-lo como chave de documento.
 
 ## 5. Política dos consumidores
 
+A [preparação/sessão de estilos experimental](contrato-preparacao-estilos-v1.md)
+aceita RGBA original, calcula padding/insets e reutiliza o upload para STG1.
+Sua região ainda é local ao raster expandido, não uma região do documento.
+Ela atende um consumidor com último pedido vencedor e não substitui a política
+de agendamento documental abaixo, nem está ligada ao preview normal.
+
 | Consumidor | Pedido | Proibição |
 | --- | --- | --- |
 | Preview | tiles visíveis e sujos, qualidade interativa, prioridade alta; quadro anterior pode aparecer durante refinamento | não possuir um compositor CSS alternativo após migração |

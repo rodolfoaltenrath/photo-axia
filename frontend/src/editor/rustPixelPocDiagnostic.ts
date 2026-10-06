@@ -4,6 +4,7 @@ import { RustPixelPocPreviewObserver } from './rustPixelPocPreviewObserver.ts'
 import { RustPixelPocTileGate } from './rustPixelPocTileGate.ts'
 import { styledRasterPreviewSnapshot } from './rustPixelPocStyledSource.ts'
 import { normalizeLayerStyleConfig } from './layerStyles.ts'
+import { RustPixelPocStyleSession } from './rustPixelPocStyleSession.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
@@ -354,6 +355,30 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         throw new Error(`Worker Rust divergiu do arredondamento JS no gradiente ${type}.`)
       }
     }
+    const session = new RustPixelPocStyleSession(send, gate)
+    let sourceLoads = 0
+    const preparedStyles = normalizeLayerStyleConfig({ fillOpacity: 0, effects: [
+      { type: 'drop-shadow', id: 'prepared-shadow', color: '#ff0000', size: 0, distance: 1, angle: 0,
+        useGlobalLight: false, opacity: 100, layerKnocksOutShadow: false },
+      { type: 'color-overlay', id: 'prepared-color', color: '#0000ff', opacity: 50 }
+    ] })
+    const preparedRequest = { sourceIdentity: 'raw-diagnostic-v1', sourceWidth: 1, sourceHeight: 1,
+      styles: preparedStyles, globalLight: { angle: 30, altitude: 30 }, source: async () => {
+        sourceLoads++
+        return { width: 1, height: 1, data: new Uint8ClampedArray([40, 60, 80, 255]) }
+      } }
+    const prepared = await session.compose(preparedRequest)
+    if (prepared.width !== 2 || prepared.height !== 1 || prepared.offsetX !== -1 || prepared.offsetY !== 0 ||
+        [...new Uint8Array(prepared.rgba)].join(',') !== '255,0,0,255,0,0,255,128') {
+      throw new Error('Sessão Rust divergiu na preparação da fonte e da sombra externa.')
+    }
+    const reused = await session.compose({ ...preparedRequest, styles: normalizeLayerStyleConfig({ ...preparedStyles, fillOpacity: 100 }),
+      region: { x: 1, y: 0, width: 1, height: 1 } })
+    if (reused.sourceId !== prepared.sourceId || sourceLoads !== 1 || reused.offsetX !== 0 ||
+        [...new Uint8Array(reused.rgba)].join(',') !== '20,30,168,255') {
+      throw new Error('Sessão Rust não reutilizou a fonte original entre estilos e tiles.')
+    }
+    await session.dispose()
     const disposed = await send({ type: 'dispose' })
     if (disposed.type !== 'disposed') throw new Error('Worker Rust não descartou o estado.')
     return { elapsedMs: performance.now() - started, wasmBytes }

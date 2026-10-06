@@ -530,6 +530,19 @@ abertos; não é compositor da pilha, C3/C4 nem rollout no preview normal.
 Detalhes no [contrato dos estágios](contrato-estagios-v1.md) e na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
+Uma décima oitava fatia adiciona **preparação e sessão de fonte original**:
+normalização/insets reais, padding próprio, preflight antes do decode/upload
+e offsets locais para integral/tile. Fonte staged reusada por chave exata de
+conteúdo/geometria/escala/qualidade, sem hash curto; Fill/cor/textura podem
+recompor sem novo upload. Decode compatível pendente é compartilhado, e gates
+rejeitam preparação/render tardios, inclusive durante dispose. Goldens e
+Worker real cobrem reuso, falhas e reinício; diagnóstico Wails percorre essa
+fronteira com RGBA fixo. Não liga Rust a `renderLayerStyle`/preview/exportação.
+Padding ainda roda no ambiente do chamador: hospedá-lo em Worker, adaptar
+decode/assets, agendamento, orçamento agregado e benchmark end-to-end são os
+próximos passos de C2. Não é compositor da pilha nem encerramento de C2/C3/C4.
+Detalhes no [contrato da preparação](contrato-preparacao-estilos-v1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os
