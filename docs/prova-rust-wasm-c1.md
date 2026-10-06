@@ -2106,3 +2106,57 @@ Faltam pool/prioridades, orçamento global/cache e assets, limites intrínsecos,
 matriz de paridade visual e medições isoladas/repetidas antes do rollout. Contas
 por serviço e contador de leases não medem RSS. C0/C1/C2 permanecem abertos;
 C3/C4 ainda não substituíram pilha/DOM/`renderDocument.ts`.
+
+## 24ª fatia — Agendamento multicamadas isolado e orçamento conjunto
+
+`rustPixelPocStyleScheduler.ts` organiza um serviço privado compartilhado:
+um ativo, FIFO entre consumidores e só o último pendente de cada consumidor.
+Capacidade padrão de 16 pendentes (máximo configurável 64); rajadas não
+cancelam camadas diferentes nem passam continuamente à frente da fila.
+Preflight/snapshot foi extraído para um módulo compartilhado com o serviço,
+sem alterar suas validações. Identidade exata por consumidor evita alias de
+fontes; só existe cache do último slot, não um cache permanente por camada.
+
+Admissão/despacho/publicação conferem a reserva lógica agregada de ativo,
+fila e leases de todas as camadas. PNGs publicados continuam contabilizados
+e liberáveis após fechamento. A reserva não representa RSS/GC/Canvas nem
+inclui fetch/preparação que antecedem o agendamento.
+
+O serviço ganhou `whenIdle()`: cancelamento visual rejeitado não prova que
+decode/encode drenou. O próximo consumidor espera a drenagem; reconexão
+espera a confirmação de término da conexão anterior. Watchdog/falha retiram
+o trabalho problemático, sem descartar os outros consumidores aguardando.
+Dispose aborta abertura, cancela ativo/fila e termina o Worker sem precisar
+destravar encoder ou esperar factory que nunca resolve.
+
+### Validação
+
+- `npm test`: **530** casos frontend e checagem de tipos passaram.
+- `npm run test:rust-poc`: **338** casos — cinco standalone, um smoke Worker
+  e **332** casos nos scripts. Foram adicionados **18** testes do agendador e
+  **um** teste de drenagem do serviço. Worker/WASM são reais; mídia/Canvas/PNG
+  nesses casos usam doubles explícitos, não rasterização browser real.
+- As duas suítes de serviço/agendamento (**37** casos) passaram **cinco vezes
+  consecutivas**. Encoder bloqueado e término artificialmente retardado
+  exercitam drenagem, fairness, cancelamento isolado e ausência de reconexão
+  antes de terminar a conexão anterior. Não são benchmarks de desempenho.
+- `cargo test --offline --locked`: **61** testes nativos; `go test ./...`
+  passou. Algoritmos, ABI Rust, versões e goldens permaneceram iguais.
+- Build e integridade do bundle passaram. WASM: **100.281 bytes**,
+  `axia_pixel_core-674Kws7T.wasm`; Worker POC:
+  `rustPixelPoc.worker-CAO2pTod.js`; Worker normal:
+  `layerStyleCompositor.worker-BALgYBwV.js`. Aviso existente de chunk >500 kB
+  permanece. O novo agendador ainda não é importado pelo caminho de preview.
+- Smoke Wails/WebView2 do preview atual passou em modo normal, Rust e WASM
+  indisponível. Todos conservaram o buffer ativo e mudaram **3.176** pixels
+  visíveis na fixture; o modo Rust publicou uma lease e encerrou com zero
+  leases após remover a camada. Falha simulada usou fallback/circuito.
+- A sonda ABI/mídia/PNG Wails também passou. Esses smokes validam regressão
+  do consumidor atual, **não** integração multicamadas do novo agendador.
+  Executáveis usados são temporários; não foi gerado instalador/portável.
+
+Contrato e sequência no [agendador V1](contrato-agendador-estilos-rust-v1.md).
+Próximo passo é ligar a fila ao preview opt-in, com preparo abortável,
+admissão antes de fetch, lifecycle/fallback/handoff e smoke multicamadas.
+Prioridades, cache/eviction, limites intrínsecos e medições/QA continuam
+pendentes. C0/C1/C2 permanecem abertos; C3/C4 não mudaram.

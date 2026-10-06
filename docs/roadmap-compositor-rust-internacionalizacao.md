@@ -611,6 +611,20 @@ faltam pool/orçamento global/cache, limites intrínsecos, matriz visual e medi�
 repetidas antes do rollout. C0/C1/C2 permanecem abertos e C3/C4 não mudam.
 Detalhes no [contrato do preview](contrato-preview-estilos-rust-v1.md).
 
+Uma vigésima quarta fatia adiciona **agendador compartilhado isolado**, ainda
+sem ampliar o preview da 23ª fatia. Um serviço/Worker adotado por vez; FIFO entre
+consumidores, substituição somente dentro da mesma camada, cancelamento sem
+interferência nas demais e capacidade bounded. Snapshots/preflight do serviço
+são compartilhados; identidade compacta não permite alias entre camadas.
+Orçamento conjunto cobra ativo, fila e todas as leases, inclusive após dispose.
+`whenIdle()` distingue rejeição visual de drenagem; reconexão espera confirmação
+de término anterior. Worker/WASM reais em Node validam os cenários multicamadas,
+com doubles explícitos de Canvas/mídia. Preview atual e exportação não mudaram.
+Próximo passo é ligar a fila ao preview opt-in e validar lifecycle/preparação,
+orçamento e handoff multicamadas em Wails. Prioridades/cache, limites intrínsecos,
+medições e QA ainda faltam; C0/C1/C2 permanecem abertos. Detalhes no
+[contrato do agendador](contrato-agendador-estilos-rust-v1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

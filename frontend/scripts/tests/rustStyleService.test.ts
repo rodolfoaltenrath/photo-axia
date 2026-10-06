@@ -260,6 +260,21 @@ function unopenedConnection(onTerminate: () => void): RustPixelPocConnection {
   return { closed: false, send: () => { throw new Error('must not send') }, cancel() {}, terminate: async () => onTerminate() }
 }
 
+test('whenIdle aguarda drenagem física, não apenas rejeição do pedido visual', async () => {
+  const f = fixture({ holdEncoding: true })
+  try {
+    const started = f.harness.waitForEncoding(), first = f.service.render(input())
+    const cancelled = assert.rejects(first, RustPixelPocStyleCancelledError)
+    await started; f.service.cancel(); await cancelled
+    let drained = false
+    const idle = f.service.whenIdle().then(() => { drained = true })
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(drained, false)
+    f.harness.releaseEncoding(); await idle
+    assert.equal(f.service.stats.active, 0)
+    const next = await f.service.render(input()); next.release(); assert.equal(f.connections(), 1)
+  } finally { await f.close() }
+})
+
 test('Watchdog aborta abertura travada; conexão tardia não é adotada', async () => {
   let finish: ((connection: RustPixelPocConnection) => void) | undefined, signal: AbortSignal | undefined, terminated = 0
   const service = new RustPixelPocStyleService(abort => { signal = abort; return new Promise(resolve => { finish = resolve }) }, { taskTimeoutMs: 25 })

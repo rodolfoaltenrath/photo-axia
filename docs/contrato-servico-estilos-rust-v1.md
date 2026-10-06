@@ -17,6 +17,11 @@ baixa fontes. No ponto de entrega desta fatia, o chamador browser era o diagnós
 A 23ª fatia liga um [consumidor real do canvas atrás de flag](contrato-preview-estilos-rust-v1.md),
 com URL/handoff/fallback, sem ativação padrão ou compositor documental único.
 
+A 24ª fatia adiciona um [agendador multicamadas isolado](contrato-agendador-estilos-rust-v1.md)
+com um serviço privado compartilhado. O preview ainda não usa essa fila. O
+preflight foi extraído sem mudar validações e `whenIdle()` permite esperar
+drenagem física após cancelamento; reconexão espera o término anterior.
+
 Rust, ABI, algoritmos e versões da stack permanecem iguais. Texto ainda é
 desenhado pelas APIs browser e pelo desenhador existente, não por Rust.
 
@@ -76,6 +81,10 @@ Promise rejeitada sem handler. Cancelar não significa publicar fallback antigo.
 `invalidate()` cancela pedidos e invalida a fonte; durante abertura, aborta e
 retira a conexão ainda não adotada. `dispose()` é terminal/idempotente, cancela
 pedidos, aborta abertura e termina o Worker de posse do serviço.
+
+`whenIdle()` espera não haver ativo/pendente e aguarda as barreiras de término
+físico. Não é bloqueio exclusivo: outro chamador ainda pode iniciar trabalho.
+O agendador possui o serviço privadamente e só despacha após essa espera.
 
 ## 4. RPC, falhas e retomada
 

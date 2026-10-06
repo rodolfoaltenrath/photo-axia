@@ -7,6 +7,10 @@ consumidor real: `useLayerStyleRaster` no canvas. O PNG é produzido pelos passe
 Rust existentes e apresentado pelo handoff atual. **Não é ainda o compositor
 único do documento.** Continuam os `<img>` por camada e a composição DOM.
 
+A 24ª fatia criou um [agendador compartilhado isolado](contrato-agendador-estilos-rust-v1.md),
+ainda sem ampliar o preview descrito aqui. O limite de um dono por janela
+continua vigente até a integração e o smoke multicamadas posteriores.
+
 A integração permanece **desligada por padrão**. Ativação explícita:
 
 ```powershell
