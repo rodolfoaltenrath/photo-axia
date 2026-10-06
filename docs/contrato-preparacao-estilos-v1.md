@@ -85,6 +85,40 @@ coincidir com metadata antes de criar Canvas/readback. Não há fetch de URL no
 Worker, cache de assets ou cache de resultado: mudança de Blob recompõe a partir
 dos pixels atuais, sem invalidar a fonte se suas margens continuarem iguais.
 
+### Saída PNG no Worker
+
+`composeMediaPng` aceita a mesma entrada de `composeMedia`, mas envia
+`style-media-staged-png`. O processamento de fonte/assets/região/STG1 é o mesmo;
+a saída RGBA permanece no Worker e é codificada em PNG por `OffscreenCanvas`.
+Não existe outro algoritmo de efeitos para o PNG nem nova rasterização de texto.
+Rust continua produzindo os pixels; o encoder é do navegador, não um codec Rust.
+
+Resposta `encoded-staged-region` contém `blob`, dimensões, sourceId, geração,
+timings do adapter e `encoding: { canvasUploadMs, pngEncodeMs }`, sem RGBA.
+A sessão acrescenta as mesmas dimensões originais/expandidas e offsets locais.
+O PNG é somente o raster compacto da região pedida, sem aplicação de transform
+documental, opacidade da camada, DPI de exportação ou composição da pilha.
+
+Formato de saída não entra na chave de fonte. Alternar RGBA/PNG preserva handle
+se conteúdo/geometria/escala/qualidade forem os mesmos. O gate exige o formato
+solicitado além de pedido/sourceId/geração/versão visual; RGBA não satisfaz pedido
+PNG e vice-versa. Blob vazio, MIME diferente de `image/png`, geometria/timings
+inválidos ou ack obsoleto não são resultados publicáveis. A sessão não cria URLs
+de objeto: o consumidor futuro será responsável por criação/revogação e handoff.
+
+Decode → STG1 → encode ocupa **um trabalho na fila serial existente**, não outra
+fila de encoders paralelos. Barreiras de lifecycle e cancelamento continuam fora
+dela. Converter um PNG ativo não é interrompível; após o await, Worker e sessão
+conferem atualidade antes de devolver. Canvas é reduzido em `finally`, inclusive
+em erro/cancelamento. Falha de encode não invalida fonte e permite retry.
+
+ImageData usa uma view da saída RGBA, respeitando byteOffset/comprimento, sem
+nova cópia completa no JS e sem transferir/destacar o buffer. Canvas ainda copia
+os pixels e pode convertê-los para representação premultiplicada. PNG é lossless
+**para os pixels entregues ao encoder**; o caminho Canvas pode alterar RGB oculto
+ou arredondar cores com alfa parcial. Não prometer comparação universal byte a
+byte entre RGBA puro e PNG redecodificado, nem hash PNG estável entre browsers.
+
 ## 2. Preparação e coordenadas
 
 Styles/luz usam os normalizadores existentes. A escala segue
@@ -116,6 +150,10 @@ de mídia, inclui layout, decode/desenho, readback e padding, **sem espera na fi
 `stagingMs` mede somente alocação/cópia da fonte no WASM. Timings do tile medem
 o adapter/kernel, incluindo cópia do pacote, mas não decode de assets/fila/RPC.
 Nenhum é tempo total de UI; não somar como benchmark end-to-end.
+
+`canvasUploadMs` inclui criação do Canvas/contexto/ImageData e `putImageData`;
+`pngEncodeMs` mede `convertToBlob` até sua resolução. Não incluem decode de
+fonte/assets, espera na fila, normalização editorial, RPC ou handoff/pintura.
 
 Região omitida significa raster expandido inteiro. Região fornecida é absoluta
 na **grade expandida da camada**, não no documento. Gradientes, padrões, ruído
@@ -258,6 +296,25 @@ Validar cabeçalhos/limites intrínsecos e orçamento global de filas/cache perm
 necessário antes do rollout. Não tratar limite de Blob como proteção completa
 contra imagens de descompressão excessiva.
 
+PNG tem preflight próprio antes de criar Canvas e, no Worker, antes do kernel:
+
+```text
+retainedBytes = stagedSource + decodedAssets + packetBytes
+pngWorkingBytes = retainedBytes + 3 × tileRGBA
+```
+
+As três parcelas do tile estimam saída RGBA, Canvas e margem de trabalho do
+encoder. Limite lógico de 96 MiB; RGBA e Blob individuais continuam limitados a
+64 MiB. Após encode, `pngWorkingBytes + blob.size` também deve caber em 96 MiB
+para publicar. Consumidor faz o preflight leve sem pacote antes do loader;
+Worker cobra pacote depois do decode e antes de executar STG1/encode.
+
+Tamanho comprimido e memória interna real do encoder não são conhecidos antes
+da conversão: rejeitar o Blob pronto não evita essa alocação anterior. Canvas/
+encoder/GC podem exceder a estimativa; isso **não** é teto rígido de RSS nem
+orçamento agregado entre pedidos/Workers. Fila de quantidade limitada não
+substitui o futuro agendamento/orçamento em bytes.
+
 `stagePreparedSource` valida/consome geração antes da factory e retira a fonte
 anterior, mesmo se layout/padding/bytes falharem. Geração inválida/atrasada não
 executa a factory nem retira fonte atual. Factory que falha consome a geração;
@@ -293,7 +350,14 @@ do decoder browser. O diagnóstico Wails/WebView2 usa **PNG real**, confere byte
 opacos fixos, padding, tiles/reuso, mudança de padrão e texto não vazio. Isso não
 comprova paridade de fontes/antialiasing entre plataformas.
 
-Falta output encode, coalescência/prioridade, cache/orçamento agregado, limites
+`composeMediaPng` completa decode → efeitos Rust → Blob no Worker experimental.
+Testes Node de encode usam doubles explícitos, não um codec PNG real. O smoke
+WebView2 confere assinatura/dimensões e redecodifica PNG real de integral/tile,
+Fill, padrão atualizado e texto não vazio, com reuso da fonte e offsets. Casos
+fixos têm pixels representáveis no Canvas; não são uma promessa de paridade
+universal de alfa/cores ou desempenho do encoder.
+
+Faltam serviço/integração do consumidor, coalescência/prioridade, cache/orçamento agregado, limites
 intrínsecos das imagens e integração/medição do serviço real. Medir decode
 → preparação → Worker → encode → handoff e verificar regressões na interface.
 Não basta os testes desta fatia para fechar C2; pilha/backdrop/transforms são

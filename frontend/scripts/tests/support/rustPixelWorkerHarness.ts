@@ -4,7 +4,7 @@ import type { RustPixelPocRequest, RustPixelPocResponse } from '../../../src/edi
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
 /** Shared harness runs the real TS Worker behind the Node self/postMessage bridge. */
-export function createRustPixelWorkerHarness(options: { mediaFixtures?: boolean } = {}) {
+export function createRustPixelWorkerHarness(options: { mediaFixtures?: boolean; encodeDelayMs?: number; failEncodeCount?: number; holdEncoding?: boolean } = {}) {
   const worker = new Worker(new URL('../../rustPixelPoc.node-worker.mjs', import.meta.url), { workerData: options })
   const pending = new Map<number, { resolve: (value: RustPixelPocResponse) => void;
     reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }>()
@@ -23,6 +23,17 @@ export function createRustPixelWorkerHarness(options: { mediaFixtures?: boolean 
   worker.on('error', rejectPending)
   worker.on('exit', code => rejectPending(new Error(`Worker encerrado: ${code}`)))
   return {
+    releaseEncoding() { worker.postMessage({ type: 'fixture-release-encoding' }) },
+    waitForEncoding() {
+      return new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => { worker.off('message', listener); reject(new Error('Encoder não iniciou.')) }, 5000)
+        function listener(message: { type?: string }) {
+          if (message.type !== 'fixture-encode-started') return
+          clearTimeout(timeout); worker.off('message', listener); resolve()
+        }
+        worker.on('message', listener)
+      })
+    },
     cancel(id: number) { worker.postMessage({ type: 'cancel', id }) },
     send(request: WithoutId<RustPixelPocRequest>, transfers: ArrayBuffer[] = []) {
       const id = ++nextId

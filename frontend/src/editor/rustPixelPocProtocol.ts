@@ -14,6 +14,8 @@ import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradien
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
   | { type: 'stage-style-media'; id: number; source: LayerStyleWorkerSource; input: RustPixelPocStyleSourceInput; generation: number }
+  | { type: 'style-media-staged-png'; id: number; sourceId: number; input: RustPixelPocStyleSourceInput;
+      region: RustPixelPocRegion; patterns: Record<string, Blob> }
   | { type: 'style-media-staged-region'; id: number; sourceId: number; input: RustPixelPocStyleSourceInput;
       region: RustPixelPocRegion; patterns: Record<string, Blob> }
   | { type: 'stage-style-source'; id: number; rgba: ArrayBuffer; input: RustPixelPocStyleSourceInput; generation: number }
@@ -65,6 +67,9 @@ export interface RustPixelPocTimings {
 }
 
 export type RustPixelPocResponse =
+  | { type: 'encoded-staged-region'; id: number; blob: Blob; width: number; height: number;
+      sourceId: number; generation: number; timings: RustPixelPocTimings;
+      encoding: { canvasUploadMs: number; pngEncodeMs: number } }
   | { type: 'ready'; id: number }
   | { type: 'rendered'; id: number; rgba: ArrayBuffer; timings: RustPixelPocTimings }
   | { type: 'rendered-region'; id: number; rgba: ArrayBuffer; width: number; height: number;

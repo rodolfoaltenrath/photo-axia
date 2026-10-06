@@ -406,6 +406,34 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         [...new Uint8Array(mediaTile.rgba)].join(',') !== '20,30,168,255') {
       throw new Error('Worker Rust não reutilizou fonte PNG entre estilos/tiles.')
     }
+    async function readPng(blob: Blob, width: number, height: number) {
+      const header = new Uint8Array(await blob.slice(0, 8).arrayBuffer())
+      if (header.join(',') !== '137,80,78,71,13,10,26,10') throw new Error('Worker devolveu saída sem assinatura PNG.')
+      const bitmap = await createImageBitmap(blob)
+      let canvas: OffscreenCanvas | undefined
+      try {
+        if (bitmap.width !== width || bitmap.height !== height) throw new Error('PNG codificado tem dimensões incompatíveis.')
+        canvas = new OffscreenCanvas(width, height)
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('Canvas indisponível para validar PNG.')
+        context.drawImage(bitmap, 0, 0)
+        return context.getImageData(0, 0, width, height).data
+      } finally {
+        bitmap.close()
+        if (canvas) { canvas.width = 1; canvas.height = 1 }
+      }
+    }
+    const encodedMedia = await mediaSession.composeMediaPng(mediaRequest)
+    if (encodedMedia.sourceId !== media.sourceId || encodedMedia.offsetX !== -1 || mediaLoads !== 1 ||
+        (await readPng(encodedMedia.blob, 2, 1)).join(',') !== '255,0,0,255,0,0,255,128') {
+      throw new Error('Worker Rust não preservou efeitos/offsets no PNG integral.')
+    }
+    const encodedTile = await mediaSession.composeMediaPng({ ...mediaRequest,
+      styles: normalizeLayerStyleConfig({ ...preparedStyles, fillOpacity: 100 }), region: { x: 1, y: 0, width: 1, height: 1 } })
+    if (encodedTile.sourceId !== media.sourceId || encodedTile.offsetX !== 0 || mediaLoads !== 1 ||
+        (await readPng(encodedTile.blob, 1, 1)).join(',') !== '20,30,168,255') {
+      throw new Error('Worker Rust não preservou Fill/reuso no PNG regional.')
+    }
     const assetBlob = await pngFixture([255, 0, 0, 255])
     const mediaPattern = { id: 'diagnostic-pattern', name: 'diagnostic', width: 1, height: 1,
       mimeType: 'image/png', sourceUrl: 'data:image/png;base64,AA==' }
@@ -417,12 +445,23 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         [...new Uint8Array(green.rgba)].join(',') !== '0,255,0,255') {
       throw new Error('Worker Rust não atualizou pixels do padrão sem cache de resultado.')
     }
-    const text = await mediaSession.composeMedia({ sourceIdentity: 'text-diagnostic-v1', sourceWidth: 120, sourceHeight: 58,
+    const encodedPattern = await mediaSession.composeMediaPng({ ...assetRequest,
+      patterns: { [mediaPattern.id]: await pngFixture([0, 255, 0, 255]) } })
+    if (encodedPattern.sourceId !== green.sourceId || (await readPng(encodedPattern.blob, 1, 1)).join(',') !== '0,255,0,255') {
+      throw new Error('Worker Rust não codificou o padrão atual.')
+    }
+    const textRequest = { sourceIdentity: 'text-diagnostic-v1', sourceWidth: 120, sourceHeight: 58,
       styles: normalizeLayerStyleConfig({}), globalLight: { angle: 30, altitude: 30 }, source: async () => ({
         type: 'text' as const, text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' }, drawScaleX: 1, drawScaleY: 1
-      }) })
+      }) }
+    const text = await mediaSession.composeMedia(textRequest)
     if (!new Uint8Array(text.rgba).some((value, index) => index % 4 === 3 && value > 0)) {
       throw new Error('Worker Rust recebeu fonte de texto vazia.')
+    }
+    const encodedText = await mediaSession.composeMediaPng(textRequest)
+    if (encodedText.sourceId !== text.sourceId ||
+        !(await readPng(encodedText.blob, 120, 58)).some((value, index) => index % 4 === 3 && value > 0)) {
+      throw new Error('Worker Rust codificou texto vazio ou perdeu reuso da fonte.')
     }
     await mediaSession.dispose()
     const disposed = await send({ type: 'dispose' })

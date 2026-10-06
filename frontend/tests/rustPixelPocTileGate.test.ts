@@ -4,6 +4,24 @@ import { RustPixelPocTileGate } from '../src/editor/rustPixelPocTileGate.ts'
 import type { RustPixelPocResponse } from '../src/editor/rustPixelPocProtocol.ts'
 
 const timings = { allocationMs: 0, copyInMs: 0, kernelMs: 0, copyOutMs: 0, releaseMs: 0 }
+
+test('gate exige formato pedido e aplica a mesma invalidação a PNG e RGBA', () => {
+  const gate = new RustPixelPocTileGate()
+  gate.beginSourceChange(); assert.equal(gate.adoptSource(staged(1, 7, 1)), true)
+  const png: RustPixelPocResponse = { type: 'encoded-staged-region', id: 2, sourceId: 7, generation: 1,
+    width: 1, height: 1, blob: new Blob(['fixture'], { type: 'image/png' }), timings,
+    encoding: { canvasUploadMs: 0, pngEncodeMs: 0 } }
+  const raw = gate.captureTile('style', 2)
+  assert.ok(raw); assert.equal(raw.isCurrent(png), false)
+  const encoded = gate.captureTile('style', 2, 'encoded-staged-region')
+  assert.ok(encoded); assert.equal(encoded.isCurrent(png), true)
+  assert.equal(encoded.isCurrent(tile(2, 7, 1)), false)
+  assert.equal(raw.isCurrent(tile(2, 7, 1)), false)
+  gate.beginViewChange(); assert.equal(encoded.isCurrent(png), false)
+  const current = gate.captureTile('style', 2, 'encoded-staged-region')
+  assert.ok(current); assert.equal(current.isCurrent(png), true)
+  gate.beginSourceChange(); assert.equal(current.isCurrent(png), false)
+})
 function staged(id: number, sourceId: number, generation: number):
   Extract<RustPixelPocResponse, { type: 'source-staged' }> {
   return { type: 'source-staged', id, sourceId, generation, stagingMs: 0 }

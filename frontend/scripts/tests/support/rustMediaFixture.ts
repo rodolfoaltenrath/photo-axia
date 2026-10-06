@@ -11,9 +11,11 @@ export function rustMediaBlob(fixture: Partial<RustMediaFixture> = {}) {
 }
 
 /** Canvas/decoder doubles only; real PNG coverage lives in the WebView smoke. */
-export function installRustMediaFixtures() {
-  const originals = { OffscreenCanvas: globalThis.OffscreenCanvas, createImageBitmap: globalThis.createImageBitmap }
+export function installRustMediaFixtures(options: { encodeDelayMs?: number; failEncodeCount?: number } = {}) {
+  const originals = { OffscreenCanvas: globalThis.OffscreenCanvas, createImageBitmap: globalThis.createImageBitmap, ImageData: globalThis.ImageData }
   const state = { decodes: 0, closes: 0, reads: 0, textDraws: 0,
+    encodes: 0, uploads: 0, failedEncodes: options.failEncodeCount ?? 0, badMime: false, emptyBlob: false,
+    onEncode: null as (() => void) | null, encodeBlock: null as Promise<void> | null,
     options: [] as (ImageBitmapOptions | undefined)[], canvases: [] as Canvas[], block: null as Promise<void> | null }
   class Canvas {
     width: number
@@ -21,12 +23,22 @@ export function installRustMediaFixtures() {
     pixels: number[] = [0, 0, 0, 0]
     failRead = false
     constructor(width: number, height: number) { this.width = width; this.height = height; state.canvases.push(this) }
+    async convertToBlob() {
+      state.encodes++
+      const fixture = { width: this.width, height: this.height, rgba: this.pixels }
+      state.onEncode?.()
+      if (state.encodeBlock) await state.encodeBlock
+      if (options.encodeDelayMs) await new Promise(resolve => setTimeout(resolve, options.encodeDelayMs))
+      if (state.failedEncodes > 0) { state.failedEncodes--; throw new Error('encode-failed') }
+      return new Blob(state.emptyBlob ? [] : [JSON.stringify(fixture)], { type: state.badMime ? 'image/jpeg' : 'image/png' })
+    }
     getContext() {
       const canvas = this
       return {
         save() {}, restore() {}, scale() {}, translate() {}, rotate() {}, fillRect() {},
         measureText(content: string) { return { width: content.length * 8 } },
         fillText() { state.textDraws++; canvas.pixels = [0, 0, 0, 255] },
+        putImageData(pixels: ImageData) { state.uploads++; canvas.pixels = [...pixels.data] },
         drawImage(bitmap: RustMediaFixture) { canvas.pixels = bitmap.rgba; canvas.failRead = !!bitmap.failRead },
         getImageData(_x: number, _y: number, width: number, height: number) {
           state.reads++
@@ -37,6 +49,13 @@ export function installRustMediaFixtures() {
       }
     }
   }
+  class Pixels {
+    data: Uint8ClampedArray
+    width: number
+    height: number
+    constructor(data: Uint8ClampedArray, width: number, height: number) { this.data = data; this.width = width; this.height = height }
+  }
+  globalThis.ImageData = Pixels as unknown as typeof ImageData
   globalThis.OffscreenCanvas = Canvas as unknown as typeof OffscreenCanvas
   globalThis.createImageBitmap = (async (blob: Blob, options?: ImageBitmapOptions) => {
     state.decodes++; state.options.push(options)
@@ -49,5 +68,6 @@ export function installRustMediaFixtures() {
   return { state, restore() {
     globalThis.OffscreenCanvas = originals.OffscreenCanvas
     globalThis.createImageBitmap = originals.createImageBitmap
+    globalThis.ImageData = originals.ImageData
   } }
 }

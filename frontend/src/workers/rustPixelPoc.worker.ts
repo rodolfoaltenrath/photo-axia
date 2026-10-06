@@ -2,6 +2,7 @@ import { createRustPixelPocRuntime, RustPixelPocError } from '../editor/rustPixe
 import { padRustStyleSource, prepareRustStyleJob, prepareRustStyleSourceLayout } from '../editor/rustPixelPocStylePreparation.ts'
 import { decodeRustStyleSource, decodeRustStyleAssets, prepareRustStyleAssets } from '../editor/rustPixelPocMedia.ts'
 import { RustPixelPocMediaQueue } from '../editor/rustPixelPocMediaQueue.ts'
+import { encodeRustStylePng, rustStylePngLayout } from '../editor/rustPixelPocPng.ts'
 import type { RustPixelPocRequest, RustPixelPocResponse } from '../editor/rustPixelPocProtocol.ts'
 
 type Runtime = Awaited<ReturnType<typeof createRustPixelPocRuntime>>
@@ -60,7 +61,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
   const current = generation
   const runtime = runtimePromise
   // Never cancel source lifecycle barriers.
-  const isRender = request.type === 'style-media-staged-region' || request.type === 'render' || request.type === 'render-region' ||
+  const isRender = request.type === 'style-media-staged-png' || request.type === 'style-media-staged-region' || request.type === 'render' || request.type === 'render-region' ||
     request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
     request.type === 'blend-if-this-layer-staged-region' ||
     request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
@@ -94,7 +95,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
       reply({ type: 'source-staged', id: request.id, ...staged, prepared })
       return
     }
-    if (request.type === 'style-media-staged-region') {
+    if (request.type === 'style-media-staged-region' || request.type === 'style-media-staged-png') {
       const layout = prepareRustStyleSourceLayout(request.input)
       const metadata = engine.sourceMetadata(request.sourceId)
       const check = () => {
@@ -112,18 +113,27 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
           region.x + region.width > layout.width || region.y + region.height > layout.height) {
         throw new RustPixelPocError('invalid-input')
       }
+      const retainedBytes = layout.width * layout.height * 4 + assets.decodedBytes
+      if (request.type === 'style-media-staged-png') rustStylePngLayout(region.width, region.height, retainedBytes)
       const result = await mediaQueue.run(async () => {
         check()
         const patterns = await decodeRustStyleAssets(assets, check)
         check()
         const job = prepareRustStyleJob({ ...request.input, region, patterns })
         if (job.workingBytes + assets.decodedBytes + job.packetBytes > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
-        return engine.styleStagesStagedRegion(request.sourceId, job.region, job.plan)
+        if (request.type === 'style-media-staged-png') rustStylePngLayout(region.width, region.height, retainedBytes + job.packetBytes)
+        const rendered = engine.styleStagesStagedRegion(request.sourceId, job.region, job.plan)
+        const common = { id: request.id, width: region.width, height: region.height, sourceId: request.sourceId,
+          generation: rendered.generation, timings: rendered.timings }
+        if (request.type === 'style-media-staged-png') {
+          const encoded = await encodeRustStylePng(rendered.rgba, region.width, region.height, check, retainedBytes + job.packetBytes)
+          return { type: 'encoded-staged-region' as const, ...common, ...encoded }
+        }
+        return { type: 'rendered-staged-region' as const, ...common, rgba: rendered.rgba.buffer as ArrayBuffer }
       })
       check()
-      reply({ type: 'rendered-staged-region', id: request.id, rgba: result.rgba.buffer as ArrayBuffer,
-        width: region.width, height: region.height, sourceId: request.sourceId,
-        generation: result.generation, timings: result.timings }, [result.rgba.buffer])
+      if (result.type === 'encoded-staged-region') reply(result)
+      else reply(result, [result.rgba])
       return
     }
     if (request.type === 'stage-style-source') {

@@ -1,7 +1,7 @@
 # Roadmap: compositor único em Rust e Axia multilíngue
 
 Estado: **C0/I0 iniciados; C1/C2 com passes Rust isolados; nenhuma migração visual ou de compositor ativada**.
-Atualizado em 2026-10-05.
+Atualizado em 2026-10-06.
 
 Este plano tem duas trilhas independentes, com contratos compartilhados: (A) unificar
 preview e exportação em um compositor de documento, introduzindo Rust/WASM onde
@@ -568,6 +568,20 @@ intrínsecos de imagens, coalescência, cache/orçamento global, serviço real e
 end-to-end ainda faltam. Preview normal/exportação/`.axia` continuam inalterados.
 Detalhes no [contrato da preparação](contrato-preparacao-estilos-v1.md) e na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
+
+Uma vigésima primeira fatia completa **decode → efeitos Rust → PNG no Worker**.
+`composeMediaPng` usa o mesmo pipeline/região e fonte reutilizável de RGBA;
+Canvas codifica a saída sem trazer pixels para a UI. Gate exige formato pedido,
+geometria e gerações atuais; cancelamento/troca/dispose durante encode nunca
+publicam PNG antigo. Fila serial existente limita encoders simultâneos e Canvas
+temporário é limpo em `finally`. Preflight cobra fonte/assets/pacote retidos,
+saída/Canvas/margem de encoder e Blob pronto; não é teto de RSS.
+Timings de upload Canvas/encode são separados do kernel, sem benchmark end-to-end.
+Smoke Wails redecodifica PNG real integral/tile/Fill/padrão/texto e confirma reuso.
+Node distingue doubles de encoder do Worker/WASM real. Preview normal, exportação
+e `.axia` permanecem inalterados; faltam consumidor/serviço real, orçamento global,
+coalescência/prioridade, limites intrínsecos e medições/QA para encerrar C2.
+Pilha documental e canvas único continuam C3/C4, sem remover renderizadores antigos.
 
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a

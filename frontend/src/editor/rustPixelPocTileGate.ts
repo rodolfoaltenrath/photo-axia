@@ -1,7 +1,7 @@
 import type { RustPixelPocResponse } from './rustPixelPocProtocol.ts'
 
 type StagedSource = Extract<RustPixelPocResponse, { type: 'source-staged' }>
-type StagedTile = Extract<RustPixelPocResponse, { type: 'rendered-staged-region' }>
+type StagedTile = Extract<RustPixelPocResponse, { type: 'rendered-staged-region' | 'encoded-staged-region' }>
 
 /** Experimental reply guard; not connected to the editor. */
 export class RustPixelPocTileGate {
@@ -33,7 +33,8 @@ export class RustPixelPocTileGate {
     this.latestTileToken.clear()
   }
 
-  captureTile(key: string, requestId: number) {
+  captureTile<T extends StagedTile['type'] = 'rendered-staged-region'>(key: string, requestId: number,
+    responseType: T = 'rendered-staged-region' as T) {
     if (this.sourceId === null) return null
     if (!Number.isSafeInteger(requestId) || requestId <= 0) return null
     const token = Symbol(key)
@@ -44,8 +45,9 @@ export class RustPixelPocTileGate {
     return {
       sourceId,
       generation,
-      isCurrent: (response: RustPixelPocResponse): response is StagedTile =>
-        response.type === 'rendered-staged-region' &&
+      isCurrent: (response: RustPixelPocResponse): response is Extract<StagedTile, { type: T }> =>
+        (response.type === 'rendered-staged-region' || response.type === 'encoded-staged-region') &&
+        response.type === responseType &&
         response.id === requestId &&
         response.sourceId === sourceId && response.generation === generation &&
         this.sourceId === sourceId && this.generation === generation &&

@@ -1935,3 +1935,71 @@ Próximos passos: encode de saída e serviço experimental completo, coalescênc
 prioridade, cache/orçamento agregado e limites intrínsecos; só depois integrar e
 medir decode → preparação → Rust → encode → handoff com gates de regressão.
 C0/C1/C2 continuam abertos; pilha/backdrop/transforms são C3 e canvas único C4.
+
+## Vigésima primeira fatia: PNG após o pipeline Rust no Worker
+
+Em 2026-10-06, `composeMediaPng` passou a percorrer fonte codificada/texto →
+padding → assets → STG1 Rust → PNG dentro do Worker experimental. Saída PNG não
+traz RGBA para a UI e não tem outro algoritmo de efeitos. Encoder é o Canvas do
+navegador; Rust/ABI/kernels não mudam. Preview normal, exportação e `.axia` seguem
+nos caminhos anteriores, sem rollout nem compositor de documento novo.
+
+### Implementação
+
+- `style-media-staged-png` compartilha validação/fonte/assets/região/STG1 com
+  `style-media-staged-region`. `encoded-staged-region` devolve Blob PNG compacto,
+  dimensões, sourceId, geração, timings do kernel e timings separados de Canvas/
+  encode. A sessão acrescenta os mesmos offsets e dimensões locais do RGBA.
+- Formato de saída não invalida fonte. Alternância PNG/RGBA, Fill, padrões e
+  tiles reutilizam handle quando geometria/identidade continuam iguais.
+  Não há cache de resultado, nova rasterização de texto ou URLs de objeto.
+- Gate exige o tipo solicitado além de ID, fonte, geração, revisão e token.
+  Sessão rejeita ack com MIME/Blob/dimensões/timings incompatíveis; resultado
+  cancelado usa `RustPixelPocStyleCancelledError`, não erro de pixels.
+- Encode permanece na mesma fila serial de mídia, como parte de um trabalho.
+  Cancelamento e invalidate/init/dispose continuam imediatos. Após await do
+  encoder, Worker e sessão revalidam atualidade; PNG obsoleto nunca publica.
+  Encoder já ativo não é interrompido; Canvas sempre é reduzido em `finally`.
+- ImageData é view da saída RGBA, respeitando byteOffset/comprimento, sem cópia
+  adicional completa no JS, alteração ou detach do buffer. Canvas/encoder têm
+  cópias próprias. Falha de encode mantém fonte reutilizável e permite retry.
+- Preflight de PNG cobra fonte/assets/pacote retidos + três rasters de tile
+  (RGBA, Canvas e margem de encoder), até 96 MiB; após encode também cobra Blob
+  pronto. Raster e Blob individuais têm limite de 64 MiB. Não é teto rígido de
+  RSS: tamanho comprimido/memória interna/GC não são conhecidos de antemão.
+- Timings de upload Canvas e encode não incluem fila, decode de assets/fonte,
+  RPC ou handoff/pintura. Não houve benchmark end-to-end nem afirmação de FPS.
+- Canvas pode arredondar cores com alfa parcial ou perder RGB oculto. Não há
+  promessa de igualdade universal PNG↔RGBA puro ou hashes PNG entre plataformas.
+  Contrato e limites no [documento de preparação](contrato-preparacao-estilos-v1.md).
+
+### Validação
+
+- `npm test`: **515** testes frontend e tipos; inclui gate específico de formato.
+- `npm run test:rust-poc`: **292** testes (5 standalone, 1 Worker básico, 286 nos
+  scripts). Esta fatia adiciona **15** casos nos scripts e um no frontend.
+  Goldens puros históricos não foram regenerados.
+- Unitários verificam preflight, view/byteOffset e fonte intacta, cleanup em
+  sucesso/erro/obsolescência, API ausente, Blob vazio/MIME incorreto, memória de
+  Blob pronto e recuperação do encoder.
+- Worker/WASM reais sob Node, com **doubles explícitos** de Canvas/encoder:
+  integral/tile/Fill/offsets, alternância PNG/RGBA com mesmo handle, padrão atual,
+  erro de encoder e retry, ack malformado, fonte/versão antigas e cancelamento
+  remoto como cancelamento na sessão. Corridas de cancelamento/invalidação/
+  dispose/reinit/último pedido usam barreira controlada do encoder na fixture,
+  não dependem de acertar um intervalo de milissegundos.
+- Casos de PNG foram repetidos cinco vezes consecutivas sem falha.
+- Build de produção, integridade do bundle e smoke **Wails/WebView2** passaram.
+  Smoke confere assinatura/dimensões de **PNG real**, redecodifica saída integral
+  e tile, valida sombra/Fill/offsets e mesmo handle/loader, padrão verde atual e
+  texto não vazio. Não comprova paridade tipográfica entre plataformas.
+- `cargo test --offline --locked`: **61** testes nativos passaram. Nenhum arquivo
+  Rust ou versão da stack mudou. WASM continua com **100.281 bytes**, hash
+  `axia_pixel_core-674Kws7T.wasm`; Worker normal de estilos continua
+  `layerStyleCompositor.worker-BALgYBwV.js`. Aviso existente de chunk >500 kB
+  permanece, sem falha de build. Executável do smoke é temporário, não release.
+
+O fluxo experimental de camada agora devolve pixels ou PNG. Ainda faltam serviço/
+consumidor real, política de cache/orçamento agregado, coalescência/prioridade,
+limites intrínsecos de imagem e medições/QA. Nada fecha C0/C1/C2 por si só;
+pilha documental/backdrop/transforms são C3 e canvas único é C4.

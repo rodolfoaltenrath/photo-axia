@@ -46,6 +46,8 @@ assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('stage-sty
   'O Worker deve incluir decode de imagem/texto')
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('style-media-staged-region'),
   'O Worker deve incluir decode de assets e execução regional')
+assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('style-media-staged-png'),
+  'O Worker deve incluir codificação PNG após o pipeline Rust')
 assert.ok(names.some((name) => name.startsWith('index-') && name.endsWith('.js') &&
   readFileSync(join(assetsRoot, name), 'utf8').includes(diagnosticName)),
   'O ponto de entrada deve referenciar o chunk diagnóstico')

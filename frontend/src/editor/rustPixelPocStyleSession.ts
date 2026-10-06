@@ -3,6 +3,7 @@ import { RustPixelPocError } from './rustPixelPocError.ts'
 import { copyRustStyleSource, describeRustStyleSource, prepareRustStyleJob, prepareRustStyleSourceLayout,
   type RustPixelPocStyleInput, type RustPixelPocStyleSourceInput, type RustPixelPocStyleSourceLayout } from './rustPixelPocStylePreparation.ts'
 import { prepareRustStyleAssets } from './rustPixelPocMedia.ts'
+import { rustStylePngLayout } from './rustPixelPocPng.ts'
 import type { LayerStyleWorkerSource } from './layerStyleRenderProtocol.ts'
 import type { RustPixelPocRegion } from './rustPixelPocRuntime.ts'
 import { RustPixelPocTileGate } from './rustPixelPocTileGate.ts'
@@ -85,6 +86,24 @@ export class RustPixelPocStyleSession {
   }
 
   async composeMedia(request: RustPixelPocStyleMediaRequest) {
+    const { job, entry, revision, input, patterns } = this.prepareMedia(request)
+    return this.finish(job, entry, revision, staged => this.send({ type: 'style-media-staged-region',
+      sourceId: staged.sourceId, input, region: job.region, patterns }))
+  }
+
+  async composeMediaPng(request: RustPixelPocStyleMediaRequest) {
+    const { job, entry, revision, input, patterns } = this.prepareMedia(request, true)
+    const result = await this.receive(job, entry, revision, staged => this.send({ type: 'style-media-staged-png',
+      sourceId: staged.sourceId, input, region: job.region, patterns }), 'encoded-staged-region')
+    if (!(result.blob instanceof Blob) || result.blob.type !== 'image/png' || !result.blob.size ||
+        result.blob.size > 64 * 1024 * 1024 || !result.encoding ||
+        ![result.encoding.canvasUploadMs, result.encoding.pngEncodeMs].every(value => Number.isFinite(value) && value >= 0)) {
+      throw new RustPixelPocError('wasm-failure')
+    }
+    return { ...result, ...this.geometry(job) }
+  }
+
+  private prepareMedia(request: RustPixelPocStyleMediaRequest, png = false) {
     if (this.disposed) throw new RustPixelPocError('wasm-unavailable')
     const revision = ++this.revision
     this.gate.beginViewChange()
@@ -94,29 +113,44 @@ export class RustPixelPocStyleSession {
         region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
         region.x + region.width > layout.width || region.y + region.height > layout.height) throw new RustPixelPocError('invalid-input')
     const patterns = { ...request.patterns }
-    prepareRustStyleAssets(layout, patterns)
+    const assets = prepareRustStyleAssets(layout, patterns)
+    if (png) rustStylePngLayout(region.width, region.height, layout.width * layout.height * 4 + assets.decodedBytes)
     const input = { sourceIdentity: layout.sourceIdentity, sourceWidth: layout.sourceWidth, sourceHeight: layout.sourceHeight,
       styles: layout.styles, globalLight: layout.light, resolutionScale: layout.scale, quality: layout.quality }
     const entry = this.entry?.key === `media:${layout.sourceKey}` ? this.entry : this.prepareSource(layout, request.source, true)
-    return this.finish({ ...layout, region }, entry, revision, staged => this.send({ type: 'style-media-staged-region',
-      sourceId: staged.sourceId, input, region, patterns }))
+    return { job: { ...layout, region }, entry, revision, input, patterns }
   }
 
   private async finish(job: RustPixelPocStyleSourceLayout & { region: RustPixelPocRegion },
     entry: NonNullable<RustPixelPocStyleSession['entry']>, revision: number,
     execute: (source: Staged) => ReturnType<RustPixelPocSend>) {
+    const result = await this.receive(job, entry, revision, execute, 'rendered-staged-region')
+    if (!(result.rgba instanceof ArrayBuffer) || result.rgba.byteLength !== job.region.width * job.region.height * 4) {
+      throw new RustPixelPocError('wasm-failure')
+    }
+    return { ...result, ...this.geometry(job) }
+  }
+
+  private async receive<T extends 'rendered-staged-region' | 'encoded-staged-region'>(
+    job: RustPixelPocStyleSourceLayout & { region: RustPixelPocRegion },
+    entry: NonNullable<RustPixelPocStyleSession['entry']>, revision: number,
+    execute: (source: Staged) => ReturnType<RustPixelPocSend>, responseType: T) {
     const staged = await entry.promise
     if (revision !== this.revision || this.disposed || this.entry !== entry) throw new RustPixelPocStyleCancelledError()
     const execution = execute(staged)
-    const token = this.gate.captureTile('style', execution.id)
+    const token = this.gate.captureTile('style', execution.id, responseType)
     const result = await execution
     if (revision !== this.revision || this.disposed || this.entry !== entry) throw new RustPixelPocStyleCancelledError()
+    if (result.type === 'cancelled') throw new RustPixelPocStyleCancelledError()
     this.checked(result)
-    if (!token?.isCurrent(result) || result.width !== job.region.width || result.height !== job.region.height ||
-        !(result.rgba instanceof ArrayBuffer) || result.rgba.byteLength !== job.region.width * job.region.height * 4) {
+    if (!token?.isCurrent(result) || result.width !== job.region.width || result.height !== job.region.height) {
       throw new RustPixelPocError('wasm-failure')
     }
-    return { ...result, offsetX: job.offsetX + job.region.x, offsetY: job.offsetY + job.region.y,
+    return result
+  }
+
+  private geometry(job: RustPixelPocStyleSourceLayout & { region: RustPixelPocRegion }) {
+    return { offsetX: job.offsetX + job.region.x, offsetY: job.offsetY + job.region.y,
       sourceWidth: job.sourceWidth, sourceHeight: job.sourceHeight, paddedWidth: job.width, paddedHeight: job.height }
   }
 
