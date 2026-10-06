@@ -67,8 +67,7 @@ export function encodeBatchGradient(effect: RustPixelPocGradientOverlay) {
   return { colors, opacities, radians, cosine: Math.cos(radians), sine: Math.sin(radians) }
 }
 
-export function encodeLocalBatch(plan: RustPixelPocBatchPlan, sourceBytes: number, tileBytes: number) {
-  if ([sourceBytes, tileBytes].some(bytes => !Number.isSafeInteger(bytes) || bytes <= 0 || bytes > 64 * 1024 * 1024 || bytes % 4 !== 0)) invalid()
+function prepareLocalBatch(plan: RustPixelPocBatchPlan) {
   if (!plan || !Array.isArray(plan.effects) || plan.effects.length > RUST_BATCH_EFFECTS) invalid()
   percent(plan.fillOpacity)
   if (plan.thisLayerBlendIf !== undefined) validateBatchBlendIf(plan.thisLayerBlendIf)
@@ -104,6 +103,14 @@ export function encodeLocalBatch(plan: RustPixelPocBatchPlan, sourceBytes: numbe
     for (const bytes of payloads) length += Math.ceil(bytes.byteLength / 8) * 8
     prepared.push({ pass, payloads, params })
   }
+  return { prepared, length }
+}
+
+export function localBatchPacketLength(plan: RustPixelPocBatchPlan) { return prepareLocalBatch(plan).length }
+
+export function encodeLocalBatch(plan: RustPixelPocBatchPlan, sourceBytes: number, tileBytes: number) {
+  if ([sourceBytes, tileBytes].some(bytes => !Number.isSafeInteger(bytes) || bytes <= 0 || bytes > 64 * 1024 * 1024 || bytes % 4 !== 0)) invalid()
+  const { prepared, length } = prepareLocalBatch(plan)
   const scratchCount = prepared.length || plan.thisLayerBlendIf !== undefined ? 2 : 1
   const total = sourceBytes + tileBytes * (1 + scratchCount) + length + prepared.length * 2048
   if (length > 64 * 1024 * 1024 || total > RUST_BATCH_JOB_BYTES) throw new RustPixelPocError('memory-limit')

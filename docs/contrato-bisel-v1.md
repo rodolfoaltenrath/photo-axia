@@ -153,7 +153,7 @@ pares de alfa, texturas/escala/inversão, tiles/halos, raios máximos, contornos
 estreitos, máscaras esparsas, combinação com Fill zero, falhas e worker real.
 Medições e verificações na [prova C1](prova-rust-wasm-c1.md).
 
-Os dez tipos atuais têm passes Rust isolados. Faltam conteúdo/executor de
-estágios integrado, preparação/insets, transformações, cache/orçamento global
+Os dez tipos atuais também têm [executor de estágios](contrato-estagios-v1.md)
+sobre fonte preparada. Faltam preparação/insets integrada, transformações, cache/orçamento global
 e validação end-to-end/multiplataforma. C0/C1/C2 continuam abertos; não é
 rollout no editor normal nem conclusão da migração.

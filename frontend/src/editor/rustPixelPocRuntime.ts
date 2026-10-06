@@ -8,12 +8,16 @@ import { encodeGlow, glowLayout, type RustPixelPocGlow } from './rustPixelPocGlo
 import { encodeSatin, satinLayout, type RustPixelPocSatin } from './rustPixelPocSatin.ts'
 import { encodeStroke, strokePacketLength, strokeLayout, type RustPixelPocStroke } from './rustPixelPocStroke.ts'
 import { encodeBevel, bevelPacketLength, bevelLayout, type RustPixelPocBevel } from './rustPixelPocBevel.ts'
+import { encodeStyleStages, type RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
 export { RustPixelPocError } from './rustPixelPocError.ts'
 
 const MAX_POC_BYTES = 64 * 1024 * 1024
 let nextSourceId = 0
 
 interface RustPixelPocExports {
+  axia_poc_style_stages_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
+    x: number, y: number, width: number, height: number, packetPointer: number, packetLength: number,
+    outputPointer: number, outputLength: number): number
   axia_poc_bevel_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
     x: number, y: number, width: number, height: number, targetPointer: number, targetLength: number,
     packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
@@ -119,7 +123,7 @@ const BLEND_MODES: Readonly<Record<LayerBlendMode, number>> = {
 type TilePass =
   | { type: 'drop-shadow' | 'inner-shadow' | 'glow' | 'satin' | 'stroke' | 'bevel'; pointer: number; length: number; packetPointer: number; packetLength: number }
   | { type: 'alpha-mask'; config: RustPixelPocAlphaMask }
-  | { type: 'local-batch'; pointer: number; length: number }
+  | { type: 'local-batch' | 'style-stages'; pointer: number; length: number }
   | { type: 'blend-if'; pointer: number; length: number; config: RustPixelPocUnderlyingBlendIf }
   | { type: 'blend-if-this-layer'; config: RustPixelPocBlendIf }
   | { type: 'color-overlay'; pointer: number; length: number; effect: RustPixelPocColorOverlay }
@@ -154,7 +158,8 @@ function validateExports(exports: WebAssembly.Exports): RustPixelPocExports {
       typeof candidate.axia_poc_glow_region !== 'function' || candidate.axia_poc_glow_region.length !== 14 ||
       typeof candidate.axia_poc_satin_region !== 'function' || candidate.axia_poc_satin_region.length !== 14 ||
       typeof candidate.axia_poc_stroke_region !== 'function' || candidate.axia_poc_stroke_region.length !== 14 ||
-      typeof candidate.axia_poc_bevel_region !== 'function' || candidate.axia_poc_bevel_region.length !== 14) {
+      typeof candidate.axia_poc_bevel_region !== 'function' || candidate.axia_poc_bevel_region.length !== 14 ||
+      typeof candidate.axia_poc_style_stages_region !== 'function' || candidate.axia_poc_style_stages_region.length !== 12) {
     throw new RustPixelPocError('wasm-unavailable')
   }
   return candidate as RustPixelPocExports
@@ -263,6 +268,11 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
               sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
               outputPointer, outputLength, pass.config.spreadRadius, pass.config.blurRadius, pass.config.precise ? 1 : 0)
             break
+          case 'style-stages':
+            status = exports.axia_poc_style_stages_region(sourcePointer, sourceLength,
+              sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
+              pass.pointer, pass.length, outputPointer, outputLength)
+            break
           case 'local-batch':
             status = exports.axia_poc_local_batch_region(sourcePointer, sourceLength,
               sourceWidth, sourceHeight, region.x, region.y, region.width, region.height,
@@ -308,7 +318,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         }
       }
       if (status !== 0) {
-        if ((pass?.type === 'local-batch' || pass?.type === 'alpha-mask' || pass?.type === 'drop-shadow' || pass?.type === 'inner-shadow' || pass?.type === 'glow' || pass?.type === 'satin' || pass?.type === 'stroke' || pass?.type === 'bevel') && status === 6) throw new RustPixelPocError('memory-limit')
+        if ((pass?.type === 'local-batch' || pass?.type === 'style-stages' || pass?.type === 'alpha-mask' || pass?.type === 'drop-shadow' || pass?.type === 'inner-shadow' || pass?.type === 'glow' || pass?.type === 'satin' || pass?.type === 'stroke' || pass?.type === 'bevel') && status === 6) throw new RustPixelPocError('memory-limit')
         throw new RustPixelPocError('wasm-failure')
       }
       computed = performance.now()
@@ -668,6 +678,23 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       alphaMaskLayout(staged.width, staged.height, region, config)
       return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
         region, 100, 0, 0, { type: 'alpha-mask', config }), generation: staged.generation }
+    },
+    styleStagesStagedRegion(sourceId: number, region: RustPixelPocRegion, plan: RustPixelPocStagesPlan) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!staged || staged.id !== sourceId) throw new RustPixelPocError('invalid-input')
+      validateRegion(region, staged.width, staged.height, 100)
+      const bytes = encodeStyleStages(plan, staged.width, staged.height, region)
+      const started = performance.now(), pointer = exports.axia_poc_alloc(bytes.length)
+      if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+      try {
+        if (pointer + bytes.length > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+        const allocated = performance.now()
+        new Uint8Array(exports.memory.buffer, pointer, bytes.length).set(bytes)
+        const copiedIn = performance.now()
+        return { ...renderFromPointer(staged.pointer, staged.length, staged.width, staged.height,
+          region, 100, allocated - started, copiedIn - allocated, { type: 'style-stages', pointer, length: bytes.length }),
+          generation: staged.generation }
+      } finally { exports.axia_poc_free(pointer, bytes.length) }
     },
     localBatchStagedRegion(sourceId: number, region: RustPixelPocRegion, plan: RustPixelPocBatchPlan) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')

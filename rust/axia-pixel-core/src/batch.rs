@@ -64,7 +64,7 @@ fn payload<'a>(
     packet.get(start..end).ok_or(1)
 }
 
-enum Effect<'a> {
+pub(crate) enum Effect<'a> {
     Color(ColorOverlay),
     Gradient {
         kind: GradientKind,
@@ -81,7 +81,7 @@ enum Effect<'a> {
     Pattern(PatternOverlay<'a>),
 }
 impl Effect<'_> {
-    fn apply(
+    pub(crate) fn apply(
         &self,
         source: &[u8],
         width: usize,
@@ -132,7 +132,7 @@ impl Effect<'_> {
     }
 }
 
-fn parse_effect<'a>(
+pub(crate) fn parse_effect<'a>(
     packet: &'a [u8],
     metadata_end: usize,
     record: &[u8],

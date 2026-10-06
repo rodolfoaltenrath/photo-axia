@@ -279,7 +279,7 @@ reais da CI e o teste do instalador distribuível.
 
 ### C2 — Estilos CPU e raster por região
 
-- [ ] Portar passes de estilo gradualmente, com testes de combinação e paridade
+- [x] Portar passes de estilo gradualmente, com testes de combinação e paridade
   por efeito. Adicionar entradas/halos e seed/âncora absolutos; verificar
   equivalência tile vs raster inteiro. Separar rasterização de texto/forma.
 - [x] Fechar dispatch exaustivo de efeitos no TS atual independentemente do
@@ -512,6 +512,22 @@ Conteúdo/executor de estágios, preparação/insets, cache/orçamento global,
 transformação, integração e validação end-to-end/multiplataforma continuam
 pendentes. C0/C1/C2 permanecem abertos; preview normal/exportação/`.axia`
 inalterados. Detalhes no [contrato do bisel](contrato-bisel-v1.md) e na
+[prova Rust/WASM](prova-rust-wasm-c1.md).
+
+Uma décima sétima fatia integra **externos → conteúdo/Fill → internos →
+overlays → superiores → Esta camada** em uma chamada Rust por tile. STG1
+reutiliza os dez tipos e preserva a máscara original; conteúdo compõe sobre
+sombras, não substitui o acumulado. Dois buffers internos alternam sem cópia
+JS entre efeitos; output externo só é escrito após a sequência completa.
+Preflight valida estágios, payloads e orçamento com o pico dos filtros e três
+rasters compactos. Goldens, combinações dos dez tipos/seis modos/Fill fracionário,
+tiles, flags e falhas passaram. Sonda Node 512²: TS 1467,50 ms, adapter Rust
+406,76 ms, tile 260² 103,49 ms; Rust reutiliza fonte/parâmetros preparados,
+enquanto TS inclui normalização/padding. Não é FPS nem ganho isolado da linguagem.
+O porte dos passes CPU está concluído nesta fronteira experimental; C2 ainda
+exige preparo/cache/agendamento real e medição end-to-end. C0/C1/C2 continuam
+abertos; não é compositor da pilha, C3/C4 nem rollout no preview normal.
+Detalhes no [contrato dos estágios](contrato-estagios-v1.md) e na
 [prova Rust/WASM](prova-rust-wasm-c1.md).
 
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo

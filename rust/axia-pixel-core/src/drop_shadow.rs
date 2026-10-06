@@ -121,6 +121,14 @@ fn parse(packet: &[u8]) -> Result<Shadow, u32> {
     })
 }
 
+pub(crate) fn validate_packet(packet: &[u8], inner: bool) -> Result<(), u32> {
+    let effect = parse(packet)?;
+    if effect.choke.is_some() != inner {
+        return Err(2);
+    }
+    Ok(())
+}
+
 pub fn apply_drop_shadow_region(
     source: &[u8],
     width: usize,

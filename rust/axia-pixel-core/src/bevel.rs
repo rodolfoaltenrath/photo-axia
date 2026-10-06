@@ -184,6 +184,10 @@ fn reserve_mask(count: usize) -> Result<Vec<u8>, u32> {
     mask.resize(count, 0);
     Ok(mask)
 }
+pub(crate) fn validate_packet(packet: &[u8]) -> Result<(), u32> {
+    parse(packet).map(|_| ())
+}
+
 pub fn apply_bevel_region(
     source: &[u8],
     width: usize,

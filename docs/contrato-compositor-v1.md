@@ -39,6 +39,10 @@ com diferenças centrais, preservando um pixel extra de halo. Completa os dez
 tipos de efeito em passes isolados; conteúdo/executor documental, integração
 ao preview e cache/orçamento global continuam pendentes.
 
+O [executor regional de estágios](contrato-estagios-v1.md) integra os dez tipos,
+conteúdo/Fill e Esta camada em uma chamada Rust sobre fonte preparada. Ainda
+não implementa a pilha, transformações, preparo/cache real nem preview normal.
+
 ## 1. Vocabulário e unidades
 
 - Documento: espaço contínuo em pixels documentais, origem `(0, 0)` no canto

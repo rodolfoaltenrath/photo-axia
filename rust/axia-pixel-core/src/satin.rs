@@ -108,6 +108,10 @@ fn job_extra(
     Ok(extra)
 }
 
+pub(crate) fn validate_packet(packet: &[u8]) -> Result<(), u32> {
+    parse(packet).map(|_| ())
+}
+
 pub fn apply_satin_region(
     source: &[u8],
     width: usize,

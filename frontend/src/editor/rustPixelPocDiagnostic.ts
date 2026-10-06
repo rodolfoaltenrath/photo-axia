@@ -204,6 +204,20 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         throw new Error(`Worker Rust produziu bisel ${style} diferente da referência fixa.`)
       }
     }
+    const stagesRequest = send({ type: 'style-stages-staged-region', sourceId: staged.sourceId,
+      region: { x: 1, y: 0, width: 1, height: 2 }, plan: { fillOpacity: 0,
+        external: [{ type: 'drop-shadow', shadow: { spreadRadius: 0, blurRadius: 0, offsetX: 0, offsetY: 0,
+          color: [255, 0, 0, 255], opacity: 100, blendMode: 'normal', noise: 0, seed: 0, knockout: false,
+          contour: { preset: 'linear', points: [] } } }], internal: [],
+        overlay: [{ type: 'color-overlay', effect: { color: [0, 0, 255, 255], opacity: 50, blendMode: 'normal' } }],
+        upper: [{ type: 'stroke', stroke: { outsideRadius: 1, insideRadius: 0, opacity: 75, blendMode: 'normal',
+          paint: { type: 'color', color: [51, 102, 153, 255] } } }]
+      } })
+    const stagesToken = gate.captureTile('estágios-direita', stagesRequest.id), stagesResult = await stagesRequest
+    if (!stagesToken?.isCurrent(stagesResult) ||
+        [...new Uint8Array(stagesResult.rgba)].join(',') !== '127,0,128,255,51,102,153,191') {
+      throw new Error('Worker Rust não preservou sombra → conteúdo → overlay → traçado.')
+    }
     const maskRequest = send({ type: 'alpha-mask-staged-region', sourceId: staged.sourceId,
       region: { x: 1, y: 0, width: 1, height: 2 }, config: { spreadRadius: 0, blurRadius: 1, precise: false } })
     const maskToken = gate.captureTile('máscara-direita', maskRequest.id)

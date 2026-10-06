@@ -324,6 +324,10 @@ fn minimum(
     }
 }
 
+pub(crate) fn validate_packet(packet: &[u8]) -> Result<(), u32> {
+    parse(packet).map(|_| ())
+}
+
 pub fn apply_stroke_region(
     source: &[u8],
     width: usize,

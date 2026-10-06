@@ -182,6 +182,14 @@ fn parse(packet: &[u8]) -> Result<Glow, u32> {
     })
 }
 
+pub(crate) fn validate_packet(packet: &[u8], inner: bool) -> Result<(), u32> {
+    let effect = parse(packet)?;
+    if (effect.kind != 0) != inner {
+        return Err(2);
+    }
+    Ok(())
+}
+
 pub fn apply_glow_region(
     source: &[u8],
     width: usize,

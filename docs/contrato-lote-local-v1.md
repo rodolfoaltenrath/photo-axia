@@ -107,3 +107,7 @@ Adapter/Worker usam `memory-limit` para orçamento/reserva interna. Falha do
 allocator externo continua `wasm-failure`. Ponteiros devem ser pares vivos
 do allocator privado. Bounds/overlap não validam ponteiros arbitrários;
 handles seguros seguem pendentes. Não expor diretamente a arquivos/mods.
+
+O [executor STG1](contrato-estagios-v1.md) reutiliza o parser e a aplicação dos
+overlays, integrando externos/conteúdo/internos/superiores em envelope separado.
+AXB1 e suas chamadas continuam compatíveis; não recebem esses outros estágios.

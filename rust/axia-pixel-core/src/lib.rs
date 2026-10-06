@@ -12,6 +12,7 @@ pub mod glow;
 pub mod gradient_overlay;
 pub mod pattern_overlay;
 pub mod satin;
+pub mod stages;
 pub mod stroke;
 
 /// Zero-alpha fill pixels must not retain hidden RGB.

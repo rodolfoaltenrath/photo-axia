@@ -1638,3 +1638,103 @@ conteúdo/executor de estágios integrado, evitando cópias/reuploads por efeito
 com preparação/insets e paridade de combinações. Cache/orçamento global,
 transformações, integração ao documento/preview e validação end-to-end/
 multiplataforma permanecem pendentes. C0/C1/C2 não foram encerrados.
+
+## Décima sétima fatia: executor regional de estágios
+
+Em 2026-10-06, o comando `style-stages-staged-region` passou a integrar os dez
+tipos atuais em uma chamada Rust por tile, sobre fonte staged/preparada.
+O [contrato STG1](contrato-estagios-v1.md) define ordem, ABI e contabilidade.
+Não substitui o preview normal/exportação, não possui a pilha documental e
+não muda texto, shell Go/Vue nem `.axia`.
+
+### Implementação
+
+- Preparador TS usa pipeline editorial existente, resolve parâmetros com os
+  adapters anteriores e organiza externos/internos/overlays/superiores,
+  mantendo ordem dentro dos estágios. Entrada editorial é normalizada; assets
+  devem estar decodificados. Faixa padrão de Esta camada é omitida.
+- Rust compõe externos → conteúdo com Fill → internos → overlays → superiores
+  → Esta camada. Conteúdo faz source-over sobre sombras, com arredondamento
+  de Fill uma vez; não apaga target e não altera máscara original dos efeitos.
+- Dois buffers compactos internos alternam; output externo só é publicado após
+  terminar a transação. Não volta ao JS nem reenvia a fonte entre efeitos.
+  Os filtros ainda reservam seus buffers por passe; não é cache de máscara.
+- Preflight valida todos os comandos, subpacotes, offsets contíguos, padding
+  zero, estágio compatível/ordem e orçamento. Integra parsers/aplicações já
+  existentes sem modificar matemática; AXB1 aninhado é um overlay sem Fill/filtro.
+- STG1 tem header 32 bytes, até 64 registros de 16 bytes e subpacotes alinhados
+  a 8 bytes; cada subpacote conserva seu comprimento original. Envelope até
+  64 MiB, fonte/saída também. ABI privada de 12 argumentos, não pública para mods.
+- Limite 96 MiB/job cobra fonte, pacote, saída externa e dois tiles internos,
+  2048 bytes/efeito e o **pico**, não soma, dos filtros regionais sequenciais.
+  TS verifica antes de materializar texturas; Rust valida/reserva antes de
+  escrever. Não é RSS, memória global nem deduplicação de assets.
+- Duas alocações externas por job (pacote/saída), além da fonte staged uma vez.
+  RAII/finally preservam reutilização da fonte após falhas. Worker mantém gates
+  de geração/pedido/vista; cancel não interrompe kernel síncrono já ativo.
+
+### Validação
+
+- `npm test`: 514 testes frontend e tipos passaram.
+- `npm run test:rust-poc`: 240 testes (5 standalone, 1 Worker básico e 234
+  dos scripts), incluindo 14 novos do executor; passes anteriores continuam verdes.
+- `cargo test --offline --locked`: 61 testes; fmt/check e clippy all-targets
+  com `-D warnings` passaram.
+- Build de produção, integridade do bundle e smoke Wails/WebView2 passaram.
+  Diagnóstico do executável usa RGBA fixo para sombra → Fill zero → overlay →
+  traçado, além dos passes anteriores. Executável temporário removido pelo smoke;
+  nenhum instalador/portável distribuível gerado. Aviso existente de chunk
+  >500 kB não impede build.
+- Os **16 goldens raster** existentes passaram pelo executor, sem regenerar
+  expectativas. Comparador independente dos **17 goldens totais** passou,
+  incluindo o caso de Camada abaixo que continua no passe separado.
+- Seis modos × três escalas (0,5/1/1,375) × quatro Fill (0/17,5/73,5/100) ×
+  ordem editorial normal/invertida: **144 configurações com os dez tipos**,
+  comparadas ao compositor TS real, incluindo padding/insets preparados.
+  Integral e cada tile 7×5 concordam byte a byte; fonte não muda.
+- Sombra sob alfa parcial com Fill zero/fracionário, conteúdo sozinho, 64
+  efeitos, flags desabilitados, padrão sem asset e fontes 1×17/19×1/1×1.
+  Comando desconhecido/incompatível, counts enormes, NaN, offsets/comprimentos,
+  estágio regressivo, subpacote final inválido, null e overlap não publicam
+  saída parcial e preservam fonte/sentinela.
+- Teste de contabilidade distingue passe individual que cabe de executor que
+  excede orçamento pelo terceiro raster compacto. Nativo cobre overflow/limite.
+  Falhas injetadas nas duas alocações externas/status 6 liberam temporários;
+  fonte permanece reutilizável, dispose deixa zero pares vivos.
+- Worker real recebe textura compartilhada por efeitos em um transfer de buffer,
+  executa a sequência, rejeita pedidos obsoletos após vista/pedido/fonte,
+  recupera falha e faz invalidate/dispose. Isso não deduplica textura no STG1.
+
+### Sonda isolada
+
+`npm run benchmark:rust-stages -- 512 20`, release, Windows, Node 24.14.1,
+Intel i7-3770, WASM **100.281 bytes**. Três warmups, 20 amostras, ordem TS/Rust
+alternada e paridade de integral/tile verificada fora da janela medida.
+Sem builds/testes concorrentes durante a sonda.
+
+Imagem original 512², fonte com padding **520×521**, dez efeitos nos parâmetros
+de `combinedStages`, modo normal, Fill 73,5%, três pinturas de degradê/padrão e
+textura do bisel, ruído/jitter e filtro Esta camada no canal vermelho.
+Staging uma vez: 0,68 ms, fora dos passes. Tile 260², origem (130,130).
+
+| Caminho | Mediana (ms) | P95 (ms) |
+| --- | ---: | ---: |
+| Compositor TS integral | 1467,50 | 1629,93 |
+| Adapter Rust integral | 406,76 | 479,81 |
+| Kernel Rust integral | 405,99 | 479,14 |
+| Adapter Rust tile 260² | 103,49 | 139,54 |
+| Kernel Rust tile 260² | 103,10 | 139,15 |
+
+Contabilidade integral/tile: 6.265.816/2.403.828 bytes, pacote 1656 bytes,
+pico de filtros 1.908.960/486.812 bytes. Não é memória/RSS medida.
+**Escopos diferentes:** TS inclui normalização/padding; Rust reutiliza fonte
+staged e parâmetros preparados, com montagem/cópias do pacote dentro do adapter.
+Não atribuir a diferença de aproximadamente 3,61× só à linguagem ou ao lote;
+não foi medida separadamente a economia entre Rust avulso e Rust em lote.
+Tile retorna aproximadamente um quarto da área. Não inclui decode, Worker,
+Canvas, UI/zoom/FPS, pilha, transformações ou RSS; p95 não é pior caso.
+
+O item de porte/paridade dos passes CPU em C2 foi concluído nessa fronteira
+experimental. Preparação/insets ligada ao fluxo real, cache/agendamento/
+orçamento agregado, transformação, pilha/backdrop, C3/C4 e QA end-to-end/
+multiplataforma continuam pendentes. C0/C1/C2 permanecem gates abertos.
