@@ -1,6 +1,6 @@
 import type { LayerStyleRaster } from './layerStyleCompositor.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
-import { padRustStyleSource, prepareRustStyleJob, type RustPixelPocStyleInput, type RustPixelPocStyleJob } from './rustPixelPocStylePreparation.ts'
+import { copyRustStyleSource, describeRustStyleSource, prepareRustStyleJob, type RustPixelPocStyleInput, type RustPixelPocStyleJob } from './rustPixelPocStylePreparation.ts'
 import { RustPixelPocTileGate } from './rustPixelPocTileGate.ts'
 import type { RustPixelPocRequest, RustPixelPocResponse } from './rustPixelPocProtocol.ts'
 
@@ -42,11 +42,15 @@ export class RustPixelPocStyleSession {
       if (this.disposed || this.entry?.token !== token) throw new RustPixelPocStyleCancelledError()
       const source = await load()
       if (this.disposed || this.entry?.token !== token) throw new RustPixelPocStyleCancelledError()
-      const rgba = padRustStyleSource(source, job)
-      const staged = this.checked(await this.send({ type: 'stage-source', rgba: rgba.buffer as ArrayBuffer,
-        sourceWidth: job.width, sourceHeight: job.height, generation }, [rgba.buffer as ArrayBuffer]))
+      const rgba = copyRustStyleSource(source, job)
+      const staged = this.checked(await this.send({ type: 'stage-style-source', rgba: rgba.buffer,
+        input: describeRustStyleSource(job), generation }, [rgba.buffer]))
       if (this.disposed || this.entry?.token !== token) throw new RustPixelPocStyleCancelledError()
-      if (staged.type !== 'source-staged' || !this.gate.adoptSource(staged)) throw new RustPixelPocError('wasm-failure')
+      if (staged.type !== 'source-staged' || staged.prepared?.sourceKey !== job.sourceKey ||
+          staged.prepared.width !== job.width || staged.prepared.height !== job.height ||
+          staged.prepared.offsetX !== job.offsetX || staged.prepared.offsetY !== job.offsetY ||
+          !Number.isFinite(staged.prepared.preparationMs) || staged.prepared.preparationMs < 0 ||
+          !this.gate.adoptSource(staged)) throw new RustPixelPocError('wasm-failure')
       return staged
     })()
     const entry = { key: job.sourceKey, token, promise }

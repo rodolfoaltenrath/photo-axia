@@ -1,4 +1,5 @@
 import { createRustPixelPocRuntime, RustPixelPocError } from '../editor/rustPixelPocRuntime.ts'
+import { padRustStyleSource, prepareRustStyleSourceLayout } from '../editor/rustPixelPocStylePreparation.ts'
 import type { RustPixelPocRequest, RustPixelPocResponse } from '../editor/rustPixelPocProtocol.ts'
 
 type Runtime = Awaited<ReturnType<typeof createRustPixelPocRuntime>>
@@ -63,6 +64,21 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
   void runtime.then((engine) => {
     if (current !== generation || cancelled.has(request.id)) {
       reply({ type: 'cancelled', id: request.id })
+      return
+    }
+    if (request.type === 'stage-style-source') {
+      let prepared: Extract<RustPixelPocResponse, { type: 'source-staged' }>['prepared']
+      const staged = engine.stagePreparedSource(() => {
+        const started = performance.now()
+        const layout = prepareRustStyleSourceLayout(request.input)
+        if (!(request.rgba instanceof ArrayBuffer)) throw new RustPixelPocError('invalid-input')
+        const rgba = padRustStyleSource({ width: layout.sourceWidth, height: layout.sourceHeight,
+          data: new Uint8ClampedArray(request.rgba) }, layout)
+        prepared = { sourceKey: layout.sourceKey, width: layout.width, height: layout.height,
+          offsetX: layout.offsetX, offsetY: layout.offsetY, preparationMs: performance.now() - started }
+        return { rgba, width: layout.width, height: layout.height }
+      }, request.generation)
+      reply({ type: 'source-staged', id: request.id, ...staged, prepared })
       return
     }
     if (request.type === 'stage-source') {

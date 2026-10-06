@@ -61,7 +61,7 @@ test('Sessão reusa upload entre Fill, cores, faixas, textura e tiles; reenvia s
     assert.deepEqual(new Uint8Array(first.rgba), new Uint8Array(reference.data))
     const region = { x: 2, y: 3, width: 7, height: 5 }
     const tiled = await session.compose({ ...request, region })
-    assert.equal(tiled.sourceId, first.sourceId); assert.equal(loads, 1); assert.equal(count('stage-source'), 1)
+    assert.equal(tiled.sourceId, first.sourceId); assert.equal(loads, 1); assert.equal(count('stage-style-source'), 1)
     assert.equal(tiled.offsetX, reference.offsetX + region.x); assert.equal(tiled.offsetY, reference.offsetY + region.y)
     assert.deepEqual(new Uint8Array(tiled.rgba), gradientTile(new Uint8Array(reference.data), reference.width, region))
     const styles = normalizeLayerStyleConfig({ ...base.styles, fillOpacity: 0,
@@ -70,14 +70,14 @@ test('Sessão reusa upload entre Fill, cores, faixas, textura e tiles; reenvia s
     const changed = { ...request, styles, patterns: new Map([[strokePatternAsset.id, { ...strokePattern, rgba: strokePattern.rgba.slice().fill(117) }]]) }
     const second = await session.compose(changed)
     assert.deepEqual(new Uint8Array(second.rgba), new Uint8Array(expected(changed).data))
-    assert.equal(second.sourceId, first.sourceId); assert.equal(loads, 1); assert.equal(count('stage-source'), 1)
+    assert.equal(second.sourceId, first.sourceId); assert.equal(loads, 1); assert.equal(count('stage-style-source'), 1)
     for (const change of [{ resolutionScale: 1.00001 }, { quality: 'interactive' as const },
       { sourceIdentity: 'doc/layer/revision-2' }, { globalLight: { angle: 0, altitude: 48 } }]) {
       const result = await session.compose({ ...request, ...change })
       assert.notEqual(result.sourceId, first.sourceId)
       assert.deepEqual(new Uint8Array(result.rgba), new Uint8Array(expected({ ...request, ...change }).data))
     }
-    assert.equal(loads, 5); assert.equal(count('stage-source'), 5)
+    assert.equal(loads, 5); assert.equal(count('stage-style-source'), 5)
     await session.dispose()
   } finally { await harness.close() }
 })
@@ -93,7 +93,7 @@ test('Pedidos concorrentes compartilham decode pendente mas só o último public
     loaded.resolve(pixels)
     await firstRejected
     const result = await second
-    assert.equal(loads, 1); assert.equal(count('stage-source'), 1); assert.equal(count('style-stages-staged-region'), 1)
+    assert.equal(loads, 1); assert.equal(count('stage-style-source'), 1); assert.equal(count('style-stages-staged-region'), 1)
     assert.deepEqual(new Uint8Array(result.rgba), new Uint8Array(expected({ ...request, styles: normalizeLayerStyleConfig({ ...base.styles, fillOpacity: 0 }) }).data))
     await session.dispose()
   } finally { await harness.close() }
@@ -107,7 +107,7 @@ test('Decode antigo, invalidação e fechamento não podem subir pixels atrasado
     await started.promise
     const current = await session.compose({ ...base, sourceIdentity: 'new-content' })
     loaded.resolve(pixels); await rejected
-    assert.equal(count('stage-source'), 1)
+    assert.equal(count('stage-style-source'), 1)
     await session.invalidate()
     const stale = await harness.send({ type: 'style-stages-staged-region', sourceId: current.sourceId,
       region: prepareRustStyleJob(base).region, plan: prepareRustStyleJob(base).plan })
@@ -118,7 +118,7 @@ test('Decode antigo, invalidação e fechamento não podem subir pixels atrasado
     const pending = session.compose({ ...base, sourceIdentity: 'pending', source: async () => { startedAgain.resolve(); return loadedAgain.promise } })
     const pendingRejected = assert.rejects(pending, RustPixelPocStyleCancelledError)
     await startedAgain.promise; await session.dispose(); loadedAgain.resolve(pixels); await pendingRejected
-    assert.equal(count('stage-source'), 2)
+    assert.equal(count('stage-style-source'), 2)
     await session.dispose()
     await assert.rejects(session.compose(base), (e: unknown) => e instanceof RustPixelPocError && e.code === 'wasm-unavailable')
   } finally { await harness.close() }
@@ -130,7 +130,7 @@ test('Falha de decode/validação permite retry; preflight não decodifica nem m
     await assert.rejects(session.compose({ ...base, source: async () => { throw new Error('decode-failed') } }), /decode-failed/)
     await assert.rejects(session.compose({ ...base, source: async () => ({ ...pixels, data: new Uint8ClampedArray(1) }) }), RustPixelPocError)
     const first = await session.compose(base)
-    assert.equal(count('stage-source'), 1)
+    assert.equal(count('stage-style-source'), 1)
     const before = count('invalidate-source')
     await assert.rejects(session.compose({ ...base, sourceWidth: 3000, sourceHeight: 3000,
       styles: normalizeLayerStyleConfig({}), region: { x: 0, y: 0, width: 1, height: 1 }, source: async () => { assert.fail('must not decode') } }),
@@ -165,14 +165,14 @@ test('Resposta tardia de kernel não publica nem invalida fonte atual; erro de r
     const changed = { ...base, styles: normalizeLayerStyleConfig({ ...base.styles, fillOpacity: 0 }) }
     const current = await session.compose(changed)
     delayed.resolve(); await rejected
-    assert.equal(count('stage-source'), 1)
+    assert.equal(count('stage-style-source'), 1)
     assert.deepEqual(new Uint8Array(current.rgba), new Uint8Array(expected(changed).data))
     fail = true
     await assert.rejects(session.compose(base), (e: unknown) => e instanceof RustPixelPocError && e.code === 'wasm-failure')
     wrongLength = true
     await assert.rejects(session.compose(base), (e: unknown) => e instanceof RustPixelPocError && e.code === 'wasm-failure')
     const retry = await session.compose(base)
-    assert.equal(retry.sourceId, current.sourceId); assert.equal(count('stage-source'), 1)
+    assert.equal(retry.sourceId, current.sourceId); assert.equal(count('stage-style-source'), 1)
     assert.deepEqual(new Uint8Array(retry.rgba), new Uint8Array(expected().data))
     const one = session.dispose(), two = session.dispose()
     assert.equal(one, two); await one
@@ -191,5 +191,57 @@ test('Reinício exige sessão nova e não aceita pixels staged do Worker anterio
     assert.notEqual(first.sourceId, next.sourceId)
     assert.deepEqual(new Uint8Array(next.rgba), new Uint8Array(expected().data))
     await replacement.dispose()
+  } finally { await harness.close() }
+})
+
+test('Sessão envia só RGBA original próprio para preparação, sem textura e sem destacar dados do editor', async () => {
+  const { harness, session, calls } = await setup(), original = pixels.data.slice()
+  try {
+    await session.compose(base)
+    const uploads = calls.filter(call => call.type === 'stage-style-source')
+    assert.equal(uploads.length, 1); assert.equal(calls.some(call => call.type === 'stage-source'), false)
+    const upload = uploads[0]!
+    assert.equal(upload.rgba.byteLength, 0)
+    assert.equal(upload.input.sourceWidth, pixels.width); assert.equal(upload.input.sourceHeight, pixels.height)
+    assert.equal('patterns' in upload.input, false)
+    assert.deepEqual(pixels.data, original)
+    assert.ok(pixels.data.byteLength > 0 && strokePattern.rgba.byteLength > 0)
+    await session.dispose()
+  } finally { await harness.close() }
+})
+
+test('Ack de preparação ausente ou incompatível não publica; retry refaz upload com geração nova', async () => {
+  const { harness, send, count } = await setup()
+  let corrupt: 'missing' | 'key' | 'width' | 'offset' | 'timing' | null = null
+  const transport: RustPixelPocSend = (request, transfers) => {
+    const execution = send(request, transfers)
+    return Object.assign(execution.then(response => {
+      if (request.type === 'stage-style-source' && response.type === 'source-staged' && corrupt) {
+        const kind = corrupt
+        corrupt = null
+        if (kind === 'missing') return { ...response, prepared: undefined }
+        const prepared = { ...response.prepared! }
+        if (kind === 'key') prepared.sourceKey = 'wrong-key'
+        if (kind === 'width') prepared.width++
+        if (kind === 'offset') prepared.offsetX++
+        if (kind === 'timing') prepared.preparationMs = NaN
+        return { ...response, prepared }
+      }
+      return response
+    }), { id: execution.id })
+  }
+  const session = new RustPixelPocStyleSession(transport)
+  try {
+    for (const kind of ['missing', 'key', 'width', 'offset', 'timing'] as const) {
+      await session.invalidate()
+      corrupt = kind
+      const before = count('style-stages-staged-region'), uploads = count('stage-style-source')
+      await assert.rejects(session.compose(base), (e: unknown) => e instanceof RustPixelPocError && e.code === 'wasm-failure')
+      assert.equal(count('style-stages-staged-region'), before)
+      const next = await session.compose(base)
+      assert.equal(count('stage-style-source'), uploads + 2)
+      assert.deepEqual(new Uint8Array(next.rgba), new Uint8Array(expected().data))
+    }
+    await session.dispose()
   } finally { await harness.close() }
 })

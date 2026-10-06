@@ -153,6 +153,9 @@ parte disso; não copiá-lo como chave de documento.
 
 A [preparação/sessão de estilos experimental](contrato-preparacao-estilos-v1.md)
 aceita RGBA original, calcula padding/insets e reutiliza o upload para STG1.
+O padding agora é preparado no Worker após transfer de uma cópia original;
+preflight do consumidor e revisão de chave/geometria no ack evitam adotar fonte
+incompatível. Decode/encode/agendamento do fluxo real ainda não estão integrados.
 Sua região ainda é local ao raster expandido, não uma região do documento.
 Ela atende um consumidor com último pedido vencedor e não substitui a política
 de agendamento documental abaixo, nem está ligada ao preview normal.

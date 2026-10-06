@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { normalizeLayerStyleConfig } from '../../src/editor/layerStyles.ts'
 import { RustPixelPocError } from '../../src/editor/rustPixelPocError.ts'
-import { padRustStyleSource, prepareRustStyleJob } from '../../src/editor/rustPixelPocStylePreparation.ts'
+import { describeRustStyleSource, padRustStyleSource, prepareRustStyleJob, prepareRustStyleSourceLayout } from '../../src/editor/rustPixelPocStylePreparation.ts'
 import { combinedStages, stagesFixture } from './support/rustStagesFixture.ts'
 import { strokePattern, strokePatternAsset } from './support/rustStrokeFixture.ts'
 
@@ -60,4 +60,25 @@ test('Preflight rejeita dimensões, região, assets e orçamento antes do paddin
   const tiled = prepareRustStyleJob({ ...base, region: { x: 1, y: 2, width: 3, height: 4 } })
   assert.deepEqual(tiled.region, { x: 1, y: 2, width: 3, height: 4 })
   assert.ok(tiled.workingBytes < job.workingBytes)
+})
+
+test('Descrição enviada ao Worker preserva margens sem copiar texturas, degradês ou URLs de assets', () => {
+  const asset = { ...strokePatternAsset, sourceUrl: `data:image/png;base64,${'A'.repeat(20_000)}` }
+  const styles = normalizeLayerStyleConfig({ ...base.styles, effects: base.styles.effects.map(effect => {
+    if (effect.type === 'bevel-emboss') return { ...effect, texture: asset, style: 'outer' }
+    if (effect.type === 'stroke') return { ...effect, position: 'outside', paint: { type: 'pattern', pattern: asset, scale: 100, angle: 0 } }
+    if (effect.type === 'pattern-overlay') return { ...effect, pattern: asset }
+    return effect
+  }) })
+  for (const scale of [0.5, 1, 1.375, 8]) for (const enabled of [true, false]) {
+    const job = prepareRustStyleJob({ ...base, styles: { ...styles, enabled }, resolutionScale: scale })
+    const description = describeRustStyleSource(job), prepared = prepareRustStyleSourceLayout(description)
+    assert.equal(prepared.sourceKey, job.sourceKey); assert.deepEqual(prepared.insets, job.insets)
+    assert.equal(JSON.stringify(description).includes('data:image'), false)
+    assert.equal(description.styles.effects.some(effect => effect.type === 'pattern-overlay' || effect.type === 'gradient-overlay'), false)
+    for (const effect of description.styles.effects) {
+      if (effect.type === 'bevel-emboss') assert.equal(effect.texture, undefined)
+      if (effect.type === 'stroke') assert.equal(effect.paint.type, 'color')
+    }
+  }
 })

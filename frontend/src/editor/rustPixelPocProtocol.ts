@@ -8,9 +8,11 @@ import type { RustPixelPocSatin } from './rustPixelPocSatin.ts'
 import type { RustPixelPocStroke } from './rustPixelPocStroke.ts'
 import type { RustPixelPocBevel } from './rustPixelPocBevel.ts'
 import type { RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
+import type { RustPixelPocStyleSourceInput } from './rustPixelPocStylePreparation.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
+  | { type: 'stage-style-source'; id: number; rgba: ArrayBuffer; input: RustPixelPocStyleSourceInput; generation: number }
   | { type: 'style-stages-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion; plan: RustPixelPocStagesPlan }
   | { type: 'bevel-staged-region'; id: number; sourceId: number; region: RustPixelPocRegion;
       target: ArrayBuffer; bevel: RustPixelPocBevel }
@@ -65,7 +67,8 @@ export type RustPixelPocResponse =
       timings: RustPixelPocTimings }
   | { type: 'rendered-staged-region'; id: number; rgba: ArrayBuffer; width: number; height: number;
       sourceId: number; generation: number; timings: RustPixelPocTimings }
-  | { type: 'source-staged'; id: number; sourceId: number; generation: number; stagingMs: number }
+  | { type: 'source-staged'; id: number; sourceId: number; generation: number; stagingMs: number;
+      prepared?: { sourceKey: string; width: number; height: number; offsetX: number; offsetY: number; preparationMs: number } }
   | { type: 'source-invalidated'; id: number; generation: number }
   | { type: 'source-released'; id: number; sourceId: number }
   | { type: 'cancelled'; id: number }

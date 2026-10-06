@@ -416,7 +416,32 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     }
   }
 
+  function stagePreparedSource(prepare: () => { rgba: Uint8Array; width: number; height: number }, generation: number) {
+    if (disposed) throw new RustPixelPocError('wasm-unavailable')
+    if (reservedGeneration === null || generation !== reservedGeneration) validateNextGeneration(generation)
+    // Invalidate before preparation, even if the factory fails.
+    latestGeneration = generation
+    reservedGeneration = null
+    discardStaged()
+    const { rgba: source, width, height } = prepare()
+    validateSource(source, width, height)
+    const started = performance.now()
+    const pointer = exports.axia_poc_alloc(source.byteLength)
+    if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+    try {
+      if (pointer + source.byteLength > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+      new Uint8Array(exports.memory.buffer, pointer, source.byteLength).set(source)
+    } catch (error) {
+      exports.axia_poc_free(pointer, source.byteLength)
+      throw error
+    }
+    const sourceId = ++nextSourceId
+    staged = { id: sourceId, generation, pointer, length: source.byteLength, width, height }
+    return { sourceId, generation, stagingMs: performance.now() - started }
+  }
+
   return {
+    stagePreparedSource,
     render(source: Uint8Array, fillOpacity: number) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       if (!source.byteLength || source.byteLength > MAX_POC_BYTES || source.byteLength % 4 !== 0 ||
@@ -489,28 +514,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       reservedGeneration = generation
     },
     stageSource(source: Uint8Array, width: number, height: number, generation: number) {
-      if (disposed) throw new RustPixelPocError('wasm-unavailable')
-      if (reservedGeneration === null || generation !== reservedGeneration) validateNextGeneration(generation)
-      // Invalidate old pixels even if staging fails.
-      latestGeneration = generation
-      reservedGeneration = null
-      discardStaged()
-      validateSource(source, width, height)
-      const started = performance.now()
-      const pointer = exports.axia_poc_alloc(source.byteLength)
-      if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
-      try {
-        if (pointer + source.byteLength > exports.memory.buffer.byteLength) {
-          throw new RustPixelPocError('wasm-failure')
-        }
-        new Uint8Array(exports.memory.buffer, pointer, source.byteLength).set(source)
-      } catch (error) {
-        exports.axia_poc_free(pointer, source.byteLength)
-        throw error
-      }
-      const sourceId = ++nextSourceId
-      staged = { id: sourceId, generation, pointer, length: source.byteLength, width, height }
-      return { sourceId, generation, stagingMs: performance.now() - started }
+      return stagePreparedSource(() => ({ rgba: source, width, height }), generation)
     },
     renderStagedRegion(sourceId: number, region: RustPixelPocRegion, fillOpacity: number) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')

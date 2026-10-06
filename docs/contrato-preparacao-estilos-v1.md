@@ -8,11 +8,12 @@ mudam. O contrato continua privado, sem estabilidade prometida para mods.
 ## 1. Fronteira e responsabilidades
 
 - `rustPixelPocStylePreparation.ts`: normalização editorial, parâmetros,
-  insets, geometria, região e preflight sem DOM/Canvas; padding em buffer próprio.
+  insets, geometria, região e preflight sem DOM/Canvas; layout compartilhado
+  entre consumidor/Worker e padding em buffer próprio no Worker.
 - `rustPixelPocStyleSession.ts`: um consumidor com posse exclusiva do slot de
   fonte de um Worker, decode assíncrono compartilhado, upload e descarte.
 - Worker/runtime/STG1: fonte staged, filtros regionais, conteúdo, ordem dos
-  estágios, publicação atômica e liberação das alocações temporárias.
+  estágios, preparação do padding, publicação atômica e liberação das alocações.
 - Chamador: identidade de conteúdo, origem RGBA, assets decodificados, qualidade,
   escala e transformação posterior. Texto/forma permanecem rasterizados pelos
   caminhos atuais; Rust não recebe strings/fontes nem assume shaping/layout.
@@ -47,9 +48,27 @@ não há o clamp inferior 0,01 do serviço de Blob. Esse serviço deverá fornec
 sua escala efetiva quando for integrado. Qualidade padrão: `final`.
 
 Insets usam `layerStyleInsets`, incluindo luz global e sombras direcionais.
-O padding é transparente; cada linha da fonte é copiada integralmente, sem
-alterar alfa/Fill ou descartar RGB invisível. Fill só ocorre no estágio de
-conteúdo do STG1, uma vez.
+O preflight editorial leve permanece no consumidor antes de chamar o loader.
+Após o decode, o consumidor valida/copía apenas RGBA original para um buffer
+próprio transferível. Não aloca nem percorre o raster expandido na UI.
+
+`stage-style-source` envia original, geração e descrição editorial de geometria
+(identidade, dimensões, estilos/luz, escala, qualidade). Não envia planos STG1
+nem pixels/URLs codificadas de texturas. A descrição conserva somente os campos
+de sombra externa, brilho externo, traçado e bisel que influenciam insets, via
+pipeline exaustivo; não duplica a matemática das margens. O Worker refaz
+layout/preflight de preparação, cria o
+padding transparente e copia cada linha integralmente, sem alterar alfa/Fill
+ou descartar RGB invisível. Fill só ocorre no estágio de conteúdo do STG1.
+
+O ack `source-staged` inclui `prepared` com chave exata, dimensões expandidas,
+offsets e `preparationMs`. A sessão valida esses campos antes de adotar o handle.
+O caminho `stage-source` de baixo nível permanece compatível e não tem esse
+campo; um ack antigo não satisfaz o contrato da sessão de estilos.
+
+`preparationMs` mede layout/padding dentro do Worker; `stagingMs` segue medindo
+alocação/cópia no WASM. Nenhum inclui decode, cópia original no consumidor,
+transferência/RPC ou tempo total de UI. Não somar como benchmark end-to-end.
 
 Região omitida significa raster expandido inteiro. Região fornecida é absoluta
 na **grade expandida da camada**, não no documento. Gradientes, padrões, ruído
@@ -104,8 +123,9 @@ duas sessões para o mesmo slot de Worker não é suportado.
 1. Cada compose avança revisão visual e gate, inclusive se o preflight falhar.
 2. Troca de fonte avança geração e envia `invalidate-source` antes do loader.
 3. Após cada await, a preparação confere se a entrada ainda é atual.
-4. Upload usa geração reservada e transfere apenas padding próprio.
-5. Só um ack staged atual pode ser adotado pelo gate.
+4. Upload usa geração reservada e transfere apenas cópia original própria;
+   runtime invalida antes de executar a factory de preparação do Worker.
+5. Só ack atual com chave/geometria/preparationMs válidos pode ser adotado.
 6. Render confere revisão, entrada, pedido, sourceId, geração, dimensões e
    comprimento RGBA antes de devolver pixels.
 
@@ -139,10 +159,22 @@ STG1. Original e expandido têm limite individual de 64 MiB. Preparação cobra:
 preparationBytes = originalRGBA + 2 × expandedRGBA
 ```
 
-Os dois rasters expandidos representam JS/transfer e cópia staged WASM. A fonte
-WASM anterior é invalidada antes da preparação. Limite: 96 MiB nesta fase.
+Os dois rasters expandidos representam padding JS no Worker e fonte staged WASM.
+A fonte WASM anterior é invalidada antes da preparação. Limite: 96 MiB nesta fase.
 Isso também pode impedir uma fonte grande cujo tile de saída seja pequeno;
 tiles de fonte/decodificação são trabalho futuro, não reduzir qualidade ocultamente.
+
+No caminho atual, o original transferido é a entrada no Worker, os dois rasters
+expandidos são padding JS do Worker e fonte WASM. O buffer emprestado do editor
+é memória externa à fase. A cópia original no consumidor continua sendo O(N),
+com dois originais vivos durante a cópia; esse pico também cabe na estimativa
+pois o expandido nunca é menor que o original. Isso não elimina todas as cópias.
+
+`stagePreparedSource` valida/consome geração antes da factory e retira a fonte
+anterior, mesmo se layout/padding/bytes falharem. Geração inválida/atrasada não
+executa a factory nem retira fonte atual. Factory que falha consome a geração;
+retry exige geração nova. Liberação antes de preparar evita duas fontes WASM
+staged simultâneas. Callbacks deste runtime são internos, não uma ABI WASM.
 
 O orçamento STG1 regional continua separado e obrigatório: fonte staged,
 pacote, três tiles, metadata e pico dos filtros, até 96 MiB. Não alocar pacote
@@ -163,9 +195,9 @@ resposta tardia, retry, invalidate/dispose e reinício de Worker. O diagnóstico
 Wails/WebView2 tem entrada/resultado RGBA fixos e confirma reuso com Fill/tile.
 
 Ainda não liga esta sessão a `renderLayerStyle`, exportação ou preview normal.
-Preparação/normalização/padding executam no ambiente do chamador; mover ou
-hospedar essa fronteira num Worker antes do rollout evita trabalho de raster
-grande no thread da UI. Falta adaptar decode raster/texto e assets, controlar
-fila/orçamento agregado, medir decode → preparação → Worker → encode → handoff
-e verificar regressões na interface. Não basta os testes desta fatia para
-fechar C2; pilha/backdrop/transforms são C3, canvas único é C4.
+Padding/layout de staging já executam no Worker; consumidor ainda normaliza e
+valida plano, decodifica via loader e copia original. Falta adaptar decode
+raster/texto/assets ao Worker, controlar fila/orçamento agregado, medir decode
+→ preparação → Worker → encode → handoff e verificar regressões na interface.
+Não basta os testes desta fatia para fechar C2; pilha/backdrop/transforms são
+C3, canvas único é C4. Nenhuma aceleração/FPS foi medido nesta mudança.

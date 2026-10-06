@@ -543,6 +543,16 @@ decode/assets, agendamento, orçamento agregado e benchmark end-to-end são os
 próximos passos de C2. Não é compositor da pilha nem encerramento de C2/C3/C4.
 Detalhes no [contrato da preparação](contrato-preparacao-estilos-v1.md).
 
+Uma décima nona fatia hospeda **padding e layout de staging no Worker**.
+`stage-style-source` recebe cópia RGBA original e metadados editoriais, sem
+pixels de texturas; valida orçamento, prepara margens e confirma chave/geometria
+antes da adoção. Factory de staging libera fonte anterior antes de preparar,
+inclusive em falha, sem executar para gerações atrasadas. Mantém goldens/reuso,
+gates e protocolo baixo nível. Consumidor ainda faz preflight leve, loader e
+cópia original; decode/encode reais, fila, orçamento agregado e benchmark
+end-to-end seguem pendentes. Nada muda no preview normal/exportação/`.axia`,
+nem fecha C2/C3/C4. Contrato e provas registram alcance e limites desta fatia.
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os

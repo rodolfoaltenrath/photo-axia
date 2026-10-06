@@ -1802,3 +1802,66 @@ passo antes do rollout. A sessão é de um consumidor com último pedido vencedo
 não agendador multitile. Medição decode → preparação → Worker → encode → handoff,
 coalescência, orçamento agregado e QA real seguem pendentes. C2 não está fechado;
 pilha/backdrop/transformação são C3, superfície única é C4. C0/C1/C2 abertos.
+
+## Décima nona fatia: padding e layout no Worker
+
+Em 2026-10-06, a sessão passou a enviar RGBA original ao Worker experimental
+em `stage-style-source`. Padding/layout de staging não percorrem mais o raster
+expandido no consumidor. Rust/ABI/algoritmos CPU não mudam; não há rollout no
+preview normal/exportação, nem posse de pilha documental.
+
+### Implementação
+
+- Divide preparação editorial de job e layout de fonte. Consumidor continua
+  com preflight leve, parâmetros e loader; cria cópia própria **original** para
+  transfer. Pixel buffer do editor não é destacado nem modificado.
+- Descrição de staging contém apenas campos que influenciam margens, com
+  dispatch exaustivo dos estágios externo/superior. Não envia RGBA de texturas,
+  URLs codificadas dos assets, degradês nem planos STG1; isso evita copiar dados
+  irrelevantes só para preparar padding. Reusa normalizador/cálculo de insets.
+- Worker refaz layout/orçamento de preparação e prepara padding transparente.
+  Ack inclui chave exata, dimensões, offsets e `preparationMs`; sessão confere
+  esses campos antes de adotar o handle. `stagingMs` continua sendo upload WASM.
+- Factory `stagePreparedSource` valida/consome geração e libera a fonte anterior
+  **antes** de preparar. Falha de preflight/padding/bytes deixa fonte ausente;
+  retry usa geração nova. Geração atrasada não executa factory nem retira fonte
+  atual. `stage-source` continua compatível, delegando ao mesmo lifecycle.
+- Orçamento de preparação continua original + dois expandidos, até 96 MiB,
+  cobrando original no Worker, padding JS e fonte WASM. Consumidor ainda faz
+  cópia original O(N); memória emprestada do editor é externa à fase. Isso não
+  elimina todas as cópias nem constitui teto global/RSS.
+
+### Validação
+
+- `npm test`: **514** testes frontend e tipos passaram.
+- `npm run test:rust-poc`: **257** testes (5 standalone, 1 Worker básico, 251
+  nos scripts), incluindo sete novos nesta fatia. Regressões anteriores verdes.
+- Sessão/Worker reproduzem os **16 goldens raster** históricos partindo de RGBA
+  original, sem padding na fixture; mesma chave, bytes e offsets. O golden de
+  Camada abaixo continua no passe separado.
+- Worker real prepara fonte direcional em 0,5/1/1,375/8, clamp/fallback e flags,
+  preservando RGB invisível. Confere geometria/timings e buffer do editor intacto.
+- Descrição reduzida preserva margens/chave com textura de bisel e traçado de
+  padrão, inclusive URL de asset grande, sem enviá-la no payload de staging.
+- Preflight, buffer vazio/curto, geração consumida/reservada/atrasada,
+  release/dispose/reinit e factory que falha são exercitados. Falha de preparo
+  retira fonte anterior; tentativa atrasada preserva a atual.
+- Ack ausente, chave/dimensão/offset divergentes e timing NaN não publicam nem
+  disparam kernel; retry reupload com geração nova. Reuso/concorrência/decode
+  tardio/render tardio/fechamento continuam passando com a preparação remota.
+- `cargo test --offline --locked`: **61** testes nativos; fmt/check e clippy
+  all-targets com `-D warnings` passaram. Testes de sessão/Worker foram repetidos
+  cinco vezes consecutivas, sem falhas.
+- Build de produção, integridade do bundle e smoke **Wails/WebView2** passaram.
+  Diagnóstico existente de fonte original/Fill/tile usa o novo comando e confirma
+  um só loader/handle com pixels/offsets fixos. Smoke remove executável temporário;
+  nenhum instalador/portável distribuível criado.
+- WASM segue com **100.281 bytes**, `axia_pixel_core-674Kws7T.wasm`. Worker normal
+  de estilos continua `layerStyleCompositor.worker-BALgYBwV.js`; aviso existente
+  de chunk >500 kB não impede build.
+
+Não foi medido ganho de latência/FPS: `preparationMs` não inclui decode, cópia
+original no consumidor, RPC ou encode. Decode raster/texto/assets, encode,
+coalescência/agendamento e orçamento agregado do fluxo real são os próximos
+passos; medir end-to-end antes de ativar em interações. C0/C1/C2 continuam
+abertos. Pilha/backdrop/transforms são C3 e superfície única é C4.
