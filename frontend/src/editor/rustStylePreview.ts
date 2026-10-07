@@ -11,6 +11,7 @@ import type { RustPixelPocStyleScheduler, RustPixelPocSchedulerLimits } from './
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import { rustStylePriorityValid, type RustStylePriority } from './rustStyleScheduling.ts'
 import type { RustStylePreviewMediaCache } from './rustStylePreviewMediaCache.ts'
+import type { RustStyleMediaTimings } from './rustStyleMediaTimings.ts'
 import { RustStylePreviewCancelledError, type LayerStylePreviewRequest, type LayerStylePreviewResult } from './rustStylePreviewProtocol.ts'
 export { RustStylePreviewCancelledError, rustStylePreviewEnabled, type LayerStylePreviewRequest, type LayerStylePreviewResult } from './rustStylePreviewProtocol.ts'
 type Scheduler = Pick<RustPixelPocStyleScheduler, 'renderPrepared' | 'setPriority' | 'cancel' | 'dispose' | 'stats'>
@@ -59,7 +60,7 @@ export class RustStylePreview {
   private resultLeases = 0
   private resultBytes = 0
   private last: { backend: 'rust' | 'legacy'; fallbackReason: string | null; preparationMs: number;
-    renderMs: number; totalMs: number; kernelMs: number | null; encodeMs: number | null } | null = null
+    renderMs: number; totalMs: number; kernelMs: number | null; encodeMs: number | null; media: RustStyleMediaTimings | null } | null = null
 
   constructor(ports: RustStylePreviewPorts) {
     this.ports = ports; this.clock = ports.clock ?? (() => performance.now())
@@ -76,7 +77,9 @@ export class RustStylePreview {
       mediaCache: this.ports.mediaCache?.stats ?? null,
       circuitOpen: !!this.context?.failed || [...this.owners.values()].some(owner => owner.failed),
       backendCircuitOpen: this.context?.failed ?? false,
-      service: this.context?.scheduler?.stats ?? null, last: this.last ? { ...this.last } : null }
+      service: this.context?.scheduler?.stats ?? null, last: this.last ? { ...this.last,
+        media: this.last.media ? { ...this.last.media, source: this.last.media.source ? { ...this.last.media.source } : null,
+          patterns: this.last.media.patterns ? { ...this.last.media.patterns } : null } : null } : null }
   }
 
   async render(input: LayerStylePreviewRequest): Promise<LayerStylePreviewResult> {
@@ -153,7 +156,7 @@ export class RustStylePreview {
           this.counts.rendered++
           this.last = { backend: 'rust', fallbackReason: null, preparationMs,
             renderMs: this.clock() - started - preparationMs, totalMs: this.clock() - started,
-            kernelMs: lease.result.timings.kernelMs, encodeMs: lease.result.encoding.pngEncodeMs }
+            kernelMs: lease.result.timings.kernelMs, encodeMs: lease.result.encoding.pngEncodeMs, media: lease.result.media ?? null }
           this.resultLeases++
           this.resultBytes += lease.result.blob.size
           let released = false
@@ -182,7 +185,7 @@ export class RustStylePreview {
       const rendered = await this.ports.fallback(request)
       if (!same()) throw new RustStylePreviewCancelledError()
       this.last = { backend: 'legacy', fallbackReason: fallbackReason ?? 'circuit-open', preparationMs,
-        renderMs: this.clock() - started - preparationMs, totalMs: this.clock() - started, kernelMs: null, encodeMs: null }
+        renderMs: this.clock() - started - preparationMs, totalMs: this.clock() - started, kernelMs: null, encodeMs: null, media: null }
       this.changed()
       return { ...rendered, release() {} }
     } catch (error) {

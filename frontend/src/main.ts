@@ -15,8 +15,12 @@ async function bootstrap() {
   if (params.get('axiaRustPoc') === '1') {
     void import('./editor/rustPixelPocDiagnostic.ts')
       .then(({ runRustPixelPocDiagnostic }) => runRustPixelPocDiagnostic())
-      .then((result) => {
+      .then(async (result) => {
         document.documentElement.dataset.axiaRustPocWasmBytes = String(result.wasmBytes)
+        if (params.get('axiaRustMediaBenchmark') === '1') {
+          const { runRustStyleMediaBenchmark } = await import('./editor/rustStyleMediaBenchmark.ts')
+          document.documentElement.dataset.axiaRustMediaBenchmark = JSON.stringify(await runRustStyleMediaBenchmark())
+        }
         document.documentElement.dataset.axiaRustPoc = 'passed'
         console.info('Axia Rust POC:', result)
       })

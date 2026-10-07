@@ -132,7 +132,12 @@ export class RustPixelPocStyleService {
       const token = Symbol()
       this.leases.set(token, bytes); this.resultBytes += bytes
       ticket.settled = true
-      ticket.resolve({ result: Object.freeze({ ...result, encoding: Object.freeze({ ...result.encoding }),
+      ticket.resolve({ result: Object.freeze({ ...result,
+        patternMedia: result.media.patterns ? Object.freeze({ ...result.media.patterns }) : undefined,
+        media: Object.freeze({ ...result.media,
+          source: result.media.source ? Object.freeze({ ...result.media.source }) : null,
+          patterns: result.media.patterns ? Object.freeze({ ...result.media.patterns }) : null }),
+        encoding: Object.freeze({ ...result.encoding }),
         timings: Object.freeze({ ...result.timings }) }), release: () => {
         const retained = this.leases.get(token)
         if (retained !== undefined) { this.leases.delete(token); this.resultBytes -= retained }

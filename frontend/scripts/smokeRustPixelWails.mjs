@@ -7,6 +7,7 @@ import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 if (process.platform !== 'win32') throw new Error('Smoke Wails/WebView2 disponível apenas no Windows.')
+const mediaBenchmark = process.argv.includes('--media-benchmark')
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const declaredGoVersion = /^go (\d+\.\d+\.\d+)\r?$/m.exec(readFileSync(join(repoRoot, 'go.mod'), 'utf8'))?.[1]
@@ -91,7 +92,7 @@ try {
   if (build.status !== 0) throw new Error(`go build falhou: ${build.status}`)
 
   const port = await unusedLocalPort()
-  app = spawn(binary, ['--axia-rust-poc-smoke'], {
+  app = spawn(binary, ['--axia-rust-poc-smoke', ...(mediaBenchmark ? ['--axia-rust-media-benchmark'] : [])], {
     cwd: repoRoot,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -113,7 +114,7 @@ try {
   })
   const evaluate = evaluator(socket)
   let result
-  for (let attempt = 0; attempt < 300; attempt++) {
+  for (let attempt = 0; attempt < (mediaBenchmark ? 1200 : 300); attempt++) {
     result = await evaluate('({ status: document.documentElement.dataset.axiaRustPoc, error: document.documentElement.dataset.axiaRustPocError, wasmBytes: Number(document.documentElement.dataset.axiaRustPocWasmBytes) })')
     if (result?.status) break
     await delay(100)
@@ -122,6 +123,12 @@ try {
   assert.equal(result.wasmBytes, readFileSync(join(repoRoot, 'frontend', 'src', 'generated', 'axia_pixel_core.wasm')).length,
     'O diagnóstico deve reportar o tamanho do WASM carregado antes da transferência')
   process.stdout.write('Smoke Wails/WebView2: Worker/WASM incorporados ao executável passaram.\n')
+  if (mediaBenchmark) {
+    const measurement = await evaluate('JSON.parse(document.documentElement.dataset.axiaRustMediaBenchmark || "null")')
+    assert.equal(measurement?.rows?.length, 8)
+    const browser = await evaluate('navigator.userAgent')
+    process.stdout.write(`${JSON.stringify({ browser, node: process.version, benchmark: measurement })}\n`)
+  }
 } finally {
   socket?.close()
   if (app && app.exitCode === null) {

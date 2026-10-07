@@ -11,6 +11,7 @@ import type { RustPixelPocScheduledPreparation, RustPixelPocSchedulerLimits, Rus
 import type { RustStylePriority } from '../src/editor/rustStyleScheduling.ts'
 import { RustStylePreviewMediaCache } from '../src/editor/rustStylePreviewMediaCache.ts'
 import { prepareRustStylePreviewMedia } from '../src/editor/rustStylePreviewPreparation.ts'
+import { emptyRustStyleDecodeTimings } from '../src/editor/rustStyleMediaTimings.ts'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -31,6 +32,8 @@ function fixture() {
     return { result: { type: 'encoded-staged-region', id: state.requests.length, sourceId: 1, generation: 1,
       blob: new Blob(['png'], { type: 'image/png' }), width: 1, height: 1, offsetX: 0, offsetY: 0,
       sourceWidth: 1, sourceHeight: 1, paddedWidth: 1, paddedHeight: 1,
+      media: { sourceReused: false, source: { ...emptyRustStyleDecodeTimings(), rasterDecodes: 1, rgbaBytes: 4 },
+        patterns: emptyRustStyleDecodeTimings(), sourcePaddingMs: 0, sourceStagingMs: 0 },
       timings: { allocationMs: 0, copyInMs: 0, kernelMs: 2, copyOutMs: 0, releaseMs: 0 },
       encoding: { canvasUploadMs: 0, pngEncodeMs: 3 } },
     release() { if (!released) { released = true; state.releases++ } } }
@@ -59,6 +62,22 @@ function fixture() {
 test('Flag Rust do preview exige opt-in explícito, sem aliases/valores truthy', () => {
   assert.equal(rustStylePreviewEnabled('?axiaRustStyles=1'), true)
   for (const search of ['', '?axiaRustStyles=0', '?axiaRustStyles=true', '?axiaRustPoc=1', '?other=1']) assert.equal(rustStylePreviewEnabled(search), false)
+})
+
+test('Diagnóstico de mídia é snapshot sem alias e fica ausente no fallback', async () => {
+  const f = fixture(), preview = new RustStylePreview(f.ports)
+  try {
+    const result = await preview.render(input())
+    const snapshot = preview.stats.last!.media!
+    assert.equal(snapshot.source!.rasterDecodes, 1)
+    snapshot.source!.rasterDecodes = 99; snapshot.patterns!.rgbaBytes = 99
+    assert.equal(preview.stats.last!.media!.source!.rasterDecodes, 1)
+    assert.equal(preview.stats.last!.media!.patterns!.rgbaBytes, 0)
+    f.ports.createScheduler = async () => { throw new RustPixelPocError('wasm-unavailable') }
+    result.release(); await preview.dispose()
+    await preview.render(input())
+    assert.equal(preview.stats.last!.backend, 'legacy'); assert.equal(preview.stats.last!.media, null)
+  } finally { await preview.dispose() }
 })
 
 test('Preview compartilha agendador entre camadas sem usar cache legado; miniaturas continuam no legado', async () => {

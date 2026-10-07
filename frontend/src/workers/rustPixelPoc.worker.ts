@@ -4,6 +4,7 @@ import { decodeRustStyleSource, decodeRustStyleAssets, prepareRustStyleAssets } 
 import { RustPixelPocMediaQueue } from '../editor/rustPixelPocMediaQueue.ts'
 import { encodeRustStylePng, rustStylePngLayout } from '../editor/rustPixelPocPng.ts'
 import type { RustPixelPocRequest, RustPixelPocResponse } from '../editor/rustPixelPocProtocol.ts'
+import { emptyRustStyleDecodeTimings } from '../editor/rustStyleMediaTimings.ts'
 
 type Runtime = Awaited<ReturnType<typeof createRustPixelPocRuntime>>
 let runtimePromise: Promise<Runtime> | null = null
@@ -61,7 +62,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
   const current = generation
   const runtime = runtimePromise
   // Never cancel source lifecycle barriers.
-  const isRender = request.type === 'style-media-staged-png' || request.type === 'style-media-staged-region' || request.type === 'render' || request.type === 'render-region' ||
+  const isRender = request.type === 'compose-document-region' || request.type === 'style-media-staged-png' || request.type === 'style-media-staged-region' || request.type === 'render' || request.type === 'render-region' ||
     request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
     request.type === 'blend-if-this-layer-staged-region' ||
     request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
@@ -76,6 +77,13 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     const ensureCurrent = () => {
       if (current !== generation || cancelled.has(request.id)) throw new RustPixelPocError('invalid-input')
     }
+    if (request.type === 'compose-document-region') {
+      if (!(request.packet instanceof ArrayBuffer)) throw new RustPixelPocError('invalid-input')
+      const { rgba, region, width, height, timings } = engine.composeDocumentPacket(new Uint8Array(request.packet))
+      ensureCurrent()
+      reply({ type: 'rendered-document-region', id: request.id, rgba: rgba.buffer, region, width, height, timings }, [rgba.buffer])
+      return
+    }
     if (request.type === 'stage-style-media') {
       let prepared: Extract<RustPixelPocResponse, { type: 'source-staged' }>['prepared']
       const staged = await engine.stagePreparedSourceAsync(checkSource => mediaQueue.run(async () => {
@@ -83,11 +91,14 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
         const check = () => { ensureCurrent(); checkSource() }
         check()
         const layout = prepareRustStyleSourceLayout(request.input)
-        const source = await decodeRustStyleSource(request.source, layout, check)
+        const media = emptyRustStyleDecodeTimings()
+        const source = await decodeRustStyleSource(request.source, layout, check, media)
         check()
+        const paddingStarted = performance.now()
         const rgba = padRustStyleSource(source, layout)
+        const paddingMs = performance.now() - paddingStarted
         prepared = { sourceKey: layout.sourceKey, width: layout.width, height: layout.height,
-          offsetX: layout.offsetX, offsetY: layout.offsetY, preparationMs: performance.now() - started }
+          offsetX: layout.offsetX, offsetY: layout.offsetY, preparationMs: performance.now() - started, media, paddingMs }
         return { rgba, width: layout.width, height: layout.height }
       }), request.generation)
       ensureCurrent()
@@ -117,14 +128,15 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
       if (request.type === 'style-media-staged-png') rustStylePngLayout(region.width, region.height, retainedBytes)
       const result = await mediaQueue.run(async () => {
         check()
-        const patterns = await decodeRustStyleAssets(assets, check)
+        const patternMedia = emptyRustStyleDecodeTimings()
+        const patterns = await decodeRustStyleAssets(assets, check, patternMedia)
         check()
         const job = prepareRustStyleJob({ ...request.input, region, patterns })
         if (job.workingBytes + assets.decodedBytes + job.packetBytes > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
         if (request.type === 'style-media-staged-png') rustStylePngLayout(region.width, region.height, retainedBytes + job.packetBytes)
         const rendered = engine.styleStagesStagedRegion(request.sourceId, job.region, job.plan)
         const common = { id: request.id, width: region.width, height: region.height, sourceId: request.sourceId,
-          generation: rendered.generation, timings: rendered.timings }
+          generation: rendered.generation, timings: rendered.timings, patternMedia }
         if (request.type === 'style-media-staged-png') {
           const encoded = await encodeRustStylePng(rendered.rgba, region.width, region.height, check, retainedBytes + job.packetBytes)
           return { type: 'encoded-staged-region' as const, ...common, ...encoded }

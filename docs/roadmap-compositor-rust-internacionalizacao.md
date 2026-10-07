@@ -688,7 +688,40 @@ faltam medições/QA, decisão de cache decodificado e orçamento entre janelas.
 C3/C4 ainda não substituíram a pilha/DOM. Detalhes no
 [contrato de decode](contrato-limites-decode-preview-rust-v1.md).
 
+Atualização da 29ª fatia de C2: o Worker/sessão/preview separam cabeçalho,
+decode/resize, desenho, readback, padding e staging, sem recobrar a fonte
+preparada em renders consecutivos. Benchmark Wails explícito cobre PNGs
+512²/1024² com fonte nova/reusada, alternância de camadas e padrão repetido,
+medianas/p95 e contadores de decode. Não é FPS/RSS e não cria cache decodificado.
+Contrato/limites e decisão provisória estão na [medição de mídia](contrato-medicao-midia-rust-v1.md)
+e na prova C1. Default/texto/exportação/ABI/kernels/stack não mudam. C0/C1/C2
+continuam abertos; orçamento entre janelas, QA e compositor C3/C4 permanecem.
+
 ### C3 — Um compositor offscreen do documento
+
+Primeira fatia de C3: `document_composite.rs` compõe a pilha de rasters
+preparados com ordem inferior → superior, seis modos, opacidade fracionária,
+translação inteira e regiões globais. Preflight preserva saída em erro, limita
+memória e não aloca raster documental. Testes nativos comparam render inteiro
+e tiles byte a byte. É função Rust segura ainda sem adapter/ABI WASM,
+transformação/reamostragem, estilos/Blend If ou consumidores reais.
+Inventário de consumidores, alcance/limites e próximos gates no
+[contrato da pilha inicial](contrato-pilha-documental-rust-v1.md).
+Auditoria confirmou que a janela nativa atual só emite parâmetros ao editor,
+sem segundo Worker Rust; coordenação entre instâncias/janelas futuras e QA
+continuam gates, não um orçamento global já implementado. C0/C1/C2/C3/C4
+permanecem abertos; Canvas/DOM/fallback/default e versões são preservados.
+
+Segunda fatia de C3: ABI privada DCP1 integra a pilha preparada ao runtime
+WASM/TypeScript e Worker, com pacote versionado e offsets relativos, preflight,
+cleanup em falha e resultado transferível próprio. Testes repetem modos/alpha
+nativos em WASM, tiles sem emendas, corrupção/overlap, crescimento de memória,
+fonte staged preservada e compatibilidade com WASM sem o novo export documental.
+Diagnóstico Wails explícito confere duas camadas/Multiplicação. Não há
+consumidor editorial, transformação/reamostragem, integração de estilos/Blend If,
+admission/scheduler de documento ou otimização de upload por tile ainda.
+Alcance e limites no [contrato DCP1](contrato-abi-pilha-documental-rust-v1.md).
+C3 continua aberto e `renderDocument.ts`/DOM permanecem intactos.
 
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar

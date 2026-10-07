@@ -23,6 +23,8 @@
     "benchmark:layer-handoff": "node scripts/documentOracleBrowser.mjs --handoff",
     "presmoke:rust-wails": "npm run build && npm run test:rust-bundle",
     "smoke:rust-wails": "node scripts/smokeRustPixelWails.mjs",
+    "prebenchmark:rust-media-wails": "npm run build && npm run test:rust-bundle",
+    "benchmark:rust-media-wails": "node scripts/smokeRustPixelWails.mjs --media-benchmark",
     "presmoke:preview-wails": "npm run build",
     "smoke:preview-wails": "node --experimental-strip-types scripts/smokePreviewWails.mjs",
     "prebenchmark:preview-wails": "npm run build",

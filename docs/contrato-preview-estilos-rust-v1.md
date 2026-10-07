@@ -1,6 +1,6 @@
 # Preview real de estilos Rust — integração experimental V1
 
-## 1. Alcance — atualização da 28ª fatia
+## 1. Alcance — atualização da 29ª fatia
 
 O serviço da [22ª fatia](contrato-servico-estilos-rust-v1.md) agora atende um
 consumidor real: `useLayerStyleRaster` no canvas. O PNG é produzido pelos passes
@@ -17,6 +17,9 @@ reservado dentro do orçamento anterior, sem cache de RGBA ou de resultado final
 A 28ª acrescenta [limites intrínsecos antes do decode](contrato-limites-decode-preview-rust-v1.md)
 para fontes/padrões PNG/JPEG/GIF. Dimensões indeterminadas ou acima do orçamento
 usam fallback local sem invocar o decoder Rust; isso não limita o RSS do legado.
+A 29ª separa [medidas de mídia](contrato-medicao-midia-rust-v1.md) no Worker,
+com reuso explícito da fonte e benchmark opt-in no WebView2 real. Não cria cache
+decodificado nem altera a composição.
 
 A integração permanece **desligada por padrão**. Ativação explícita:
 
@@ -175,7 +178,11 @@ contas do agendador, preparação/fila ativa, cache codificado e último backend
 Timings agrupam espera de instância/fila + preparação de Blob/assets, render
 do serviço (abertura do Worker, staging/decode, efeitos e encode), total do
 adaptador, kernel e encode PNG. Não são tempos exclusivos de CPU de cada fase.
-Não apresentam decode/fetch/IPC como fases isoladas que ainda não são medidas.
+`last.media` agora separa cabeçalho, createImageBitmap/decode/resize, desenho,
+readback, padding e staging da fonte, com padrões acumulados à parte. Fonte
+reusada não repete tempos históricos; fallback fica sem métricas de mídia.
+São tempos decorridos, não CPU exclusiva. Fetch/IPC continuam sem medidas
+isoladas; os agregados incluem espera e não são a soma dessas parcelas.
 
 O smoke do canvas mede publicação → load → ativação do buffer, verifica pixels
 do screenshot e ausência de perda do buffer ativo. Assim o caminho real tem
@@ -226,7 +233,15 @@ ligada, começar com poucas camadas estilizadas e expandir gradualmente:
   aumentado ou o processamento inteiro ficou em Rust.
 
 Próximos passos: ampliar cobertura/QA dos limites intrínsecos e orçamento entre janelas,
-medição de decode/cache decodificado, medições repetidas isoladas e matriz visual de tolerâncias,
+validar medições de decode em documentos reais antes de decidir cache decodificado,
+medições repetidas isoladas e matriz visual de tolerâncias,
 antes de aumentar cobertura/ativar por padrão. C0/C1/C2 continuam abertos. C3 é a
 pilha documental/backdrop/transforms; C4 é a superfície única. O idioma e o modelo
 editorial permanecem separados desta integração.
+
+Auditoria da primeira fatia C3 confirmou que a janela nativa atual de estilos
+só envia parâmetros ao editor, sem Worker Rust próprio. Coordenação agregada
+é gate para futuras instâncias concorrentes, não orçamento distribuído já
+implementado. O [núcleo inicial da pilha](contrato-pilha-documental-rust-v1.md)
+está testado em Rust nativo e pela ABI DCP1/WASM/Worker de diagnóstico, mas
+ainda não é usado por este preview.

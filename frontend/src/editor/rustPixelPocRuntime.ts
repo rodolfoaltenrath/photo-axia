@@ -9,12 +9,14 @@ import { encodeSatin, satinLayout, type RustPixelPocSatin } from './rustPixelPoc
 import { encodeStroke, strokePacketLength, strokeLayout, type RustPixelPocStroke } from './rustPixelPocStroke.ts'
 import { encodeBevel, bevelPacketLength, bevelLayout, type RustPixelPocBevel } from './rustPixelPocBevel.ts'
 import { encodeStyleStages, type RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
+import { documentCompositePacketLayout, encodeDocumentComposite, type RustDocumentCompositeJob } from './rustDocumentComposite.ts'
 export { RustPixelPocError } from './rustPixelPocError.ts'
 
 const MAX_POC_BYTES = 64 * 1024 * 1024
 let nextSourceId = 0
 
 interface RustPixelPocExports {
+  axia_poc_document_region?(packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
   axia_poc_style_stages_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
     x: number, y: number, width: number, height: number, packetPointer: number, packetLength: number,
     outputPointer: number, outputLength: number): number
@@ -459,7 +461,48 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     } finally { if (latestGeneration === generation) preparation = null }
   }
 
+  function composeDocumentPacket(packet: Uint8Array) {
+    if (disposed || typeof exports.axia_poc_document_region !== 'function' ||
+        exports.axia_poc_document_region.length !== 4) throw new RustPixelPocError('wasm-unavailable')
+    const { region, outputBytes, workingBytes } = documentCompositePacketLayout(packet)
+    if (workingBytes + (staged?.length ?? 0) > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+    const started = performance.now()
+    const allocations: { pointer: number; length: number }[] = []
+    let allocated = started, copiedIn = started, computed = started, copiedOut = started
+    let rgba: Uint8Array<ArrayBuffer>
+    try {
+      for (const length of [packet.byteLength, outputBytes]) {
+        const pointer = exports.axia_poc_alloc(length)
+        if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+        allocations.push({ pointer, length })
+        if (pointer + length > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+      }
+      allocated = performance.now()
+      const input = allocations[0]!, output = allocations[1]!
+      // Recreate views after all allocations: memory.grow detaches old buffers.
+      new Uint8Array(exports.memory.buffer, input.pointer, input.length).set(packet)
+      copiedIn = performance.now()
+      const status = exports.axia_poc_document_region(input.pointer, input.length, output.pointer, output.length)
+      if (status !== 0) throw new RustPixelPocError(status === 6 ? 'memory-limit' : 'wasm-failure')
+      computed = performance.now()
+      rgba = new Uint8Array(exports.memory.buffer, output.pointer, output.length).slice()
+      copiedOut = performance.now()
+    } finally {
+      for (const { pointer, length } of allocations.reverse()) exports.axia_poc_free(pointer, length)
+    }
+    return { rgba, region, width: region.width, height: region.height, timings: {
+      allocationMs: allocated - started, copyInMs: copiedIn - allocated,
+      kernelMs: computed - copiedIn, copyOutMs: copiedOut - computed,
+      releaseMs: performance.now() - copiedOut
+    } }
+  }
+
   return {
+    composeDocumentPacket,
+    composeDocumentRegion(job: RustDocumentCompositeJob) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      return composeDocumentPacket(encodeDocumentComposite(job))
+    },
     stagePreparedSource,
     async stagePreparedSourceAsync(prepare: (ensureCurrent: () => void) => Promise<{
       rgba: Uint8Array; width: number; height: number

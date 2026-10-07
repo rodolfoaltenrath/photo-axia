@@ -2395,3 +2395,86 @@ decidir cache decodificado com evidência, orçamento entre janelas e QA real.
 C3/C4 ainda não substituíram compositor de documento/DOM/exportação. Stack,
 texto, idioma, `.axia` e versões permanecem; os executáveis dos smokes são
 temporários, não novo instalador/portável.
+
+## 29ª fatia — medição separada de mídia e benchmark WebView2 (2026-10-07)
+
+Worker/sessão/serviço/preview passam a distinguir cabeçalho, createImageBitmap
+(decode/resize), criação/desenho de Canvas, readback, padding e upload da fonte
+ao WASM. Padrões ativos acumulam medidas à parte. Primeira composição válida
+recebe a conta do preparo; reuso consecutivo devolve fonte/padding/staging
+zerados. Cancelamento/falha não publica amostra. Kernel e encode PNG continuam
+separados. Não são medidas de CPU exclusiva, fetch, IPC, FPS ou RSS.
+
+Snapshots têm somente números conhecidos, sem texto/URL/IDs; contadores/bytes
+são limitados. Serviço congela dados e preview devolve cópias independentes.
+Fallback tem mídia null, sem atribuir ao legado tempos do último resultado Rust.
+Protocolo TS recebe campos opcionais; ABI e algoritmos Rust não mudam.
+
+Foi adicionado `npm run benchmark:rust-media-wails`: executável/perfil temporário,
+decoder/Canvas reais, PNGs sintéticos 512²/1024², padrão 512², dois warmups e sete
+amostras por cenário, ordem alternada. Geração das fixtures, setup e abertura
+do Worker são excluídos. Cada saída libera a lease; teardown fecha o serviço.
+Go apenas injeta o parâmetro com o modo de diagnóstico, fora da abertura normal.
+
+Três execuções independentes no mesmo PC passaram, sem as suítes de teste
+concorrendo durante as medições. Node 24.14.1, Windows/WebView2 Edge 154;
+smoke confirmou runtime 154.0.4258.62, CPU i7-3770. Os valores abaixo são
+**medianas por execução em ms**, não um benchmark do documento/editor completo:
+
+| Raster | Cenário | Rodada 1 | Rodada 2 | Rodada 3 |
+| --- | --- | ---: | ---: | ---: |
+| 512² | Fonte nova | 50,0 | 50,1 | 50,0 |
+| 512² | Fonte reusada | 40,7 | 39,6 | 41,0 |
+| 512² | Alternância A/B/A | 50,3 | 53,5 | 50,0 |
+| 512² | Fonte reusada + padrão | 57,0 | 58,8 | 59,9 |
+| 1024² | Fonte nova | 179,5 | 183,1 | 170,9 |
+| 1024² | Fonte reusada | 148,7 | 139,3 | 144,5 |
+| 1024² | Alternância A/B/A | 183,3 | 183,7 | 172,5 |
+| 1024² | Fonte reusada + padrão | 186,4 | 186,0 | 186,7 |
+
+Cada rodada mediu sete decodes de fonte nos cenários nova/alternância e zero
+nos de reuso; padrão repetido teve sete decodes, confirmando que não existe
+cache decodificado. Na terceira rodada 1024²/fonte nova: mediana bitmap **14,1**,
+readback **6,8**, kernel **111,9**, PNG **26,8** ms. Padrão 512² no mesmo raster:
+bitmap **4,8**, readback **1,6**, kernel **134,1**, PNG **34,0** ms. Não somar
+medianas de parcelas para obter mediana do total; os cenários usam passes
+diferentes (cor versus padrão), não são controle para medir ganho de cache.
+
+Há caudas: na segunda rodada, fonte nova 1024² teve p95/worst **507,3** ms,
+com encode PNG **345,8** ms naquela cauda. Não descartamos esse valor nem
+atribuímos sua causa ao decode/GC/driver sem evidência. Com sete amostras,
+p95 é o maior valor observado; não caracteriza estatisticamente todas as máquinas.
+
+**Decisão provisória:** conservar cache codificado e fonte staged consecutiva;
+não criar nesta fatia um LRU amplo de RGBA/bitmap. Nesta sonda, kernel/PNG
+predominam, enquanto padrão repetido custa poucos ms para decode/readback.
+Alternância ainda precisa novo preparo e pode justificar cache direcionado em
+outros documentos. Medir arquivos reais grandes/JPEG/padrões/latência e memória
+antes de mudar essa decisão. A sonda não prova que um cache nunca será útil.
+
+Validação local:
+
+- `npm test`: **587** casos frontend com tipos; cinco casos novos de métricas/
+  resumo e um de isolamento do snapshot/fallback do preview.
+- `npm run test:rust-poc`: **366** casos — cinco standalone, um smoke Worker e
+  **360** scripts. Novos casos cobrem medidas raster/texto/padrões, reuso e
+  recuperação após falha sem consumir a medida de fonte. Serviço verifica
+  freeze dos snapshots, além da validade/liberação das leases.
+- Métricas/preview/mídia/Worker/serviço (**84** casos) passaram **cinco vezes
+  consecutivas**, sem tratar repetição como benchmark de desempenho.
+- `cargo test --offline --locked`: **61** nativos; `go test ./...` passou,
+  incluindo URLs do benchmark e ausência da flag fora do diagnóstico.
+- Build/integridade do bundle passaram. WASM permanece **100.281 bytes**,
+  `axia_pixel_core-674Kws7T.wasm`; Worker Rust é
+  `rustPixelPoc.worker-DkkNInS8.js`. Worker legado e versões da stack permanecem.
+  Benchmark é um chunk lazy; aviso conhecido de chunk >500 kB continua.
+- Diagnóstico Wails normal e previews **Rust, WASM bloqueado e padrão** passaram.
+  Métricas da fonte chegam ao diagnóstico real; fallback tem media null.
+  Cleanup zerou consumidores/leases/Workers/cache, sem perder buffer ativo;
+  screenshot mudou **3.176** pixels nos três caminhos. O smoke preserva
+  seleção/pan, ocultar/mostrar e uma única instância para três camadas.
+
+Contrato de medidas e limites no [benchmark de mídia V1](contrato-medicao-midia-rust-v1.md).
+C0/C1/C2 seguem abertos para matriz/QA e orçamento entre janelas. C3/C4 ainda
+não substituíram pilha/DOM/exportação. Nenhuma ativação padrão, cache RGBA,
+mudança de texto/idioma/`.axia` ou release de instalador foi feita.

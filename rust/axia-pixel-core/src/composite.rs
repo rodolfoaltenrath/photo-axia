@@ -1,4 +1,4 @@
-//! Straight-alpha effect blending, not document Canvas/GPU blending.
+//! Straight-alpha pixel blending; Canvas/GPU parity requires separate tests.
 
 #[derive(Clone, Copy, Debug)]
 pub enum BlendMode {

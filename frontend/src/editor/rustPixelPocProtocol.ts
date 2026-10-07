@@ -1,4 +1,4 @@
-// Experimental protocol; not connected to the editor renderer.
+// Experimental Worker protocol; WASM ABI is separate.
 import type { RustPixelPocBatchPlan } from './rustPixelPocBatch.ts'
 import type { RustPixelPocAlphaMask } from './rustPixelPocAlphaMask.ts'
 import type { RustPixelPocDropShadow } from './rustPixelPocDropShadow.ts'
@@ -10,9 +10,11 @@ import type { RustPixelPocBevel } from './rustPixelPocBevel.ts'
 import type { RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
 import type { RustPixelPocStyleSourceInput } from './rustPixelPocStylePreparation.ts'
 import type { LayerStyleWorkerSource } from './layerStyleRenderProtocol.ts'
+import type { RustStyleDecodeTimings } from './rustStyleMediaTimings.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 export type RustPixelPocRequest =
+  | { type: 'compose-document-region'; id: number; packet: ArrayBuffer }
   | { type: 'stage-style-media'; id: number; source: LayerStyleWorkerSource; input: RustPixelPocStyleSourceInput; generation: number }
   | { type: 'style-media-staged-png'; id: number; sourceId: number; input: RustPixelPocStyleSourceInput;
       region: RustPixelPocRegion; patterns: Record<string, Blob> }
@@ -67,17 +69,21 @@ export interface RustPixelPocTimings {
 }
 
 export type RustPixelPocResponse =
+  | { type: 'rendered-document-region'; id: number; rgba: ArrayBuffer; region: RustPixelPocRegion;
+      width: number; height: number; timings: RustPixelPocTimings }
   | { type: 'encoded-staged-region'; id: number; blob: Blob; width: number; height: number;
       sourceId: number; generation: number; timings: RustPixelPocTimings;
+      patternMedia?: RustStyleDecodeTimings;
       encoding: { canvasUploadMs: number; pngEncodeMs: number } }
   | { type: 'ready'; id: number }
   | { type: 'rendered'; id: number; rgba: ArrayBuffer; timings: RustPixelPocTimings }
   | { type: 'rendered-region'; id: number; rgba: ArrayBuffer; width: number; height: number;
       timings: RustPixelPocTimings }
   | { type: 'rendered-staged-region'; id: number; rgba: ArrayBuffer; width: number; height: number;
-      sourceId: number; generation: number; timings: RustPixelPocTimings }
+      sourceId: number; generation: number; timings: RustPixelPocTimings; patternMedia?: RustStyleDecodeTimings }
   | { type: 'source-staged'; id: number; sourceId: number; generation: number; stagingMs: number;
-      prepared?: { sourceKey: string; width: number; height: number; offsetX: number; offsetY: number; preparationMs: number } }
+      prepared?: { sourceKey: string; width: number; height: number; offsetX: number; offsetY: number; preparationMs: number;
+        media?: RustStyleDecodeTimings; paddingMs?: number } }
   | { type: 'source-invalidated'; id: number; generation: number }
   | { type: 'source-released'; id: number; sourceId: number }
   | { type: 'cancelled'; id: number }

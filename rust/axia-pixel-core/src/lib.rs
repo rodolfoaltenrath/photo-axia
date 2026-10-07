@@ -1,4 +1,4 @@
-//! Experimental pixel ABI; not the document compositor.
+//! Experimental pixel kernels and private ABI adapters.
 
 pub mod alpha_mask;
 pub mod batch;
@@ -6,6 +6,8 @@ pub mod bevel;
 pub mod blend_if;
 pub mod color_overlay;
 pub mod composite;
+pub mod document_composite;
+pub mod document_packet;
 pub mod drop_shadow;
 mod effect_math;
 pub mod glow;

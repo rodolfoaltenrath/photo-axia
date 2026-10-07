@@ -8,6 +8,7 @@ import type { LayerStyleWorkerSource } from './layerStyleRenderProtocol.ts'
 import type { RustPixelPocRegion } from './rustPixelPocRuntime.ts'
 import { RustPixelPocTileGate } from './rustPixelPocTileGate.ts'
 import type { RustPixelPocRequest, RustPixelPocResponse } from './rustPixelPocProtocol.ts'
+import { emptyRustStyleDecodeTimings, snapshotRustStyleDecodeTimings, type RustStyleDecodeTimings, type RustStyleMediaTimings } from './rustStyleMediaTimings.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 export type RustPixelPocSend = (request: WithoutId<RustPixelPocRequest>, transfers?: ArrayBuffer[]) =>
@@ -30,7 +31,7 @@ export interface RustPixelPocStyleMediaRequest extends RustPixelPocStyleSourceIn
 
 /** One consumer and one exclusive Worker source slot. */
 export class RustPixelPocStyleSession {
-  private entry: { key: string; token: symbol; promise: Promise<Staged> } | null = null
+  private entry: { key: string; token: symbol; promise: Promise<Staged>; mediaReported: boolean; preparation: { staged?: Staged } } | null = null
   private revision = 0
   private disposed = false
   private disposal: Promise<void> | null = null
@@ -49,6 +50,7 @@ export class RustPixelPocStyleSession {
     const generation = this.gate.beginSourceChange()
     const key = `${media ? 'media' : 'raw'}:${job.sourceKey}`
     const token = Symbol(key)
+    const preparation: { staged?: Staged } = {}
     const promise: Promise<Staged> = (async () => {
       const barrier = this.checked(await this.send({ type: 'invalidate-source', generation }))
       if (barrier.type !== 'source-invalidated' || barrier.generation !== generation) throw new RustPixelPocError('wasm-failure')
@@ -67,9 +69,10 @@ export class RustPixelPocStyleSession {
           staged.prepared.offsetX !== job.offsetX || staged.prepared.offsetY !== job.offsetY ||
           !Number.isFinite(staged.prepared.preparationMs) || staged.prepared.preparationMs < 0 ||
           !this.gate.adoptSource(staged)) throw new RustPixelPocError('wasm-failure')
+      preparation.staged = staged
       return staged
     })()
-    const entry = { key, token, promise }
+    const entry = { key, token, promise, mediaReported: false, preparation }
     this.entry = entry
     void promise.catch(() => { if (this.entry === entry) this.entry = null })
     return entry
@@ -87,8 +90,9 @@ export class RustPixelPocStyleSession {
 
   async composeMedia(request: RustPixelPocStyleMediaRequest) {
     const { job, entry, revision, input, patterns } = this.prepareMedia(request)
-    return this.finish(job, entry, revision, staged => this.send({ type: 'style-media-staged-region',
+    const result = await this.finish(job, entry, revision, staged => this.send({ type: 'style-media-staged-region',
       sourceId: staged.sourceId, input, region: job.region, patterns }))
+    return { ...result, media: this.mediaTimings(result.patternMedia, entry) }
   }
 
   async composeMediaPng(request: RustPixelPocStyleMediaRequest) {
@@ -100,7 +104,21 @@ export class RustPixelPocStyleSession {
         ![result.encoding.canvasUploadMs, result.encoding.pngEncodeMs].every(value => Number.isFinite(value) && value >= 0)) {
       throw new RustPixelPocError('wasm-failure')
     }
-    return { ...result, ...this.geometry(job) }
+    return { ...result, ...this.geometry(job), media: this.mediaTimings(result.patternMedia, entry) }
+  }
+
+  private mediaTimings(patterns: RustStyleDecodeTimings | undefined,
+    entry: NonNullable<RustPixelPocStyleSession['entry']>): RustStyleMediaTimings {
+    const staged = entry.preparation.staged
+    if (!staged) throw new RustPixelPocError('wasm-failure')
+    const sourceReused = entry.mediaReported
+    const source = snapshotRustStyleDecodeTimings(staged.prepared?.media)
+    const patternTimings = snapshotRustStyleDecodeTimings(patterns)
+    const padding = staged.prepared?.paddingMs ?? 0
+    if (![padding, staged.stagingMs].every(value => Number.isFinite(value) && value >= 0)) throw new RustPixelPocError('wasm-failure')
+    entry.mediaReported = true
+    return { sourceReused, source: sourceReused ? emptyRustStyleDecodeTimings() : source,
+      patterns: patternTimings, sourcePaddingMs: sourceReused ? 0 : padding, sourceStagingMs: sourceReused ? 0 : staged.stagingMs }
   }
 
   private prepareMedia(request: RustPixelPocStyleMediaRequest, png = false) {

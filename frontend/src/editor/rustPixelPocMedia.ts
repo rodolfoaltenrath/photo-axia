@@ -7,6 +7,7 @@ import type { RustPixelPocStyleSourceLayout } from './rustPixelPocStylePreparati
 import type { LayerStylePatternAsset } from '../types/editor.ts'
 import type { RustPixelPocPatternRaster } from './rustPixelPocRuntime.ts'
 import { readRustStyleImageDimensions } from './rustStyleImageHeader.ts'
+import { emptyRustStyleDecodeTimings, type RustStyleDecodeTimings } from './rustStyleMediaTimings.ts'
 
 const MAX_ENCODED_BYTES = 64 * 1024 * 1024
 const MAX_WORKING_BYTES = 96 * 1024 * 1024
@@ -28,7 +29,7 @@ async function bitmapFrom(blob: Blob, options?: ImageBitmapOptions) {
 }
 
 export async function decodeRustStyleSource(source: LayerStyleWorkerSource,
-  layout: RustPixelPocStyleSourceLayout, ensureCurrent: () => void) {
+  layout: RustPixelPocStyleSourceLayout, ensureCurrent: () => void, timings: RustStyleDecodeTimings = emptyRustStyleDecodeTimings()) {
   ensureCurrent()
   validateRustStyleMediaSource(source)
   validatePlatform(source.type === 'raster')
@@ -36,21 +37,32 @@ export async function decodeRustStyleSource(source: LayerStyleWorkerSource,
   let canvas: OffscreenCanvas | undefined
   try {
     if (source.type === 'raster') {
+      const headerStarted = performance.now()
       const intrinsic = await readRustStyleImageDimensions(source.blob, ensureCurrent)
+      timings.headerMs += performance.now() - headerStarted
       if (intrinsic.bytes + 3 * layout.sourceWidth * layout.sourceHeight * 4 > MAX_WORKING_BYTES) {
         throw new RustPixelPocError('memory-limit')
       }
+      const bitmapStarted = performance.now()
       bitmap = await bitmapFrom(source.blob, { resizeWidth: layout.sourceWidth, resizeHeight: layout.sourceHeight,
         resizeQuality: layout.quality === 'interactive' ? 'medium' : 'high' })
+      timings.bitmapMs += performance.now() - bitmapStarted
+      timings.rasterDecodes++
       ensureCurrent()
       if (bitmap.width !== layout.sourceWidth || bitmap.height !== layout.sourceHeight) throw new RustPixelPocError('invalid-input')
     }
+    const drawStarted = performance.now()
     canvas = new OffscreenCanvas(layout.sourceWidth, layout.sourceHeight)
     const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true })
     if (!context) throw new RustPixelPocError('wasm-unavailable')
     if (source.type === 'text') drawTextLayerContent(context, source.text, { x: source.drawScaleX, y: source.drawScaleY })
     else context.drawImage(bitmap!, 0, 0, layout.sourceWidth, layout.sourceHeight)
+    timings.canvasDrawMs += performance.now() - drawStarted
+    if (source.type === 'text') timings.textDraws++
+    const readStarted = performance.now()
     const pixels = context.getImageData(0, 0, layout.sourceWidth, layout.sourceHeight)
+    timings.readbackMs += performance.now() - readStarted
+    timings.rgbaBytes += pixels.data.byteLength
     ensureCurrent()
     return { width: pixels.width, height: pixels.height, data: pixels.data }
   } finally {
@@ -117,25 +129,36 @@ export function prepareRustStyleAssets(layout: RustPixelPocStyleSourceLayout, bl
   return { entries, decodedBytes }
 }
 
-export async function decodeRustStyleAssets(prepared: ReturnType<typeof prepareRustStyleAssets>, ensureCurrent: () => void) {
+export async function decodeRustStyleAssets(prepared: ReturnType<typeof prepareRustStyleAssets>, ensureCurrent: () => void,
+  timings: RustStyleDecodeTimings = emptyRustStyleDecodeTimings()) {
   const patterns = new Map<string, RustPixelPocPatternRaster>()
   if (prepared.entries.length) validatePlatform(true)
   for (const { asset, blob } of prepared.entries) {
     ensureCurrent()
+    const headerStarted = performance.now()
     const intrinsic = await readRustStyleImageDimensions(blob, ensureCurrent)
+    timings.headerMs += performance.now() - headerStarted
     // EXIF may swap axes; the decoded bitmap must still match exactly.
     if (!(intrinsic.width === asset.width && intrinsic.height === asset.height) &&
         !(intrinsic.width === asset.height && intrinsic.height === asset.width)) throw new RustPixelPocError('invalid-input')
+    const bitmapStarted = performance.now()
     const bitmap = await bitmapFrom(blob)
+    timings.bitmapMs += performance.now() - bitmapStarted
+    timings.rasterDecodes++
     let canvas: OffscreenCanvas | undefined
     try {
       ensureCurrent()
       if (bitmap.width !== asset.width || bitmap.height !== asset.height) throw new RustPixelPocError('invalid-input')
+      const drawStarted = performance.now()
       canvas = new OffscreenCanvas(asset.width, asset.height)
       const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true })
       if (!context) throw new RustPixelPocError('wasm-unavailable')
       context.drawImage(bitmap, 0, 0)
+      timings.canvasDrawMs += performance.now() - drawStarted
+      const readStarted = performance.now()
       const pixels = context.getImageData(0, 0, asset.width, asset.height)
+      timings.readbackMs += performance.now() - readStarted
+      timings.rgbaBytes += pixels.data.byteLength
       patterns.set(asset.id, { width: asset.width, height: asset.height,
         rgba: new Uint8Array(pixels.data.buffer, pixels.data.byteOffset, pixels.data.byteLength) })
     } finally {

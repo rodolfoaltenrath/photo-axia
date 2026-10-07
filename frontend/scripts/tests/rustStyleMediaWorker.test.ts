@@ -231,3 +231,35 @@ test('Worker rejeita padrão intrínseco grande sem invalidar fonte preparada ou
     assert.equal(recovered.sourceId, staged.sourceId); assert.deepEqual([...new Uint8Array(recovered.rgba)], [7, 8, 9, 255])
   } finally { await harness.close() }
 })
+
+test('Sessão mede preparo apenas uma vez; padrões repetidos continuam decodificados por render', async () => {
+  const harness = createRustPixelWorkerHarness({ mediaFixtures: true }), session = new RustPixelPocStyleSession(harness.send)
+  const args = { ...input, source: async () => ({ type: 'raster' as const, blob: rustMediaBlob() }),
+    styles: normalizeLayerStyleConfig({ effects: [{ type: 'pattern-overlay', pattern }] }), patterns: { pattern: rustMediaBlob() } }
+  try {
+    await harness.send({ type: 'init', wasm: wasm.slice(0) })
+    const first = await session.composeMedia(args), second = await session.composeMediaPng(args)
+    assert.equal(first.media.sourceReused, false); assert.equal(first.media.source!.rasterDecodes, 1)
+    assert.equal(first.media.source!.rgbaBytes, 4); assert.equal(first.media.patterns!.rasterDecodes, 1)
+    assert.equal(second.media.sourceReused, true); assert.equal(second.media.source!.rasterDecodes, 0)
+    assert.ok(Object.values(second.media.source!).every(value => value === 0))
+    assert.equal(second.media.sourcePaddingMs, 0); assert.equal(second.media.sourceStagingMs, 0)
+    assert.equal(second.media.patterns!.rasterDecodes, 1)
+    const edited = await session.composeMedia({ ...args, sourceIdentity: 'updated' })
+    assert.equal(edited.media.sourceReused, false); assert.equal(edited.media.source!.rasterDecodes, 1)
+  } finally { await session.dispose(); await harness.close() }
+})
+
+test('Falha de padrão não consome a medição da fonte antes de uma composição válida', async () => {
+  const harness = createRustPixelWorkerHarness({ mediaFixtures: true }), session = new RustPixelPocStyleSession(harness.send)
+  const args = { ...input, source: async () => ({ type: 'raster' as const, blob: rustMediaBlob() }),
+    styles: normalizeLayerStyleConfig({ effects: [{ type: 'pattern-overlay', pattern }] }) }
+  try {
+    await harness.send({ type: 'init', wasm: wasm.slice(0) })
+    await assert.rejects(session.composeMedia({ ...args, patterns: { pattern: rustMediaBlob({ width: 2 }) } }), /invalid-input/)
+    const recovered = await session.composeMedia({ ...args, patterns: { pattern: rustMediaBlob() } })
+    assert.equal(recovered.media.sourceReused, false); assert.equal(recovered.media.source!.rasterDecodes, 1)
+    const next = await session.composeMedia({ ...args, patterns: { pattern: rustMediaBlob() } })
+    assert.equal(next.media.sourceReused, true); assert.equal(next.media.source!.rasterDecodes, 0)
+  } finally { await session.dispose(); await harness.close() }
+})

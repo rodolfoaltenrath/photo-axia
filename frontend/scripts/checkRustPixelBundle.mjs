@@ -19,6 +19,7 @@ const generated = readFileSync(join(frontendRoot, 'src', 'generated', 'axia_pixe
 const bundled = readFileSync(join(assetsRoot, wasmName))
 assert.deepEqual(bundled, generated, 'Vite deve empacotar os bytes gerados pelo Cargo sem alteração')
 const { instance } = await WebAssembly.instantiate(bundled, {})
+assert.equal(instance.exports.axia_poc_document_region?.length, 4, 'Assinatura da pilha documental incompatível')
 assert.equal(instance.exports.axia_poc_style_stages_region?.length, 12, 'Assinatura dos estágios incompatível')
 assert.equal(instance.exports.axia_poc_bevel_region?.length, 14, 'Assinatura do bisel incompatível')
 assert.equal(instance.exports.axia_poc_drop_shadow_region?.length, 14, 'Assinatura da sombra externa incompatível')
@@ -53,6 +54,8 @@ const html = readFileSync(join(frontendRoot, 'dist', 'index.html'), 'utf8')
 assert.ok(!html.includes(wasmName) && !html.includes(workerName) && !html.includes(previewName),
   'HTML padrão não deve carregar/precarregar o runtime experimental')
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_fill_opacity'))
+assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('compose-document-region'),
+  'O Worker deve incluir a pilha documental privada')
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_blend_if_underlying_region'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_blend_if_this_layer_region'))
 assert.ok(readFileSync(join(assetsRoot, workerName), 'utf8').includes('axia_poc_color_overlay_region'))

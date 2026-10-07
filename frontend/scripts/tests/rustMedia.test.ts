@@ -7,6 +7,7 @@ import { RustPixelPocError } from '../../src/editor/rustPixelPocError.ts'
 import { DEFAULT_TEXT_LAYER } from '../../src/editor/text.ts'
 import { normalizeLayerStyleConfig } from '../../src/editor/layerStyles.ts'
 import { installRustMediaFixtures, rustMediaBlob } from './support/rustMediaFixture.ts'
+import { emptyRustStyleDecodeTimings } from '../../src/editor/rustStyleMediaTimings.ts'
 
 const input = { sourceIdentity: 'fixture', sourceWidth: 2, sourceHeight: 1,
   styles: normalizeLayerStyleConfig({}), globalLight: { angle: 30, altitude: 30 } }
@@ -210,5 +211,34 @@ test('Axes trocados no cabeçalho permitem EXIF mas não dispensam validação a
     await assert.rejects(decodeRustStyleAssets(prepared, noop), errorCode('invalid-input'))
     globalThis.createImageBitmap = (async () => ({ width: 2, height: 1, rgba: [1, 2, 3, 255], close() { state.closes++ } })) as unknown as typeof createImageBitmap
     assert.equal((await decodeRustStyleAssets(prepared, noop)).get('pattern')!.width, 2)
+  } finally { restore() }
+})
+
+test('Métricas separam decode raster, readback e desenho de texto sem mudar pixels', async () => {
+  const { restore } = installRustMediaFixtures()
+  try {
+    const raster = emptyRustStyleDecodeTimings()
+    const result = await decodeRustStyleSource({ type: 'raster', blob: rustMediaBlob({ delayMs: 40 }) }, layout, noop, raster)
+    assert.equal(raster.rasterDecodes, 1); assert.equal(raster.textDraws, 0); assert.equal(raster.rgbaBytes, result.data.byteLength)
+    assert.ok(raster.bitmapMs >= 30)
+    assert.ok(Object.values(raster).every(value => Number.isFinite(value) && value >= 0))
+    const text = emptyRustStyleDecodeTimings()
+    await decodeRustStyleSource({ type: 'text', text: DEFAULT_TEXT_LAYER, drawScaleX: 1, drawScaleY: 1 }, layout, noop, text)
+    assert.equal(text.rasterDecodes, 0); assert.equal(text.textDraws, 1); assert.equal(text.bitmapMs, 0); assert.equal(text.headerMs, 0)
+    assert.equal(text.rgbaBytes, 8)
+  } finally { restore() }
+})
+
+test('Métricas acumulam padrões distintos sem confundir contadores com a fonte', async () => {
+  const { restore } = installRustMediaFixtures()
+  try {
+    const second = { ...pattern, id: 'second' }
+    const both = prepareRustStyleSourceLayout({ ...input, styles: normalizeLayerStyleConfig({ effects: [
+      { type: 'pattern-overlay', pattern }, { type: 'bevel-emboss', textureEnabled: true, texture: second }
+    ] }) })
+    const timings = emptyRustStyleDecodeTimings()
+    const decoded = await decodeRustStyleAssets(prepareRustStyleAssets(both, { pattern: rustMediaBlob(), second: rustMediaBlob() }), noop, timings)
+    assert.equal(decoded.size, 2); assert.equal(timings.rasterDecodes, 2); assert.equal(timings.rgbaBytes, 8)
+    assert.equal(timings.textDraws, 0)
   } finally { restore() }
 })

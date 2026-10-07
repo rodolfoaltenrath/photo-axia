@@ -9,6 +9,7 @@ import { DEFAULT_TEXT_LAYER } from './text.ts'
 import { createRustPixelPocStyleService } from '../services/rustPixelPocStyleService.ts'
 import { RustPixelPocStyleCancelledError } from './rustPixelPocStyleSession.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
+import { encodeDocumentComposite } from './rustDocumentComposite.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
@@ -56,6 +57,20 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
   try {
     const initialized = await send({ type: 'init', wasm }, [wasm])
     if (initialized.type !== 'ready') throw new Error('Worker Rust não inicializou.')
+    const documentPacket = encodeDocumentComposite({ documentWidth: 2, documentHeight: 1,
+      region: { x: 0, y: 0, width: 2, height: 1 }, resolutionScale: 1,
+      layersBottomToTop: [
+        { rgba: new Uint8Array([100, 150, 200, 255, 100, 150, 200, 255]), width: 2, height: 1,
+          x: 0, y: 0, visible: true, opacity: 100, blendMode: 'normal' },
+        { rgba: new Uint8Array([200, 100, 50, 255]), width: 1, height: 1,
+          x: 1, y: 0, visible: true, opacity: 100, blendMode: 'multiply' }
+      ] })
+    const documentPixels = await send({ type: 'compose-document-region', packet: documentPacket.buffer }, [documentPacket.buffer])
+    if (documentPixels.type !== 'rendered-document-region' || documentPacket.byteLength !== 0 ||
+        documentPixels.width !== 2 || documentPixels.height !== 1 ||
+        [...new Uint8Array(documentPixels.rgba)].join(',') !== '100,150,200,255,78,59,39,255') {
+      throw new Error('Worker Rust divergiu na pilha documental DCP1.')
+    }
     const gate = new RustPixelPocTileGate()
     const observer = new RustPixelPocPreviewObserver(gate)
     const source = new Uint8Array([10, 20, 30, 101, 90, 80, 70, 255])

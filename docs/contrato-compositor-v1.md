@@ -6,6 +6,13 @@ O objetivo é que preview, exportação, miniatura, conta-gotas, rasterização 
 mesclagem façam pedidos diferentes ao **mesmo** compositor, sem duplicar regras
 de aparência. Qualquer alteração deste contrato requer versão e teste de paridade.
 
+O [núcleo inicial da pilha Rust](contrato-pilha-documental-rust-v1.md) já compõe
+rasters preparados em regiões documentais, com translação inteira, opacidade e
+seis modos. Sua [ABI privada DCP1](contrato-abi-pilha-documental-rust-v1.md)
+já conecta WASM/runtime/Worker, sem consumidor editorial; escala, rotação,
+estilos/backdrop `Blend If` e integração continuam pendentes. Não
+promove este contrato lógico a ABI definitiva nem substitui Canvas/DOM.
+
 O [lote local experimental](contrato-lote-local-v1.md) tem ABI própria para
 fill/overlays/filtro terminal. Ainda não implementa a pilha ou transformações
 documentais especificadas aqui.

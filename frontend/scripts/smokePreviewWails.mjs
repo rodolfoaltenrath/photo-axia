@@ -368,7 +368,12 @@ try {
     assert.equal(rustStats.last.backend, rustFallback ? 'legacy' : 'rust')
     assert.equal(rustStats.fallbacks, rustFallback ? 1 : 0)
     assert.equal(rustStats.circuitOpen, rustFallback)
-    if (!rustFallback) assert.ok(rustStats.service.leases >= 1 && rustStats.service.leases <= 2)
+    if (!rustFallback) {
+      assert.ok(rustStats.service.leases >= 1 && rustStats.service.leases <= 2)
+      assert.equal(rustStats.last.media.source.rasterDecodes, 1)
+      assert.equal(rustStats.last.media.sourceReused, false)
+      assert.equal(rustStats.last.media.patterns.rasterDecodes, 0)
+    } else assert.equal(rustStats.last.media, null)
   }
   const frameSamples = benchmarkMode
     ? await evaluate(`(${runPreviewWailsProbe.toString()})(${JSON.stringify(layerId)}, ${cycles})`)

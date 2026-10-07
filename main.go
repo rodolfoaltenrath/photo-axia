@@ -34,7 +34,8 @@ func main() {
 	if rustPocSmoke && previewSmoke {
 		log.Fatal("Selecione apenas um modo de smoke WebView2.")
 	}
-	mainURL := mainWindowURL(rustPocSmoke, previewSmoke, rustStylePreview)
+	mediaBenchmark := rustPocSmoke && slices.Contains(os.Args[1:], "--axia-rust-media-benchmark")
+	mainURL := mainWindowURL(rustPocSmoke, previewSmoke, rustStylePreview, mediaBenchmark)
 	windowsOptions := application.WindowsOptions{}
 	if rustPocSmoke || previewSmoke {
 		portEnv := "AXIA_RUST_POC_CDP_PORT"
@@ -127,10 +128,13 @@ func main() {
 	}
 }
 
-func mainWindowURL(rustPocSmoke, previewSmoke, rustStylePreview bool) string {
+func mainWindowURL(rustPocSmoke, previewSmoke, rustStylePreview, mediaBenchmark bool) string {
 	parameters := url.Values{}
 	if rustPocSmoke {
 		parameters.Set("axiaRustPoc", "1")
+		if mediaBenchmark {
+			parameters.Set("axiaRustMediaBenchmark", "1")
+		}
 	} else if previewSmoke {
 		parameters.Set("axiaPreviewSmoke", "1")
 	}
