@@ -158,7 +158,10 @@ testes de cada adapter antes de substituir essas chamadas.
    com fixtures fracionárias, rotação, bordas e alpha sem emendas. Ainda validar
    filtro de minificação e paridade tolerante Canvas antes de consumidor real.
 3. Integrar executor de estilos/fill, halos e `Blend If` subjacente sobre o
-   backdrop da pilha; congelar ordem/quantizações contra o oráculo.
+   backdrop da pilha; congelar ordem/quantizações contra o oráculo. A
+   [fatia 4](contrato-pilha-estilizada-rust-v1.md) liga STG1/Fill/Esta camada
+   à pilha nativa com fontes reutilizáveis. ABI/Worker, adapter de insets/unidades
+   e filtro subjacente ainda pendentes.
 4. Integrar um consumidor offscreen atrás de flag e ampliar pelos gates da
    tabela, compartilhando kernel, scheduler e orçamento. Não manter um
    compositor alternativo de aparência como otimização de preview.

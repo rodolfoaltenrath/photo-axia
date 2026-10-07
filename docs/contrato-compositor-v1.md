@@ -16,6 +16,11 @@ paridade Canvas/minificação, estilos/backdrop `Blend If` e integração contin
 pendentes. Não
 promove este contrato lógico a ABI definitiva nem substitui Canvas/DOM.
 
+A [preparação de pilha estilizada](contrato-pilha-estilizada-rust-v1.md)
+integra STG1/Fill/Esta camada e composição regional no núcleo nativo, reutilizando
+fontes entre tiles. Sua ABI/runtime/Worker, filtro subjacente e consumidores
+editoriais continuam pendentes; não é o fluxo atual do preview.
+
 O [lote local experimental](contrato-lote-local-v1.md) tem ABI própria para
 fill/overlays/filtro terminal. Ainda não implementa a pilha ou transformações
 documentais especificadas aqui.

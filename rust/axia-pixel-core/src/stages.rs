@@ -264,21 +264,42 @@ fn composite_content(
         }
     }
 }
-pub fn apply_style_stages(
-    source: &[u8],
+pub(crate) struct PreparedStyleStages<'a> {
+    passes: Vec<Pass<'a>>,
+    fill: f64,
+    filter: Option<BlendIfConfig>,
+    width: usize,
+    height: usize,
+    region: RasterRegion,
+    source_bytes: usize,
+    output_bytes: usize,
+    pub(crate) peak_filter_bytes: usize,
+}
+
+pub(crate) fn style_metadata_bytes(packet: &[u8]) -> Result<usize, u32> {
+    if !(HEADER..=MAX_POC_BYTES).contains(&packet.len()) || !packet.len().is_multiple_of(8) {
+        return Err(1);
+    }
+    let count = integer(packet, 8) as usize;
+    if count > MAX_EFFECTS {
+        return Err(2);
+    }
+    Ok(count * 2048)
+}
+
+pub(crate) fn prepare_style_stages(
+    source_bytes: usize,
     width: usize,
     height: usize,
     region: RasterRegion,
     packet: &[u8],
-    output: &mut [u8],
-) -> Result<(), u32> {
-    if source.len() > MAX_POC_BYTES || output.len() > MAX_POC_BYTES {
+    output_bytes: usize,
+) -> Result<PreparedStyleStages<'_>, u32> {
+    if source_bytes > MAX_POC_BYTES || output_bytes > MAX_POC_BYTES {
         return Err(1);
     }
-    validate_raster_region(source.len(), width, height, region, output.len()).map_err(|_| 1u32)?;
-    if !(HEADER..=MAX_POC_BYTES).contains(&packet.len()) || !packet.len().is_multiple_of(8) {
-        return Err(1);
-    }
+    validate_raster_region(source_bytes, width, height, region, output_bytes).map_err(|_| 1u32)?;
+    style_metadata_bytes(packet)?;
     if integer(packet, 0) != 0x31475453 || integer(packet, 4) != 1 {
         return Err(2);
     }
@@ -312,7 +333,7 @@ pub fn apply_style_stages(
         }
         _ => return Err(2),
     };
-    check_budget(source.len(), packet.len(), output.len(), count, 0)?;
+    check_budget(source_bytes, packet.len(), output_bytes, count, 0)?;
     let mut passes = Vec::new();
     passes.try_reserve_exact(count).map_err(|_| 6u32)?;
     let mut offset = end;
@@ -342,49 +363,87 @@ pub fn apply_style_stages(
         return Err(1);
     }
     check_budget(
-        source.len(),
+        source_bytes,
         packet.len(),
-        output.len(),
+        output_bytes,
         count,
         peak_filters,
     )?;
-    let mut current = Vec::new();
-    let mut scratch = Vec::new();
-    current.try_reserve_exact(output.len()).map_err(|_| 6u32)?;
-    scratch.try_reserve_exact(output.len()).map_err(|_| 6u32)?;
-    current.resize(output.len(), 0);
-    scratch.resize(output.len(), 0);
-    let mut has_content = false;
-    for pass in passes {
-        if !has_content && pass.stage > 0 {
-            composite_content(source, width, region, &mut current, fill);
-            has_content = true;
+    Ok(PreparedStyleStages {
+        passes,
+        fill,
+        filter,
+        width,
+        height,
+        region,
+        source_bytes,
+        output_bytes,
+        peak_filter_bytes: peak_filters,
+    })
+}
+
+impl PreparedStyleStages<'_> {
+    pub(crate) fn pass_pixels(&self) -> usize {
+        self.region.width
+            * self.region.height
+            * (1 + self.passes.len() + usize::from(self.filter.is_some()))
+    }
+
+    pub(crate) fn execute(&self, source: &[u8], output: &mut [u8]) -> Result<(), u32> {
+        if source.len() != self.source_bytes || output.len() != self.output_bytes {
+            return Err(1);
         }
-        pass.apply(source, width, height, region, &current, &mut scratch)?;
-        std::mem::swap(&mut current, &mut scratch);
+        let (width, height, region, fill) = (self.width, self.height, self.region, self.fill);
+        let mut current = Vec::new();
+        let mut scratch = Vec::new();
+        current.try_reserve_exact(output.len()).map_err(|_| 6u32)?;
+        scratch.try_reserve_exact(output.len()).map_err(|_| 6u32)?;
+        current.resize(output.len(), 0);
+        scratch.resize(output.len(), 0);
+        let mut has_content = false;
+        for pass in &self.passes {
+            if !has_content && pass.stage > 0 {
+                composite_content(source, width, region, &mut current, fill);
+                has_content = true;
+            }
+            pass.apply(source, width, height, region, &current, &mut scratch)?;
+            std::mem::swap(&mut current, &mut scratch);
+        }
+        if !has_content {
+            composite_content(source, width, region, &mut current, fill);
+        }
+        if let Some(config) = self.filter {
+            apply_this_layer_region(
+                &current,
+                region.width,
+                region.height,
+                RasterRegion {
+                    x: 0,
+                    y: 0,
+                    width: region.width,
+                    height: region.height,
+                },
+                &mut scratch,
+                config,
+            )
+            .map_err(|_| 2u32)?;
+            std::mem::swap(&mut current, &mut scratch);
+        }
+        output.copy_from_slice(&current);
+        Ok(())
     }
-    if !has_content {
-        composite_content(source, width, region, &mut current, fill);
-    }
-    if let Some(config) = filter {
-        apply_this_layer_region(
-            &current,
-            region.width,
-            region.height,
-            RasterRegion {
-                x: 0,
-                y: 0,
-                width: region.width,
-                height: region.height,
-            },
-            &mut scratch,
-            config,
-        )
-        .map_err(|_| 2u32)?;
-        std::mem::swap(&mut current, &mut scratch);
-    }
-    output.copy_from_slice(&current);
-    Ok(())
+}
+
+pub fn apply_style_stages(
+    source: &[u8],
+    width: usize,
+    height: usize,
+    region: RasterRegion,
+    packet: &[u8],
+    output: &mut [u8],
+) -> Result<(), u32> {
+    prepare_style_stages(source.len(), width, height, region, packet, output.len())?
+        .execute(source, output)
 }
 
 /// # Safety

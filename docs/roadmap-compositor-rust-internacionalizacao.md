@@ -734,6 +734,16 @@ registram que minificação de alta qualidade/paridade Canvas, estilos/Fill/halo
 `Blend If` subjacente, scheduler/reuso/admission documental e consumidores
 editoriais ainda faltam. Não altera preview/default/exportação nem encerra C3.
 
+Quarta fatia de C3: integração nativa segura de **STG1/Fill/Esta camada → fontes
+estilizadas reutilizáveis → composição documental regional**. Preflight conjunto
+inclui todas as fontes retidas, pacotes, metadata, pico de filtros e quota de
+passes completos; não reaplica estilos por tile. Testes cobrem efeitos com Fill
+zero, alfa/opacidade, padding rotacionado, tiles sem emendas, rejeição tardia e
+preservação de aparência anterior. [Contrato](contrato-pilha-estilizada-rust-v1.md)
+registra que esta interface ainda não tem ABI/Worker, `Blend If` subjacente,
+adapter editorial ou consumidor real. Refactor interno preserva STG1/DCP1/DCP2;
+preview/default/exportação e C3/C4 não mudam de estado.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

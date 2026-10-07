@@ -46,7 +46,7 @@ pub enum DocumentCompositeError {
     WorkBudget,
 }
 
-fn raster_bytes(width: usize, height: usize) -> Result<usize, DocumentCompositeError> {
+pub(crate) fn raster_bytes(width: usize, height: usize) -> Result<usize, DocumentCompositeError> {
     if width == 0 || height == 0 || width > MAX_AXIS || height > MAX_AXIS {
         return Err(DocumentCompositeError::InvalidRaster);
     }
@@ -60,7 +60,7 @@ fn raster_bytes(width: usize, height: usize) -> Result<usize, DocumentCompositeE
     Ok(bytes)
 }
 
-fn validate_job(
+pub(crate) fn validate_job(
     job: DocumentCompositeJob<'_>,
     output_len: usize,
 ) -> Result<(), DocumentCompositeError> {

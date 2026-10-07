@@ -4,6 +4,12 @@ Estado: executor Rust/WASM de **uma camada com fonte preparada**, não composito
 da pilha do documento. Complementa o [contrato lógico](contrato-compositor-v1.md).
 Preview normal, exportação, texto, Go/Vue e `.axia` continuam inalterados.
 
+A [fatia 4 de C3](contrato-pilha-estilizada-rust-v1.md) usa o mesmo executor
+numa preparação nativa de fontes estilizadas para a pilha. Internamente,
+preflight e execução foram separados para validar orçamento agregado antes
+dos rasters. STG1 e seu export WASM permanecem compatíveis; a pilha estilizada
+ainda não está exposta por essa ABI nem integrada ao Worker/editor.
+
 ## Entrada e ordem
 
 Fonte RGBA8 original staged uma vez, na grade completa com padding/insets
