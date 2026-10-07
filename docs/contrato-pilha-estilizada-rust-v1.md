@@ -1,10 +1,15 @@
 # Preparação de pilha estilizada Rust — C3, fatia 4
 
-Estado: integração **nativa segura**, sem novo export WASM, protocolo Worker,
+Estado da fatia 4: integração **nativa segura**, sem novo export WASM, protocolo Worker,
 consumidor editorial ou rollout. Liga o executor STG1 ao compositor documental
 existente, separando preparação e render regional. A ABI DCP1/DCP2 permanece
 inalterada; o Worker documental continua compondo os rasters recebidos, sem
 pacotes de estilos por camada documental.
+
+Atualização da fatia 5: [SDP1/cache documental WASM](contrato-cache-documental-wasm-v1.md)
+expõe esta preparação no runtime/Worker, com resultado residente reutilizado
+entre regiões/grades. A descrição e as provas abaixo registram a fatia 4;
+o contrato novo registra a ABI e sua validação. Ainda não há consumidor editorial.
 
 Relacionado à [pilha](contrato-pilha-documental-rust-v1.md),
 [transformações DCP2](contrato-transformacoes-documentais-rust-v1.md),

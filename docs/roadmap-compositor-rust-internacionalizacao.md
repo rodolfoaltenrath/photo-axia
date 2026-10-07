@@ -744,6 +744,19 @@ registra que esta interface ainda não tem ABI/Worker, `Blend If` subjacente,
 adapter editorial ou consumidor real. Refactor interno preserva STG1/DCP1/DCP2;
 preview/default/exportação e C3/C4 não mudam de estado.
 
+Quinta fatia de C3: **SDP1 → preparação estilizada Rust → DCP residente no WASM**,
+com runtime/Worker e ID/geração opacos. Pedidos regionais/grades de zoom/pan
+reutilizam as fontes, sem novo upload ou execução dos efeitos; cabeçalho é
+restaurado após cada chamada. Substituição cobra o cache anterior e só o libera
+após sucesso; erros preservam aparência/geração. Fonte individual de estilos e
+cache documental têm ciclos exclusivos nesta interface experimental, sem
+alterar o serviço atual. Testes cobrem dez efeitos, tiles rotacionados nos seis
+modos, memória crescendo, fault injection e cleanup; diagnóstico Wails exercita
+o novo fluxo. [Contrato, limites e provas](contrato-cache-documental-wasm-v1.md)
+registram que ainda faltam filtro subjacente, adapters editoriais, minificação/
+paridade Canvas, scheduler/admission e consumidores reais. C3/C4 ficam abertos;
+nenhuma troca de preview/default/exportação, stack, idioma ou versão.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

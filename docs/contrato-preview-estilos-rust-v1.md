@@ -245,4 +245,7 @@ só envia parâmetros ao editor, sem Worker Rust próprio. Coordenação agregad
 implementado. O [núcleo inicial da pilha](contrato-pilha-documental-rust-v1.md)
 está testado em Rust nativo e pela ABI DCP1/WASM/Worker de diagnóstico. A
 [fatia DCP2](contrato-transformacoes-documentais-rust-v1.md) acrescenta afins e
-grade global, mas nenhuma dessas chamadas documentais é usada por este preview.
+grade global. A [fatia SDP1](contrato-cache-documental-wasm-v1.md) prepara fontes
+estilizadas e mantém um DCP residente no WASM para pedidos regionais. Nenhuma
+dessas chamadas documentais é usada por este preview; a exclusividade de cache
+SDP1/fonte individual no runtime experimental não muda seu agendador atual.

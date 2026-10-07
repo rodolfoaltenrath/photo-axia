@@ -160,8 +160,10 @@ testes de cada adapter antes de substituir essas chamadas.
 3. Integrar executor de estilos/fill, halos e `Blend If` subjacente sobre o
    backdrop da pilha; congelar ordem/quantizações contra o oráculo. A
    [fatia 4](contrato-pilha-estilizada-rust-v1.md) liga STG1/Fill/Esta camada
-   à pilha nativa com fontes reutilizáveis. ABI/Worker, adapter de insets/unidades
-   e filtro subjacente ainda pendentes.
+   à pilha nativa com fontes reutilizáveis. A
+   [fatia 5](contrato-cache-documental-wasm-v1.md) acrescenta SDP1/runtime/Worker
+   e cache DCP residente para tiles/grades sem reaplicar estilos. Adapter de
+   insets/unidades, scheduler/revisões e filtro subjacente ainda pendentes.
 4. Integrar um consumidor offscreen atrás de flag e ampliar pelos gates da
    tabela, compartilhando kernel, scheduler e orçamento. Não manter um
    compositor alternativo de aparência como otimização de preview.

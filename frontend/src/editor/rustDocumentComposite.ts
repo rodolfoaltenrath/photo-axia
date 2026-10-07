@@ -60,7 +60,7 @@ function transformedWorkPixels(layer: RustDocumentRasterLayer, job: RustDocument
   return Math.max(0, right - left) * Math.max(0, bottom - top)
 }
 
-function layout(job: RustDocumentCompositeJob) {
+export function documentCompositeJobLayout(job: RustDocumentCompositeJob) {
   if (!job || !job.region || !Array.isArray(job.layersBottomToTop) ||
       job.layersBottomToTop.length > MAX_LAYERS || job.resolutionScale !== 1) invalid()
   boundedInteger(job.documentWidth, 1, 0xffffffff)
@@ -107,7 +107,7 @@ function layout(job: RustDocumentCompositeJob) {
 }
 
 export function encodeDocumentComposite(job: RustDocumentCompositeJob): Uint8Array<ArrayBuffer> {
-  const { packetBytes } = layout(job)
+  const { packetBytes } = documentCompositeJobLayout(job)
   const transformed = job.outputGrid !== undefined, header = transformed ? 80 : HEADER, recordBytes = transformed ? 80 : RECORD
   const bytes = new Uint8Array(packetBytes), view = new DataView(bytes.buffer)
   bytes.set([68, 67, 80, transformed ? 50 : 49])
@@ -135,7 +135,7 @@ export function encodeDocumentComposite(job: RustDocumentCompositeJob): Uint8Arr
   return bytes
 }
 
-export function documentCompositePacketLayout(packet: Uint8Array) {
+function parseDocumentComposite(packet: Uint8Array): RustDocumentCompositeJob {
   if (!(packet instanceof Uint8Array) || !(packet.buffer instanceof ArrayBuffer) ||
       packet.byteLength < HEADER || packet.byteLength > MAX_BYTES || packet.byteLength % 4 !== 0) invalid()
   const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength)
@@ -165,11 +165,22 @@ export function documentCompositePacketLayout(packet: Uint8Array) {
     cursor = end
   }
   if (cursor !== packet.byteLength) invalid()
-  return layout({
+  const job: RustDocumentCompositeJob = {
     documentWidth: view.getUint32(16, true), documentHeight: view.getUint32(20, true),
     region: { x: view.getUint32(24, true), y: view.getUint32(28, true),
       width: view.getUint32(32, true), height: view.getUint32(36, true) },
     resolutionScale: transformed ? 1 : view.getFloat64(40, true), layersBottomToTop: layers,
     ...(transformed ? { outputGrid: { scaleX: view.getFloat64(40, true), scaleY: view.getFloat64(48, true), originX: view.getFloat64(56, true), originY: view.getFloat64(64, true) } } : {})
-  })
+  }
+  return job
+}
+
+export function decodeDocumentComposite(packet: Uint8Array) {
+  const job = parseDocumentComposite(packet)
+  documentCompositeJobLayout(job)
+  return job
+}
+
+export function documentCompositePacketLayout(packet: Uint8Array) {
+  return documentCompositeJobLayout(parseDocumentComposite(packet))
 }

@@ -19,13 +19,38 @@ fn double(bytes: &[u8], offset: usize) -> f64 {
     f64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
 }
 
-pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u32> {
+pub(crate) struct DecodedDocument<'a> {
+    document_width: u32,
+    document_height: u32,
+    region: RasterRegion,
+    resolution_scale: f64,
+    output_grid: Option<DocumentOutputGrid>,
+    pub(crate) layers: Vec<DocumentRasterLayer<'a>>,
+}
+
+impl DecodedDocument<'_> {
+    pub(crate) fn job(&self) -> DocumentCompositeJob<'_> {
+        DocumentCompositeJob {
+            document_width: self.document_width,
+            document_height: self.document_height,
+            region: self.region,
+            resolution_scale: self.resolution_scale,
+            output_grid: self.output_grid,
+            layers_bottom_to_top: &self.layers,
+        }
+    }
+}
+
+pub(crate) fn decode_document_packet(
+    packet: &[u8],
+    output_len: usize,
+) -> Result<DecodedDocument<'_>, u32> {
     if packet.len() < HEADER
         || packet.len() > MAX_POC_BYTES
         || !packet.len().is_multiple_of(4)
-        || output.is_empty()
-        || output.len() > MAX_POC_BYTES
-        || !output.len().is_multiple_of(4)
+        || output_len == 0
+        || output_len > MAX_POC_BYTES
+        || !output_len.is_multiple_of(4)
     {
         return Err(1);
     }
@@ -47,7 +72,7 @@ pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u
     }
     let budget = packet
         .len()
-        .checked_add(output.len())
+        .checked_add(output_len)
         .and_then(|n| n.checked_add(count * LAYER_METADATA_BYTES))
         .ok_or(6u32)?;
     if budget > MAX_JOB_BYTES {
@@ -100,28 +125,29 @@ pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u
     if cursor != packet.len() {
         return Err(2);
     }
-    compose_document_region(
-        DocumentCompositeJob {
-            document_width: integer(packet, 16),
-            document_height: integer(packet, 20),
-            region: RasterRegion {
-                x: integer(packet, 24) as usize,
-                y: integer(packet, 28) as usize,
-                width: integer(packet, 32) as usize,
-                height: integer(packet, 36) as usize,
-            },
-            resolution_scale: if transformed { 1.0 } else { double(packet, 40) },
-            output_grid: transformed.then(|| DocumentOutputGrid {
-                scale_x: double(packet, 40),
-                scale_y: double(packet, 48),
-                origin_x: double(packet, 56),
-                origin_y: double(packet, 64),
-            }),
-            layers_bottom_to_top: &layers,
+    Ok(DecodedDocument {
+        document_width: integer(packet, 16),
+        document_height: integer(packet, 20),
+        region: RasterRegion {
+            x: integer(packet, 24) as usize,
+            y: integer(packet, 28) as usize,
+            width: integer(packet, 32) as usize,
+            height: integer(packet, 36) as usize,
         },
-        output,
-    )
-    .map_err(|error| match error {
+        resolution_scale: if transformed { 1.0 } else { double(packet, 40) },
+        output_grid: transformed.then(|| DocumentOutputGrid {
+            scale_x: double(packet, 40),
+            scale_y: double(packet, 48),
+            origin_x: double(packet, 56),
+            origin_y: double(packet, 64),
+        }),
+        layers,
+    })
+}
+
+pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u32> {
+    let decoded = decode_document_packet(packet, output.len())?;
+    compose_document_region(decoded.job(), output).map_err(|error| match error {
         DocumentCompositeError::MemoryBudget => 6,
         DocumentCompositeError::WorkBudget => 7,
         _ => 2,

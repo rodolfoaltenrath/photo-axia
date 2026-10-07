@@ -50,7 +50,7 @@ export class RustPixelPocWorkerClient implements RustPixelPocConnection {
       if (this.pending.size >= 8) { reject(new RustPixelPocError('memory-limit')); return }
       const timeout = setTimeout(() => { void this.terminate() }, this.timeoutMs)
       const cancellable = !['init', 'dispose', 'invalidate-source', 'release-source',
-        'stage-source', 'stage-style-source', 'stage-style-media'].includes(request.type)
+        'stage-source', 'stage-style-source', 'stage-style-media', 'prepare-document', 'release-document'].includes(request.type)
       this.pending.set(id, { resolve, reject, timeout, cancellable })
       try { this.port.postMessage({ ...request, id }, transfer) }
       catch {

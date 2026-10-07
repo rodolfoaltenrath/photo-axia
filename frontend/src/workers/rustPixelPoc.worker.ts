@@ -61,8 +61,8 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
   }
   const current = generation
   const runtime = runtimePromise
-  // Never cancel source lifecycle barriers.
-  const isRender = request.type === 'compose-document-region' || request.type === 'style-media-staged-png' || request.type === 'style-media-staged-region' || request.type === 'render' || request.type === 'render-region' ||
+  // Never cancel lifecycle barriers.
+  const isRender = request.type === 'compose-prepared-document' || request.type === 'compose-document-region' || request.type === 'style-media-staged-png' || request.type === 'style-media-staged-region' || request.type === 'render' || request.type === 'render-region' ||
     request.type === 'render-staged-region' || request.type === 'blend-if-staged-region' ||
     request.type === 'blend-if-this-layer-staged-region' ||
     request.type === 'color-overlay-staged-region' || request.type === 'pattern-overlay-staged-region' ||
@@ -76,6 +76,22 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     }
     const ensureCurrent = () => {
       if (current !== generation || cancelled.has(request.id)) throw new RustPixelPocError('invalid-input')
+    }
+    if (request.type === 'prepare-document') {
+      if (!(request.packet instanceof ArrayBuffer)) throw new RustPixelPocError('invalid-input')
+      reply({ type: 'document-prepared', id: request.id, ...engine.prepareDocumentPacket(new Uint8Array(request.packet), request.generation) })
+      return
+    }
+    if (request.type === 'compose-prepared-document') {
+      const result = engine.composePreparedDocument(request.documentId, request.region, request.grid)
+      ensureCurrent()
+      reply({ type: 'rendered-prepared-document', id: request.id, ...result, rgba: result.rgba.buffer }, [result.rgba.buffer])
+      return
+    }
+    if (request.type === 'release-document') {
+      engine.releaseDocument(request.documentId)
+      reply({ type: 'document-released', id: request.id, documentId: request.documentId })
+      return
     }
     if (request.type === 'compose-document-region') {
       if (!(request.packet instanceof ArrayBuffer)) throw new RustPixelPocError('invalid-input')

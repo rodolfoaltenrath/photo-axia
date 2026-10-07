@@ -13,7 +13,11 @@ import type { LayerStyleWorkerSource } from './layerStyleRenderProtocol.ts'
 import type { RustStyleDecodeTimings } from './rustStyleMediaTimings.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
+import type { RustDocumentOutputGrid } from './rustDocumentComposite.ts'
 export type RustPixelPocRequest =
+  | { type: 'prepare-document'; id: number; packet: ArrayBuffer; generation: number }
+  | { type: 'compose-prepared-document'; id: number; documentId: number; region: RustPixelPocRegion; grid?: RustDocumentOutputGrid }
+  | { type: 'release-document'; id: number; documentId: number }
   | { type: 'compose-document-region'; id: number; packet: ArrayBuffer }
   | { type: 'stage-style-media'; id: number; source: LayerStyleWorkerSource; input: RustPixelPocStyleSourceInput; generation: number }
   | { type: 'style-media-staged-png'; id: number; sourceId: number; input: RustPixelPocStyleSourceInput;
@@ -69,6 +73,10 @@ export interface RustPixelPocTimings {
 }
 
 export type RustPixelPocResponse =
+  | { type: 'document-prepared'; id: number; documentId: number; generation: number; bytes: number; layerCount: number; preparationMs: number }
+  | { type: 'document-released'; id: number; documentId: number }
+  | { type: 'rendered-prepared-document'; id: number; documentId: number; generation: number; rgba: ArrayBuffer;
+      region: RustPixelPocRegion; width: number; height: number; timings: RustPixelPocTimings }
   | { type: 'rendered-document-region'; id: number; rgba: ArrayBuffer; region: RustPixelPocRegion;
       width: number; height: number; timings: RustPixelPocTimings }
   | { type: 'encoded-staged-region'; id: number; blob: Blob; width: number; height: number;

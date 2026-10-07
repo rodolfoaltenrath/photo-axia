@@ -10,12 +10,17 @@ import { encodeStroke, strokePacketLength, strokeLayout, type RustPixelPocStroke
 import { encodeBevel, bevelPacketLength, bevelLayout, type RustPixelPocBevel } from './rustPixelPocBevel.ts'
 import { encodeStyleStages, type RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
 import { documentCompositePacketLayout, encodeDocumentComposite, type RustDocumentCompositeJob } from './rustDocumentComposite.ts'
+import type { RustDocumentOutputGrid } from './rustDocumentComposite.ts'
+import { styledDocumentPacketLayout } from './rustStyledDocument.ts'
 export { RustPixelPocError } from './rustPixelPocError.ts'
 
 const MAX_POC_BYTES = 64 * 1024 * 1024
 let nextSourceId = 0
+let nextDocumentId = 0
 
 interface RustPixelPocExports {
+  axia_poc_document_prepare_styles?(packetPointer: number, packetLength: number, outputPointer: number,
+    outputLength: number, residentExtra: number): number
   axia_poc_document_packet_version?(): number
   axia_poc_document_region?(packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
   axia_poc_style_stages_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
@@ -183,6 +188,13 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
   let reservedGeneration: number | null = null
   let preparation: symbol | null = null
   let disposed = false
+  let preparedDocument: { id: number; generation: number; pointer: number; length: number; layerCount: number } | null = null
+  let latestDocumentGeneration = 0
+
+  function discardDocument() {
+    if (preparedDocument) exports.axia_poc_free(preparedDocument.pointer, preparedDocument.length)
+    preparedDocument = null
+  }
 
   function validateNextGeneration(generation: number) {
     if (!Number.isSafeInteger(generation) || generation <= latestGeneration) {
@@ -422,6 +434,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
 
   function beginPreparation(generation: number) {
     if (disposed) throw new RustPixelPocError('wasm-unavailable')
+    if (preparedDocument) throw new RustPixelPocError('invalid-input')
     if (reservedGeneration === null || generation !== reservedGeneration) validateNextGeneration(generation)
     // Invalidate before preparation, even if the factory fails.
     latestGeneration = generation
@@ -470,7 +483,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         exports.axia_poc_document_packet_version.length !== 0 || exports.axia_poc_document_packet_version() < 2)) {
       throw new RustPixelPocError('wasm-unavailable')
     }
-    if (workingBytes + (staged?.length ?? 0) > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+    if (workingBytes + (staged?.length ?? 0) + (preparedDocument?.length ?? 0) > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
     const started = performance.now()
     const allocations: { pointer: number; length: number }[] = []
     let allocated = started, copiedIn = started, computed = started, copiedOut = started
@@ -502,7 +515,92 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     } }
   }
 
+  function prepareDocumentPacket(packet: Uint8Array, generation: number) {
+    if (disposed || typeof exports.axia_poc_document_prepare_styles !== 'function' ||
+        exports.axia_poc_document_prepare_styles.length !== 5 || typeof exports.axia_poc_document_region !== 'function' ||
+        exports.axia_poc_document_region.length !== 4) throw new RustPixelPocError('wasm-unavailable')
+    if (staged || preparation || !Number.isSafeInteger(generation) || generation <= latestDocumentGeneration) {
+      throw new RustPixelPocError('invalid-input')
+    }
+    const layout = styledDocumentPacketLayout(packet), extra = preparedDocument?.length ?? 0
+    if (layout.workingBytes + extra > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+    const started = performance.now(), allocations: { pointer: number; length: number }[] = []
+    try {
+      for (const length of [packet.length, layout.documentBytes]) {
+        const pointer = exports.axia_poc_alloc(length)
+        if (!Number.isSafeInteger(pointer) || pointer <= 0) throw new RustPixelPocError('wasm-failure')
+        allocations.push({ pointer, length })
+        if (pointer + length > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+      }
+      const input = allocations[0]!, output = allocations[1]!
+      new Uint8Array(exports.memory.buffer, input.pointer, input.length).set(packet)
+      const status = exports.axia_poc_document_prepare_styles(input.pointer, input.length, output.pointer, output.length, extra)
+      if (status !== 0) throw new RustPixelPocError(status === 6 ? 'memory-limit' : status === 7 ? 'work-limit' :
+        status === 1 || status === 2 ? 'invalid-input' : 'wasm-failure')
+      if (!Number.isSafeInteger(nextDocumentId + 1)) throw new RustPixelPocError('wasm-failure')
+      discardDocument()
+      preparedDocument = { id: ++nextDocumentId, generation, pointer: output.pointer, length: output.length, layerCount: layout.layerCount }
+      latestDocumentGeneration = generation
+      allocations.pop() // The output now belongs to the document cache.
+    } finally {
+      for (const allocation of allocations.reverse()) exports.axia_poc_free(allocation.pointer, allocation.length)
+    }
+    return { documentId: preparedDocument!.id, generation, bytes: preparedDocument!.length,
+      layerCount: preparedDocument!.layerCount, preparationMs: performance.now() - started }
+  }
+
+  function composePreparedDocument(documentId: number, region: RustPixelPocRegion, grid?: RustDocumentOutputGrid) {
+    if (disposed || typeof exports.axia_poc_document_region !== 'function') throw new RustPixelPocError('wasm-unavailable')
+    const document = preparedDocument
+    if (!document || document.id !== documentId || !region ||
+        [region.x, region.y, region.width, region.height].some(v => !Number.isSafeInteger(v) || v < 0 || v > 0xffffffff)) {
+      throw new RustPixelPocError('invalid-input')
+    }
+    const packet = new Uint8Array(exports.memory.buffer, document.pointer, document.length)
+    const transformed = packet[3] === 50
+    if (grid !== undefined && (!transformed || !grid || typeof grid !== 'object')) throw new RustPixelPocError('invalid-input')
+    const saved = packet.slice(24, transformed ? 72 : 40)
+    const started = performance.now()
+    let pointer = 0, outputLength = 0
+    let allocated = started, computed = started, copiedOut = started
+    let rgba: Uint8Array<ArrayBuffer>, actualRegion: RustPixelPocRegion
+    try {
+      const view = new DataView(exports.memory.buffer, document.pointer, document.length)
+      for (const [offset, value] of [[24, region.x], [28, region.y], [32, region.width], [36, region.height]] as const) view.setUint32(offset, value, true)
+      if (grid) for (const [offset, value] of [[40, grid.scaleX], [48, grid.scaleY], [56, grid.originX], [64, grid.originY]] as const) view.setFloat64(offset, value, true)
+      const layout = documentCompositePacketLayout(new Uint8Array(exports.memory.buffer, document.pointer, document.length))
+      outputLength = layout.outputBytes; actualRegion = layout.region
+      pointer = exports.axia_poc_alloc(outputLength)
+      if (!Number.isSafeInteger(pointer) || pointer <= 0) { pointer = 0; throw new RustPixelPocError('wasm-failure') }
+      if (pointer + outputLength > exports.memory.buffer.byteLength) throw new RustPixelPocError('wasm-failure')
+      allocated = performance.now()
+      const status = exports.axia_poc_document_region(document.pointer, document.length, pointer, outputLength)
+      if (status !== 0) throw new RustPixelPocError(status === 6 ? 'memory-limit' : status === 7 ? 'work-limit' : 'wasm-failure')
+      computed = performance.now()
+      rgba = new Uint8Array(exports.memory.buffer, pointer, outputLength).slice()
+      copiedOut = performance.now()
+    } finally {
+      if (pointer) exports.axia_poc_free(pointer, outputLength)
+      new Uint8Array(exports.memory.buffer, document.pointer + 24, saved.length).set(saved)
+    }
+    return { rgba, region: actualRegion!, width: actualRegion!.width, height: actualRegion!.height,
+      documentId, generation: document.generation, timings: { allocationMs: allocated - started, copyInMs: 0,
+        kernelMs: computed - allocated, copyOutMs: copiedOut - computed, releaseMs: performance.now() - copiedOut } }
+  }
+
   return {
+    prepareDocumentPacket,
+    composePreparedDocument,
+    documentMetadata(documentId: number) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!preparedDocument || preparedDocument.id !== documentId) throw new RustPixelPocError('invalid-input')
+      return { documentId, generation: preparedDocument.generation, bytes: preparedDocument.length, layerCount: preparedDocument.layerCount }
+    },
+    releaseDocument(documentId: number) {
+      if (disposed) throw new RustPixelPocError('wasm-unavailable')
+      if (!preparedDocument || preparedDocument.id !== documentId) throw new RustPixelPocError('invalid-input')
+      discardDocument()
+    },
     composeDocumentPacket,
     composeDocumentRegion(job: RustDocumentCompositeJob) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
@@ -531,6 +629,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
         throw new RustPixelPocError('invalid-input')
       }
       const length = source.byteLength
+      if (preparedDocument && preparedDocument.length + length > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
       const started = performance.now()
       const pointer = exports.axia_poc_alloc(length)
       if (!Number.isSafeInteger(pointer) || pointer <= 0 || pointer + length > exports.memory.buffer.byteLength) {
@@ -570,6 +669,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       validateSource(source, sourceWidth, sourceHeight)
       validateRegion(region, sourceWidth, sourceHeight, fillOpacity)
+      if (preparedDocument && preparedDocument.length + source.byteLength + region.width * region.height * 4 > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
       const started = performance.now()
       const sourcePointer = exports.axia_poc_alloc(source.byteLength)
       if (!Number.isSafeInteger(sourcePointer) || sourcePointer <= 0) {
@@ -812,6 +912,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       reservedGeneration = null
       preparation = null
       discardStaged()
+      discardDocument()
     }
   }
 }

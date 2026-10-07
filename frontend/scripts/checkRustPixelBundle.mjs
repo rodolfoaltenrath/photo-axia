@@ -21,6 +21,7 @@ assert.deepEqual(bundled, generated, 'Vite deve empacotar os bytes gerados pelo 
 const { instance } = await WebAssembly.instantiate(bundled, {})
 assert.equal(instance.exports.axia_poc_document_region?.length, 4, 'Assinatura da pilha documental incompatível')
 assert.equal(instance.exports.axia_poc_document_packet_version?.(), 2, 'Versão da pilha documental incompatível')
+assert.equal(instance.exports.axia_poc_document_prepare_styles?.length, 5, 'Assinatura de preparação documental incompatível')
 assert.equal(instance.exports.axia_poc_style_stages_region?.length, 12, 'Assinatura dos estágios incompatível')
 assert.equal(instance.exports.axia_poc_bevel_region?.length, 14, 'Assinatura do bisel incompatível')
 assert.equal(instance.exports.axia_poc_drop_shadow_region?.length, 14, 'Assinatura da sombra externa incompatível')

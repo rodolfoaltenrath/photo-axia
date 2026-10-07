@@ -50,6 +50,11 @@ pub struct PreparedStyledDocument<'a> {
 }
 
 impl PreparedStyledDocument<'_> {
+    pub(crate) fn prepared_rgba(&self, index: usize) -> &[u8] {
+        self.styled[index]
+            .as_deref()
+            .unwrap_or(self.job.layers_bottom_to_top[index].rgba)
+    }
     pub fn resident_bytes(&self) -> usize {
         self.resident_bytes
     }
@@ -91,6 +96,14 @@ pub fn prepare_styled_document<'a>(
     job: DocumentCompositeJob<'a>,
     style_packets: &[Option<&[u8]>],
 ) -> Result<PreparedStyledDocument<'a>, StyledDocumentError> {
+    prepare_styled_document_reserved(job, style_packets, 0)
+}
+
+pub(crate) fn prepare_styled_document_reserved<'a>(
+    job: DocumentCompositeJob<'a>,
+    style_packets: &[Option<&[u8]>],
+    reserved_bytes: usize,
+) -> Result<PreparedStyledDocument<'a>, StyledDocumentError> {
     let output_bytes = raster_bytes(job.region.width, job.region.height)?;
     validate_job(job, output_bytes)?;
     let count = job.layers_bottom_to_top.len();
@@ -111,8 +124,11 @@ pub fn prepare_styled_document<'a>(
         }
     }
     let base = add_bytes(
-        add_bytes(add_bytes(resident, packets)?, metadata)?,
-        output_bytes,
+        add_bytes(
+            add_bytes(add_bytes(resident, packets)?, metadata)?,
+            output_bytes,
+        )?,
+        reserved_bytes,
     )?;
     let mut plans = Vec::new();
     plans

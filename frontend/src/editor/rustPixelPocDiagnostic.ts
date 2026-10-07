@@ -10,6 +10,7 @@ import { createRustPixelPocStyleService } from '../services/rustPixelPocStyleSer
 import { RustPixelPocStyleCancelledError } from './rustPixelPocStyleSession.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { encodeDocumentComposite } from './rustDocumentComposite.ts'
+import { encodeStyledDocument } from './rustStyledDocument.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
@@ -81,6 +82,22 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         [...new Uint8Array(affinePixels.rgba)].join(',') !== '30,60,90,191,30,60,90,64') {
       throw new Error('Worker Rust divergiu na cobertura fracionária DCP2.')
     }
+    const styledPacket = encodeStyledDocument({ documentWidth: 2, documentHeight: 1,
+      region: { x: 0, y: 0, width: 2, height: 1 }, resolutionScale: 1,
+      outputGrid: { scaleX: 1, scaleY: 1, originX: 0, originY: 0 },
+      layersBottomToTop: [{ rgba: new Uint8Array([20, 40, 60, 101]), width: 1, height: 1,
+        x: 0, y: 0, visible: true, opacity: 100, blendMode: 'normal', sourceToDocument: [1, 0, 0, 1, 0.25, 0] }] },
+      [{ fillOpacity: 73.5, external: [], internal: [], overlay: [], upper: [] }])
+    const document = await send({ type: 'prepare-document', packet: styledPacket.buffer, generation: 1 }, [styledPacket.buffer])
+    if (document.type !== 'document-prepared' || styledPacket.byteLength !== 0) throw new Error('Preparação SDP1 falhou.')
+    for (const x of [0, 1]) {
+      const tile = await send({ type: 'compose-prepared-document', documentId: document.documentId,
+        region: { x, y: 0, width: 1, height: 1 } })
+      if (tile.type !== 'rendered-prepared-document' || tile.generation !== 1 || tile.timings.copyInMs !== 0 ||
+          [...new Uint8Array(tile.rgba)].join(',') !== `20,40,60,${x === 0 ? 56 : 19}`) throw new Error('Tile SDP1 divergiu.')
+    }
+    const releasedDocument = await send({ type: 'release-document', documentId: document.documentId })
+    if (releasedDocument.type !== 'document-released') throw new Error('Release SDP1 falhou.')
     const gate = new RustPixelPocTileGate()
     const observer = new RustPixelPocPreviewObserver(gate)
     const source = new Uint8Array([10, 20, 30, 101, 90, 80, 70, 255])

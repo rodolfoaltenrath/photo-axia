@@ -73,6 +73,22 @@ test('RPC não cancela barreiras de lifecycle nem espera ack de mensagem cancel'
   } finally { await f.client.terminate() }
 })
 
+test('RPC preserva preparação/release documental como barreiras e permite cancelar tiles', async () => {
+  const f = fixture()
+  try {
+    const prepared = f.client.send({ type: 'prepare-document', packet: new ArrayBuffer(32), generation: 1 })
+    f.client.cancel(prepared.id); assert.equal(f.state.posts.length, 1)
+    f.message({ id: prepared.id, type: 'document-prepared', documentId: 1, generation: 1, bytes: 48, layerCount: 0, preparationMs: 0 })
+    await prepared
+    const tile = f.client.send({ type: 'compose-prepared-document', documentId: 1, region: { x: 0, y: 0, width: 1, height: 1 } })
+    f.client.cancel(tile.id); assert.deepEqual(f.state.posts[2]!.message, { type: 'cancel', id: tile.id })
+    f.message({ id: tile.id, type: 'cancelled' }); await tile
+    const released = f.client.send({ type: 'release-document', documentId: 1 })
+    f.client.cancel(released.id); assert.equal(f.state.posts.length, 4)
+    f.message({ id: released.id, type: 'document-released', documentId: 1 }); await released
+  } finally { await f.client.terminate() }
+})
+
 for (const trigger of ['failure', 'malformed', 'timeout'] as const) {
   test(`RPC ${trigger} rejeita todos, remove listeners e termina apenas uma vez`, async () => {
     const f = fixture(trigger === 'timeout' ? 20 : 1000)
