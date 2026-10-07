@@ -1,7 +1,7 @@
 # Roadmap: compositor único em Rust e Axia multilíngue
 
 Estado: **C0/I0 iniciados; C1/C2 com passes Rust e preview opt-in; compositor Rust não ativado por padrão**.
-Atualizado em 2026-10-06.
+Atualizado em 2026-10-07.
 
 Este plano tem duas trilhas independentes, com contratos compartilhados: (A) unificar
 preview e exportação em um compositor de documento, introduzindo Rust/WASM onde
@@ -638,6 +638,20 @@ fallback sem multiplicar Workers e limpeza final. Default/miniaturas/exportaçã
 texto, ABI, algoritmos Rust e versões não mudaram. Faltam prioridades/visibilidade,
 cache/assets, limites intrínsecos, orçamento entre janelas e medições/QA.
 C0/C1/C2 continuam abertos; C3/C4 não substituíram pilha/DOM/exportação.
+
+Uma vigésima sexta fatia acrescenta **prioridades justas ao preview compartilhado**.
+Camada ativa tem preferência sobre camadas no viewport e fora dele; FIFO desempata.
+Depois de três ultrapassagens, o mais antigo ganha despacho. Reposição pendente
+conserva idade; seleção/pan atualizam apenas prioridade, sem cancelar o ativo,
+reiniciar render, carregar mídia ou trocar buffer/lease. Abertura lazy conserva
+mudanças de prioridade. Relevância usa offset/zoom, bounds rotacionados e halo
+convertido do raster ao documento, com escala não uniforme/densidade de texto;
+geometria indefinida fica visível. Não é culling nem render por tiles. Camadas
+ocultas mantêm unmount/cancel/release existentes e recompõem quando mostradas.
+Diagnóstico mostra somente contagens por nível. Smoke Wails cobre seleção/pan
+sem recomposição e ocultar/mostrar sem multiplicar Workers. Default, exportação,
+texto, ABI, passes Rust e versões permanecem. Cache/assets, limites intrínsecos,
+orçamento entre janelas e medições/QA seguem pendentes. C0/C1/C2 ficam abertos.
 
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a

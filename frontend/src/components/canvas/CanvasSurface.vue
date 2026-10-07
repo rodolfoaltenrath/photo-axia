@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import CanvasLayer from '../CanvasLayer.vue'
 import CanvasRulers from '../CanvasRulers.vue'
 import GuideOverlay from '../GuideOverlay.vue'
@@ -9,8 +10,14 @@ import { TRANSFORM_HANDLES } from '../../editor/freeTransform'
 import { interpolateGradientStops, type GradientStopsConfig } from '../../editor/gradient'
 import type { CanvasSurfaceActions, CanvasSurfaceView } from './canvas.types'
 import { useDocumentBlendIfPreview } from './composables/useDocumentBlendIfPreview'
+import { rustStylePreviewEnabled } from '../../editor/rustStylePreviewProtocol'
 
 const props = defineProps<{ actions: CanvasSurfaceActions; view: CanvasSurfaceView }>()
+const rustStylesEnabled = rustStylePreviewEnabled(window.location.search)
+const stylePreviewViewport = computed(() => rustStylesEnabled ? {
+  offsetX: props.view.documentOffsetX, offsetY: props.view.documentOffsetY, scale: props.view.scale,
+  width: props.view.viewportWidth, height: props.view.viewportHeight
+} : undefined)
 const { source: blendIfPreviewSource } = useDocumentBlendIfPreview({
   document: () => props.view.document,
   layers: () => props.view.layers,
@@ -83,6 +90,7 @@ function gradientControlColor(config: GradientStopsConfig, progress: number) {
             :layer="layer"
             :layer-style-global-light="view.layerStyleGlobalLight"
             :render-scale="view.scale"
+            :style-preview-viewport="stylePreviewViewport"
             :text-editor="view.textEditor?.layerId === layer.id ? view.textEditor : undefined"
             :transform="actions.displayTransform(layer) ?? view.defaultLayerTransform"
             @image-error="actions.handleLayerImageError"

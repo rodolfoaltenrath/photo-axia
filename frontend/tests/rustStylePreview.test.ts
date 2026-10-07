@@ -7,7 +7,8 @@ import { RustStylePreview, RustStylePreviewCancelledError, rustStylePreviewEnabl
   type LayerStylePreviewRequest, type RustStylePreviewPorts } from '../src/editor/rustStylePreview.ts'
 import type { RustPixelPocServiceRequest, RustPixelPocResultLease } from '../src/editor/rustPixelPocStyleService.ts'
 import { DEFAULT_TEXT_LAYER } from '../src/editor/text.ts'
-import type { RustPixelPocScheduledPreparation, RustPixelPocSchedulerLimits } from '../src/editor/rustPixelPocStyleScheduler.ts'
+import type { RustPixelPocScheduledPreparation, RustPixelPocSchedulerLimits, RustPixelPocSchedulingOptions } from '../src/editor/rustPixelPocStyleScheduler.ts'
+import type { RustStylePriority } from '../src/editor/rustStyleScheduling.ts'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -21,7 +22,8 @@ const legacy = { blob: new Blob(['legacy']), width: 1, height: 1, offsetX: 0, of
 function fixture() {
   const state = { factories: 0, disposed: 0, cancels: 0, releases: 0, fallbackCalls: 0,
     requests: [] as RustPixelPocServiceRequest[], prepared: [] as LayerStylePreviewRequest[], signals: [] as AbortSignal[],
-    limits: [] as RustPixelPocSchedulerLimits[], consumers: [] as string[] }
+    limits: [] as RustPixelPocSchedulerLimits[], consumers: [] as string[], priorities: [] as RustStylePriority[],
+    reprioritized: [] as { consumerId: string; priority: RustStylePriority }[] }
   const output = (): RustPixelPocResultLease => {
     let released = false
     return { result: { type: 'encoded-staged-region', id: state.requests.length, sourceId: 1, generation: 1,
@@ -33,10 +35,12 @@ function fixture() {
   }
   const service = {
     stats: { active: 0, pending: 0, preparing: 0, queuedInputBytes: 0, sourceBytes: 0, retainedResultBytes: 0, leases: 0, reservedBytes: 0, disposed: false },
-    renderPrepared: async (consumerId: string, job: RustPixelPocScheduledPreparation) => {
+    renderPrepared: async (consumerId: string, job: RustPixelPocScheduledPreparation, options: RustPixelPocSchedulingOptions = {}) => {
       state.consumers.push(consumerId)
+      state.priorities.push(options.priority ?? 'visible')
       state.requests.push(await job.prepare(new AbortController().signal)); return output()
     },
+    setPriority(consumerId: string, priority: RustStylePriority) { state.reprioritized.push({ consumerId, priority }) },
     cancel() { state.cancels++ }, dispose: async () => { state.disposed++ }
   }
   const ports: RustStylePreviewPorts = {
@@ -302,4 +306,31 @@ test('Metadados enormes de padrão caem no legado antes de buscar mídia ou cria
   await preview.render({ ...input(), styles: normalizeLayerStyleConfig({ effects: [{ type: 'pattern-overlay', pattern }] }) })
   assert.equal(f.state.factories, 0); assert.equal(f.state.prepared.length, 0)
   assert.equal(preview.stats.last?.fallbackReason, 'memory-limit'); await preview.dispose()
+})
+
+test('Prioridade atual durante abertura tardia é usada sem cancelar o pedido', async () => {
+  const f = fixture(), gate = deferred<typeof f.service>(), started = deferred<void>()
+  f.ports.createScheduler = async () => { started.resolve(); return gate.promise }
+  const preview = new RustStylePreview(f.ports), pending = preview.render({ ...input(), priority: 'background' })
+  await started.promise
+  const cancels = f.state.cancels
+  preview.setPriority('canvas:a', 'active'); preview.setPriority('unknown', 'visible')
+  assert.equal(f.state.cancels, cancels)
+  gate.resolve(f.service); const result = await pending
+  assert.deepEqual(f.state.priorities, ['active']); assert.equal(f.state.fallbackCalls, 0)
+  result.release(); await preview.dispose()
+})
+
+test('Prioridade encaminhada à fila não recompõe nem altera leases publicadas', async () => {
+  const f = fixture(), preview = new RustStylePreview(f.ports)
+  const result = await preview.render({ ...input(), priority: 'visible' }), cancels = f.state.cancels
+  preview.setPriority('canvas:a', 'background'); preview.setPriority('canvas:a', 'active')
+  assert.equal(f.state.requests.length, 1); assert.equal(f.state.cancels, cancels)
+  assert.equal(preview.stats.resultLeases, 1); assert.equal(f.state.releases, 0)
+  assert.deepEqual(f.state.reprioritized.slice(-2), [
+    { consumerId: 'canvas:a', priority: 'background' }, { consumerId: 'canvas:a', priority: 'active' }])
+  await preview.releaseConsumer('canvas:a')
+  const changes = f.state.reprioritized.length
+  preview.setPriority('canvas:a', 'visible'); assert.equal(f.state.reprioritized.length, changes)
+  result.release(); await preview.dispose()
 })

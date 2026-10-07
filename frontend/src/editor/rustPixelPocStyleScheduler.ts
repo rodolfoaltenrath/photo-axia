@@ -3,21 +3,24 @@ import { RUST_STYLE_WORKING_BYTES, rustPixelPocServiceLimits, snapshotRustPixelP
   type RustPixelPocServiceLimits, type RustPixelPocServiceRequest } from './rustPixelPocStyleInput.ts'
 import { RustPixelPocStyleService, type RustPixelPocConnect, type RustPixelPocResultLease } from './rustPixelPocStyleService.ts'
 import { RustPixelPocStyleCancelledError } from './rustPixelPocStyleSession.ts'
+import { rustStylePriorityValid, type RustStylePriority } from './rustStyleScheduling.ts'
 
 export interface RustPixelPocSchedulerLimits extends RustPixelPocServiceLimits { maxPendingConsumers?: number }
+export interface RustPixelPocSchedulingOptions { priority?: RustStylePriority }
 export interface RustPixelPocScheduledPreparation {
   inputBytes: number
   prepare(signal: AbortSignal): Promise<RustPixelPocServiceRequest>
 }
 const PREPARATION_BYTES = 128 * 1024 * 1024
+const MAX_PRIORITY_BYPASSES = 3
 type Ticket = {
   request?: RustPixelPocServiceRequest; preparation?: RustPixelPocScheduledPreparation; inputBytes: number
   controller?: AbortController; preparing?: boolean
-  consumerId: string; settled: boolean
+  consumerId: string; settled: boolean; priority: RustStylePriority; bypasses: number
   resolve: (lease: RustPixelPocResultLease) => void; reject: (error: unknown) => void
 }
 
-/** One shared service, FIFO consumers and one latest pending job per consumer. */
+/** One shared service, fair priorities and one latest pending job per consumer. */
 export class RustPixelPocStyleScheduler {
   private readonly service: RustPixelPocStyleService
   private readonly limits: Required<RustPixelPocServiceLimits>
@@ -52,20 +55,30 @@ export class RustPixelPocStyleScheduler {
       queuedInputBytes: this.queuedBytes(), reservedBytes: workingBytes + inputBytes + service.retainedResultBytes + this.queuedBytes(), disposed: this.stopped }
   }
 
-  render(consumerId: string, input: RustPixelPocServiceRequest): Promise<RustPixelPocResultLease> {
-    return this.submit(consumerId, () => snapshotRustPixelPocStyleRequest(input))
+  render(consumerId: string, input: RustPixelPocServiceRequest, options: RustPixelPocSchedulingOptions = {}): Promise<RustPixelPocResultLease> {
+    return this.submit(consumerId, () => snapshotRustPixelPocStyleRequest(input), options)
   }
 
-  renderPrepared(consumerId: string, preparation: RustPixelPocScheduledPreparation): Promise<RustPixelPocResultLease> {
+  renderPrepared(consumerId: string, preparation: RustPixelPocScheduledPreparation,
+    options: RustPixelPocSchedulingOptions = {}): Promise<RustPixelPocResultLease> {
     return this.submit(consumerId, () => {
       if (!preparation || typeof preparation.prepare !== 'function' || !Number.isSafeInteger(preparation.inputBytes) ||
           preparation.inputBytes < 0 || preparation.inputBytes > 4 * 1024 * 1024) throw new RustPixelPocError('invalid-input')
       return { preparation: { ...preparation }, inputBytes: preparation.inputBytes }
-    })
+    }, options)
   }
 
-  private submit(consumerId: string, snapshot: () => Pick<Ticket, 'request' | 'preparation' | 'inputBytes'>): Promise<RustPixelPocResultLease> {
+  setPriority(consumerId: string, priority: RustStylePriority) {
+    if (!rustStylePriorityValid(priority)) throw new RustPixelPocError('invalid-input')
+    const ticket = this.pending.get(consumerId)
+    if (ticket) ticket.priority = priority
+  }
+
+  private submit(consumerId: string, snapshot: () => Pick<Ticket, 'request' | 'preparation' | 'inputBytes'>,
+    options: RustPixelPocSchedulingOptions): Promise<RustPixelPocResultLease> {
     if (this.stopped) return Promise.reject(new RustPixelPocError('wasm-unavailable'))
+    const priority = options?.priority ?? 'visible'
+    if (!rustStylePriorityValid(priority)) return Promise.reject(new RustPixelPocError('invalid-input'))
     if (typeof consumerId !== 'string' || !consumerId || consumerId.length > 512) {
       return Promise.reject(new RustPixelPocError('invalid-input'))
     }
@@ -82,8 +95,8 @@ export class RustPixelPocStyleScheduler {
         throw new RustPixelPocError('memory-limit')
       }
       const promise = new Promise<RustPixelPocResultLease>((resolve, reject) => {
-        // Replacing a queued job keeps its position ahead of newer consumers.
-        this.pending.set(consumerId, { ...prepared, consumerId, settled: false, resolve, reject })
+        // Replacement preserves queue age, even during repeated edits.
+        this.pending.set(consumerId, { ...prepared, consumerId, priority, bypasses: previous?.bypasses ?? 0, settled: false, resolve, reject })
       })
       this.pump()
       this.changed()
@@ -138,16 +151,31 @@ export class RustPixelPocStyleScheduler {
   private pump() {
     if (this.active || this.stopped) return
     while (this.pending.size) {
-      const ticket = this.pending.values().next().value!
-      this.pending.delete(ticket.consumerId)
-      if (this.jobWorkingBytes(ticket) + ticket.inputBytes + this.queuedBytes() + this.service.stats.retainedResultBytes > this.limits.maxResidentBytes) {
+      const ticket = this.nextTicket()
+      if (this.jobWorkingBytes(ticket) + this.queuedBytes() + this.service.stats.retainedResultBytes > this.limits.maxResidentBytes) {
+        this.pending.delete(ticket.consumerId)
         this.reject(ticket, new RustPixelPocError('memory-limit'))
         continue
       }
+      for (const waiting of this.pending.values()) {
+        if (waiting === ticket) break
+        waiting.bypasses = Math.min(MAX_PRIORITY_BYPASSES, waiting.bypasses + 1)
+      }
+      this.pending.delete(ticket.consumerId)
       this.active = ticket
       this.running = this.run(ticket)
       return
     }
+  }
+
+  private nextTicket() {
+    const rank = { background: 0, visible: 1, active: 2 }
+    let next: Ticket | undefined
+    for (const ticket of this.pending.values()) {
+      if (ticket.bypasses >= MAX_PRIORITY_BYPASSES) return ticket
+      if (!next || rank[ticket.priority] > rank[next.priority]) next = ticket
+    }
+    return next!
   }
 
   private async run(ticket: Ticket) {

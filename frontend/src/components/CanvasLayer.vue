@@ -3,10 +3,12 @@ import { computed, nextTick, ref, watch, type CSSProperties } from 'vue'
 import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../types/editor'
 import { layerCompositingStyle } from '../editor/blendModes'
 import { nativeTextStrokeEffect } from '../editor/layerStyleCompositor'
+import { layerStylePreviewInsets, layerStylePreviewPriority, type RustStyleViewport } from '../editor/rustStyleScheduling'
+import { sourceScaleFactor } from '../editor/selection'
 import { layerStyleFillOpacity } from '../editor/layerStyles'
 import { shapePathData } from '../editor/shape'
 import { ellipseTextPathData, layoutText, textPathDisplayContent, textPathMode, textPathOffset } from '../editor/text'
-import { textPresentationScale } from '../editor/textCanvas'
+import { textPresentationScale, textStyleRasterPlan } from '../editor/textCanvas'
 import { useLayerImageBuffer } from './canvas/composables/useLayerImageHandoff'
 import { useLayerStyleRaster } from './canvas/composables/useLayerStyleRaster'
 
@@ -17,6 +19,7 @@ const props = defineProps<{
   layer: LayerItem
   layerStyleGlobalLight: LayerStyleGlobalLight
   renderScale: number
+  stylePreviewViewport?: RustStyleViewport
   textEditor?: { value: string; selectAll: boolean }
   transform: LayerTransform
 }>()
@@ -35,6 +38,22 @@ const textEditorElement = ref<HTMLTextAreaElement | null>(null)
 const nativeTextStroke = computed(() => props.layer.text && !props.textEditor
   ? nativeTextStrokeEffect(props.layer.styles)
   : undefined)
+const styleInsets = computed(() => {
+  const image = props.layer.image, text = props.layer.text, transform = props.transform
+  let source = { width: transform.width, height: transform.height, resolutionScale: 1 }
+  if (image) {
+    const width = image.previewUrl ? image.previewWidth ?? image.width : image.width
+    const height = image.previewUrl ? image.previewHeight ?? image.height : image.height
+    source = { width, height, resolutionScale: 1 / sourceScaleFactor(transform, width, height) }
+  } else if (text) {
+    const plan = textStyleRasterPlan(text, transform, (window.devicePixelRatio || 1) * props.renderScale)
+    source = { width: plan.width, height: plan.height, resolutionScale: plan.effectScale }
+  }
+  return layerStylePreviewInsets(props.layer.styles, props.layerStyleGlobalLight, transform, source)
+})
+const stylePriority = computed(() => props.stylePreviewViewport
+  ? layerStylePreviewPriority(props.active, props.transform, props.stylePreviewViewport, styleInsets.value)
+  : 'visible')
 const {
   desiredImageSource,
   geometryForSource,
@@ -49,6 +68,7 @@ const {
   ),
   layer: () => props.layer,
   renderScale: () => props.renderScale,
+  priority: () => stylePriority.value,
   skipTextRaster: () => Boolean(nativeTextStroke.value),
   transform: () => props.transform
 })

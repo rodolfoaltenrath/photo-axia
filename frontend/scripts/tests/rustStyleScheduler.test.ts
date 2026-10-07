@@ -431,3 +431,89 @@ test('Timeout preserva código de backend mesmo quando abort do loader rejeita s
     assert.equal(scheduler.stats.disposed, true)
   } finally { await scheduler.dispose() }
 })
+
+test('Prioridade ordena pendentes sem interromper o ativo e mantém FIFO nos empates', async () => {
+  const f = fixture({ holdEncoding: true }), order: string[] = []
+  try {
+    const started = f.harness.waitForEncoding(), a = f.scheduler.render('A', input(), { priority: 'background' })
+    await started
+    const b = f.scheduler.render('B', input(), { priority: 'background' }).then(lease => { order.push('B'); return lease })
+    const c = f.scheduler.render('C', input(), { priority: 'visible' }).then(lease => { order.push('C'); return lease })
+    const d = f.scheduler.render('D', input(), { priority: 'active' }).then(lease => { order.push('D'); return lease })
+    const e = f.scheduler.render('E', input(), { priority: 'visible' }).then(lease => { order.push('E'); return lease })
+    f.scheduler.setPriority('A', 'visible')
+    assert.equal(f.scheduler.stats.active, 1); assert.equal(f.scheduler.stats.pending, 4)
+    f.harness.releaseEncoding()
+    const leases = await Promise.all([a, b, c, d, e])
+    assert.deepEqual(order, ['D', 'C', 'E', 'B']); assert.equal(f.connections(), 1)
+    for (const lease of leases) lease.release()
+  } finally { await f.close() }
+})
+
+test('Repriorizar consumidor não cancela, prepara novamente nem muda a reserva', async () => {
+  const f = fixture({ holdEncoding: true }), order: string[] = []
+  let preparations = 0
+  try {
+    const started = f.harness.waitForEncoding(), a = f.scheduler.render('A', input())
+    await started
+    const schedule = (id: string) => f.scheduler.renderPrepared(id, { inputBytes: 4096,
+      prepare: async () => { preparations++; order.push(id); return input() } }, { priority: 'background' })
+    const b = schedule('B'), c = schedule('C'), reserved = f.scheduler.stats.reservedBytes
+    f.scheduler.setPriority('C', 'active'); f.scheduler.setPriority('unknown', 'active')
+    assert.equal(f.scheduler.stats.reservedBytes, reserved); assert.equal(preparations, 0)
+    f.harness.releaseEncoding()
+    const leases = await Promise.all([a, b, c])
+    assert.deepEqual(order, ['C', 'B']); assert.equal(preparations, 2)
+    for (const lease of leases) lease.release()
+  } finally { await f.close() }
+})
+
+test('Após três ultrapassagens o mais antigo roda, mesmo substituído em cada rajada', async () => {
+  const f = fixture(), order: string[] = [], cancelled: Promise<void>[] = []
+  function job(id: string, priority: 'background' | 'active') {
+    let enter!: () => void, unblock!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const gate = new Promise<void>(resolve => { unblock = resolve })
+    const result = f.scheduler.renderPrepared(id, { inputBytes: 4096, prepare: async () => {
+      order.push(id); enter(); await gate; return input()
+    } }, { priority })
+    return { entered, unblock, result }
+  }
+  try {
+    const a = job('A', 'background'); await a.entered
+    let b = job('B', 'background')
+    const highs = ['H1', 'H2', 'H3', 'H4'].map(id => job(id, 'active'))
+    a.unblock()
+    for (const high of highs.slice(0, 3)) {
+      await high.entered
+      cancelled.push(assert.rejects(b.result, RustPixelPocStyleCancelledError))
+      b = job('B', 'background')
+      high.unblock()
+    }
+    await b.entered
+    assert.deepEqual(order, ['A', 'H1', 'H2', 'H3', 'B'])
+    b.unblock(); await highs[3]!.entered; highs[3]!.unblock()
+    const leases = await Promise.all([a.result, b.result, ...highs.map(high => high.result)])
+    await Promise.all(cancelled)
+    assert.deepEqual(order, ['A', 'H1', 'H2', 'H3', 'B', 'H4'])
+    for (const lease of leases) lease.release()
+  } finally { await f.close() }
+})
+
+test('Prioridade inválida rejeita antes de loader/Worker e não cancela pedido válido', async () => {
+  const f = fixture({ holdEncoding: true })
+  let preparations = 0
+  try {
+    const started = f.harness.waitForEncoding(), a = f.scheduler.render('A', input())
+    await started
+    const b = f.scheduler.render('B', input(), { priority: 'background' })
+    const invalid = { priority: 'urgent' } as unknown as Parameters<typeof f.scheduler.render>[2]
+    await assert.rejects(f.scheduler.render('B', input(), invalid), code('invalid-input'))
+    await assert.rejects(f.scheduler.renderPrepared('B', { inputBytes: 4096,
+      prepare: async () => { preparations++; return input() } }, invalid), code('invalid-input'))
+    assert.throws(() => f.scheduler.setPriority('B', 'urgent' as 'active'), code('invalid-input'))
+    assert.equal(preparations, 0); assert.equal(f.scheduler.stats.pending, 1)
+    f.harness.releaseEncoding(); const leases = await Promise.all([a, b])
+    for (const lease of leases) lease.release()
+  } finally { await f.close() }
+})

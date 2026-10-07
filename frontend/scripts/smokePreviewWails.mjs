@@ -375,6 +375,7 @@ try {
     : null
   const frameMetrics = frameSamples?.map(summarizePreviewFrames)
   let rustMultilayer = null
+  let rustScheduling = null
   if (rustMode && !benchmarkMode) {
     const duplicated = await evaluate(`(async () => {
       for (let index = 0; index < 2; index++) {
@@ -402,7 +403,43 @@ try {
     assert.equal(multicamadas.workers.peak, rustFallback ? 0 : 1)
     if (!rustFallback) assert.equal(multicamadas.stats.fallbacks, 0)
     const extras = multicamadas.layers.filter(layer => layer.id !== layerId)
-    const removedId = extras[0].id, remainingId = extras[1].id, remainingSource = extras[1].source
+    const removedId = extras[0].id, remainingId = extras[1].id
+    let remainingSource = extras[1].source
+    const scheduling = await evaluate(`(async () => {
+      const stats = () => JSON.parse(document.documentElement.dataset.axiaRustStylePreview || 'null')
+      const sources = () => [...document.querySelectorAll('.document-layer')].map(root =>
+        root.querySelector('img.layer-image-buffer--active')?.getAttribute('src'))
+      const before = stats(), beforeSources = sources()
+      document.querySelector('.layer-row[data-layer-id=${JSON.stringify(layerId)}] .layer-button').click()
+      const viewport = document.querySelector('.canvas-scroll')
+      const left = viewport.scrollLeft, top = viewport.scrollTop
+      viewport.scrollLeft = Math.max(0, left - 40); viewport.scrollTop = Math.max(0, top - 40)
+      for (let frame = 0; frame < 6; frame++) await new Promise(requestAnimationFrame)
+      viewport.scrollLeft = left; viewport.scrollTop = top
+      for (let frame = 0; frame < 6; frame++) await new Promise(requestAnimationFrame)
+      return { before, after: stats(), beforeSources, afterSources: sources() }
+    })()`)
+    assert.equal(scheduling.after.priorities.active, 1)
+    assert.equal(Object.values(scheduling.after.priorities).reduce((sum, count) => sum + count, 0), 3)
+    assert.equal(scheduling.after.attempts, scheduling.before.attempts, 'Seleção/pan reiniciaram render Rust.')
+    assert.equal(scheduling.after.fallbacks, scheduling.before.fallbacks, 'Seleção/pan reiniciaram fallback.')
+    assert.deepEqual(scheduling.afterSources, scheduling.beforeSources, 'Seleção/pan trocaram buffers prontos.')
+    await evaluate(`document.querySelector('.layer-row[data-layer-id=${JSON.stringify(remainingId)}] .visibility-button').click()`)
+    const hidden = await waitFor(evaluate, 'JSON.parse(document.documentElement.dataset.axiaRustStylePreview || "null")',
+      value => value?.consumers === 2 && value.resultLeases === (rustFallback ? 0 : 2), 'Ocultar libera consumidor')
+    assert.equal(await evaluate(`Boolean(document.querySelector('.document-layer[data-layer-id=${JSON.stringify(remainingId)}]'))`), false)
+    assert.equal(await evaluate('window.__axiaRustWorkers.alive'), rustFallback ? 0 : 1)
+    await evaluate(`document.querySelector('.layer-row[data-layer-id=${JSON.stringify(remainingId)}] .visibility-button').click()`)
+    const restored = await waitFor(evaluate, `(() => {
+      const stats = JSON.parse(document.documentElement.dataset.axiaRustStylePreview || 'null')
+      const image = document.querySelector('.document-layer[data-layer-id=${JSON.stringify(remainingId)}] img.layer-image-buffer--active')
+      return { stats, ready: image?.complete && image.naturalWidth === ${observed.result.naturalWidth}, source: image?.getAttribute('src') }
+    })()`, value => value?.ready && value.stats.consumers === 3 && value.stats.resultLeases === (rustFallback ? 0 : 3) &&
+      (rustFallback || value.stats.service?.active === 0 && value.stats.service?.pending === 0), 'Mostrar recompõe consumidor')
+    remainingSource = restored.source
+    assert.equal(await evaluate('window.__axiaRustWorkers.created'), rustFallback ? 0 : 1)
+    rustScheduling = { priorities: scheduling.after.priorities, selectionAndPanPreservedBuffers: true,
+      selectionAndPanTriggeredNoRender: true, hiddenConsumers: hidden.consumers, restoredConsumers: restored.stats.consumers }
     async function removeLayer(id) {
       await evaluate(`document.querySelector('.layer-row[data-layer-id=${JSON.stringify(id)}] .layer-button').click()`)
       await waitFor(evaluate,
@@ -473,7 +510,7 @@ try {
     platform: process.platform, osRelease: release(), cpu: cpus()[0]?.model,
     node: process.version, go: goVersion, totalMemoryBytes: totalmem(), ...environment, imageBytes: dropped.bytes,
     ...observed.result, screenshot: visual,
-    ...(rustMode ? { rustPreview: rustStats, rustMultilayer, rustCleanup } : {}),
+    ...(rustMode ? { rustPreview: rustStats, rustMultilayer, rustScheduling, rustCleanup } : {}),
     ...(benchmarkMode ? { benchmark: { imageSize, cycles, minimumSampleWindowMs: 500,
       measurement: 'rAF callback cadence, not presented GPU FPS',
       input: 'synthetic wheel and native viewport scroll', samples: frameMetrics } } : {}) })}\n`)

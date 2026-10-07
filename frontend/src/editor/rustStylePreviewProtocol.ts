@@ -1,6 +1,7 @@
 import type { LayerStyleRenderRequest, LayerStyleRenderResult } from '../services/layerStyleCompositor.ts'
+import type { RustStylePriority } from './rustStyleScheduling.ts'
 
-export interface LayerStylePreviewRequest extends LayerStyleRenderRequest { sourceUrl?: string }
+export interface LayerStylePreviewRequest extends LayerStyleRenderRequest { sourceUrl?: string; priority?: RustStylePriority }
 export interface LayerStylePreviewResult extends LayerStyleRenderResult { release(): void }
 
 export class RustStylePreviewCancelledError extends Error {

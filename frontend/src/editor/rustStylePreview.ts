@@ -9,11 +9,12 @@ import { rustStylePngLayout } from './rustPixelPocPng.ts'
 import type { RustPixelPocServiceRequest } from './rustPixelPocStyleService.ts'
 import type { RustPixelPocStyleScheduler, RustPixelPocSchedulerLimits } from './rustPixelPocStyleScheduler.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
+import { rustStylePriorityValid, type RustStylePriority } from './rustStyleScheduling.ts'
 import { RustStylePreviewCancelledError, type LayerStylePreviewRequest, type LayerStylePreviewResult } from './rustStylePreviewProtocol.ts'
 export { RustStylePreviewCancelledError, rustStylePreviewEnabled, type LayerStylePreviewRequest, type LayerStylePreviewResult } from './rustStylePreviewProtocol.ts'
-type Scheduler = Pick<RustPixelPocStyleScheduler, 'renderPrepared' | 'cancel' | 'dispose' | 'stats'>
+type Scheduler = Pick<RustPixelPocStyleScheduler, 'renderPrepared' | 'setPriority' | 'cancel' | 'dispose' | 'stats'>
 type Owner = { consumerId: string; epoch: number; revision: symbol; controller?: AbortController;
-  failed: boolean; identity?: string; sourceVersion: number }
+  failed: boolean; identity?: string; sourceVersion: number; priority: RustStylePriority }
 type Context = { epoch: number; failed: boolean; scheduler?: Scheduler; opening?: Promise<Scheduler> }
 const MiB = 1024 * 1024
 
@@ -60,8 +61,11 @@ export class RustStylePreview {
   constructor(ports: RustStylePreviewPorts) { this.ports = ports; this.clock = ports.clock ?? (() => performance.now()) }
 
   get stats() {
+    const priorities = { active: 0, visible: 0, background: 0 }
+    for (const owner of this.owners.values()) priorities[owner.priority]++
     return { ...this.counts, resultLeases: this.resultLeases, retainedResultBytes: this.resultBytes,
       occupied: this.owners.size > 0, consumers: this.owners.size,
+      priorities,
       circuitOpen: !!this.context?.failed || [...this.owners.values()].some(owner => owner.failed),
       backendCircuitOpen: this.context?.failed ?? false,
       service: this.context?.scheduler?.stats ?? null, last: this.last ? { ...this.last } : null }
@@ -73,7 +77,7 @@ export class RustStylePreview {
     }
     let owner = this.owners.get(input.consumerId)
     if (!owner) {
-      owner = { consumerId: input.consumerId, epoch: ++this.nextEpoch, revision: Symbol(), failed: false, sourceVersion: 0 }
+      owner = { consumerId: input.consumerId, epoch: ++this.nextEpoch, revision: Symbol(), failed: false, sourceVersion: 0, priority: 'visible' }
       this.owners.set(input.consumerId, owner)
     }
     const context = this.context ??= { epoch: ++this.nextEpoch, failed: false }
@@ -86,6 +90,7 @@ export class RustStylePreview {
     let timeout: ReturnType<typeof setTimeout> | undefined
     let preparationMs = 0, fallbackReason: string | null = null
     try {
+      this.setPriority(input.consumerId, input.priority ?? 'visible')
       const source = input.source instanceof Blob || typeof input.source === 'function' ? input.source : structuredClone(input.source)
       const request = { ...input, source, styles: normalizeLayerStyleConfig(input.styles),
         globalLight: normalizeLayerStyleGlobalLight(input.globalLight), resolutionScale:
@@ -122,7 +127,7 @@ export class RustStylePreview {
                 check()
                 return { ...request, sourceIdentity, ...prepared }
               }
-            })
+            }, { priority: owner.priority })
             if (!current()) { lease.release(); throw new RustStylePreviewCancelledError() }
             return lease
           })()
@@ -182,6 +187,16 @@ export class RustStylePreview {
     const owner = this.owners.get(consumerId)
     if (!owner) return
     owner.revision = Symbol(); owner.controller?.abort(); this.context?.scheduler?.cancel(consumerId)
+  }
+
+  setPriority(consumerId: string, priority: RustStylePriority) {
+    if (!rustStylePriorityValid(priority)) throw new RustPixelPocError('invalid-input')
+    const owner = this.owners.get(consumerId)
+    if (!owner) return
+    if (owner.priority === priority) return
+    owner.priority = priority
+    this.context?.scheduler?.setPriority(consumerId, priority)
+    this.changed()
   }
 
   releaseConsumer(consumerId: string) {

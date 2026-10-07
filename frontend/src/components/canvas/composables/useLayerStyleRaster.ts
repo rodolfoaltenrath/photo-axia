@@ -10,9 +10,11 @@ import { textLayerSourceIdentity, textStyleRasterPlan, textStyleRasterSource } f
 import {
   invalidatePreviewLayerStyle,
   releasePreviewLayerStyleConsumer,
-  renderPreviewLayerStyle
+  renderPreviewLayerStyle,
+  updatePreviewLayerStylePriority
 } from '../../../services/layerStylePreview'
 import type { LayerItem, LayerStyleGlobalLight, LayerTransform } from '../../../types/editor'
+import type { RustStylePriority } from '../../../editor/rustStyleScheduling'
 
 export interface StyledImageGeometry {
   offsetX: number
@@ -35,6 +37,7 @@ interface LayerStyleRasterOptions {
   isInteracting?: () => boolean
   layer: () => LayerItem
   renderScale?: () => number
+  priority?: () => RustStylePriority
   skipTextRaster?: () => boolean
   transform: () => LayerTransform
 }
@@ -107,6 +110,7 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
       const result = await renderPreviewLayerStyle({
         consumerId,
         layerId: layer.id,
+        priority: options.priority?.() ?? 'visible',
         sourceIdentity: image ? `${source}|${image.editToken ?? ''}` : textSource!.identity,
         sourceUrl: image ? source ?? undefined : undefined,
         source: image ? async () => {
@@ -144,6 +148,12 @@ export function useLayerStyleRaster(options: LayerStyleRasterOptions) {
       if (generation === localGeneration) styledSource.value = undefined
     }
   }
+
+  watch(
+    () => options.priority?.() ?? 'visible',
+    priority => updatePreviewLayerStylePriority(consumerId, priority),
+    { immediate: true }
+  )
 
   watch(
     () => {

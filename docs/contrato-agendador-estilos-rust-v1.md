@@ -11,7 +11,8 @@ exportação, histórico, `.axia`, idioma, ABI, algoritmos Rust ou versões da s
 
 Na entrega original da 24ª fatia, o agendador recebia somente mídia pronta.
 A 25ª acrescenta preparação deferida e integra a factory/preview browser;
-ver a seção 8 e o [contrato atual do preview](contrato-preview-estilos-rust-v1.md).
+a 26ª acrescenta prioridades com envelhecimento. Ver seções 8/9 e o
+[contrato atual do preview](contrato-preview-estilos-rust-v1.md).
 Os testes passam
 pelo Worker TS e WASM reais; decoder, Canvas e encoder são doubles explícitos.
 O smoke Wails desta entrega verifica que o consumidor atual permanece íntegro,
@@ -186,3 +187,29 @@ A factory `createRustPixelPocStyleScheduler` usa o mesmo conector local/lazy de
 usam a mesma instância; limite conjunto de resultados inclui contextos retirados.
 Os novos smokes Wails verificam três camadas, um Worker, remoção parcial, edição
 isolada, fallback comum e zero leases/Workers após retirar o último consumidor.
+
+## 9. Atualização da 26ª fatia — prioridades justas
+
+`render(consumerId, input, { priority })` e
+`renderPrepared(consumerId, preparation, { priority })` aceitam `active`, `visible`
+ou `background`. O default é `visible`, mantendo FIFO para chamadores antigos.
+`setPriority(consumerId, priority)` muda somente o pendente correspondente;
+não cancela o ativo, não recaptura mídia e não altera orçamento, posição ou idade.
+Consumidor desconhecido não cria estado. Nível inválido rejeita antes de loader/
+Worker, sem cancelar pedido válido anterior. Demais invalidações mantêm o contrato.
+
+Prioridade ordena pendentes; FIFO desempata. A cada despacho admitido, pedidos
+anteriores ultrapassados envelhecem até três. O mais antigo com três ultrapassagens
+ganha o próximo despacho, independentemente do nível. Substituir seu pedido
+conserva a idade. Cancelar/retirar encerra aquela espera; reenfileirar ativo é uma
+nova espera. Rejeição por orçamento não conta como despacho nem envelhece vizinhos.
+O ativo não é preemptado por uma seleção diferente. Drenagem física, capacidade,
+watchdogs, serialização de preparação, circuitos e leases não mudaram.
+
+A idade limita ultrapassagens, não tempo absoluto. A fila continua sujeita aos
+deadlines e orçamentos anteriores; não há processamento paralelo, prioridades
+enviadas ao WASM ou mudança de ABI. O preview conserva prioridade durante abertura
+lazy e encaminha mudanças à fila sem render novamente. O canvas calcula relevância
+com geometria/halo conservadores; não suprime pedidos fora da tela. Camadas ocultas
+continuam no lifecycle anterior de unmount. Cache/eviction, limites intrínsecos,
+orçamento entre janelas, medições e QA ainda faltam. C0/C1/C2 continuam abertos.

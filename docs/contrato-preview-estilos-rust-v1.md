@@ -1,6 +1,6 @@
 # Preview real de estilos Rust — integração experimental V1
 
-## 1. Alcance — atualização da 25ª fatia
+## 1. Alcance — atualização da 26ª fatia
 
 O serviço da [22ª fatia](contrato-servico-estilos-rust-v1.md) agora atende um
 consumidor real: `useLayerStyleRaster` no canvas. O PNG é produzido pelos passes
@@ -11,6 +11,7 @@ A 23ª fatia atendia um dono por janela. A 24ª criou o
 [agendador compartilhado](contrato-agendador-estilos-rust-v1.md); a 25ª liga
 várias camadas reais à mesma instância, incluindo preparação serializada antes
 do fetch e smoke multicamadas Wails. A composição final ainda é DOM, não Rust.
+Na 26ª, a fila recebe prioridades do canvas, atualizadas sem reiniciar render.
 
 A integração permanece **desligada por padrão**. Ativação explícita:
 
@@ -31,10 +32,30 @@ Os executáveis dos smokes são temporários e não são instalador/portável de
 Por janela, consumidores `canvas:*` compartilham **um agendador/Worker**,
 sem serviço exclusivo por camada. Até 64 consumidores podem manter estado
 experimental; excedentes usam legado. A fila tem um ativo e até 16 pendentes,
-com somente o último pedido de cada consumidor. FIFO mantém posição ao
-substituir pendente; atualizar o ativo coloca sua próxima versão atrás de
-outras camadas já esperando. Miniaturas/exportação continuam no legado.
-Não há prioridade por seleção/visibilidade nem pool entre janelas nativas.
+com somente o último pedido de cada consumidor. A ordem preferencial é camada
+ativa → camada no viewport → camada fora do viewport; FIFO desempata. Substituir
+pendente preserva posição e envelhecimento. Após três ultrapassagens, o pedido
+mais antigo ganha um despacho, mesmo com rajadas de prioridade maior. É limite
+de ultrapassagens, não garantia de latência em milissegundos. Atualizar o ativo
+coloca sua próxima versão na fila; prioridade não interrompe trabalho em curso.
+Miniaturas/exportação continuam no legado. Não há pool entre janelas nativas.
+Prioridades só ordenam a fila Rust; o fallback conserva o agendamento legado.
+
+O canvas usa transform desejado, offset/zoom e tamanho já existentes do viewport;
+não lê layout DOM a cada pan nem cria IntersectionObservers por camada. O halo
+é calculado na escala do raster e convertido ao documento, incluindo alongamento
+não uniforme e limite de densidade do texto. Bounds rotacionados e margem externa
+conservadora evitam rebaixar efeitos próximos da borda; geometria indefinida fica
+no nível visível. Trata-se de prioridade, **não culling**: conteúdo fora da tela
+continua elegível. Tiles/suspensão regional pertencem a C4. Camadas ocultas já não
+eram montadas pelo canvas; seu unmount continua cancelando/liberando o consumidor.
+Ao mostrar, a montagem solicita a versão atual, sem cache editorial novo.
+
+Seleção/pan só atualizam prioridade; não entram no watcher de pixels/estilos,
+não alteram identidade, reserva, URL ou lease, nem buscam mídia novamente.
+Atualização durante import/factory lazy é preservada para o primeiro enfileiramento.
+Repriorizar um consumidor inexistente não cria registros persistentes. O caminho
+sem flag não calcula essas prioridades de viewport nem abre runtime experimental.
 
 Remover uma camada não encerra o Worker usado pelas demais. Ao retirar o último
 consumidor ou resetar documento, fecha-se a instância compartilhada. Novo
@@ -137,7 +158,7 @@ O motivo está no diagnóstico; não colocar texto, URL ou conteúdo do document
 
 Somente com o caminho opt-in carregado, `data-axia-rust-style-preview` no elemento
 raiz guarda um snapshot limitado: tentativas/renders/fallbacks/cancelamentos,
-consumidores, circuito local/comum, leases/bytes publicados (inclusive antigos),
+consumidores e contagem por prioridade, circuito local/comum, leases/bytes publicados (inclusive antigos),
 contas do agendador, preparação/fila ativa e último backend/motivo.
 Timings agrupam espera de instância/fila + preparação de Blob/assets, render
 do serviço (abertura do Worker, staging/decode, efeitos e encode), total do
@@ -165,6 +186,9 @@ leases/bytes e Workers de posse do experimento. A contagem observa chamadas da
 API Worker; não mede processos físicos/GC nem pool global do aplicativo.
 O smoke sem argumentos continua verificando o caminho normal. Capturas e
 contagens não substituem QA de fontes, cores, DPR, camadas grandes ou desempenho.
+Os smokes opt-in também selecionam outra camada e fazem pan sem novos renders
+ou troca dos buffers prontos. Ocultar uma camada reduz consumidores/leases sem
+terminar o Worker restante; mostrar recompõe mantendo uma única criação de Worker.
 
 ## 7. QA manual e próxima fatia
 
@@ -179,11 +203,15 @@ ligada, começar com poucas camadas estilizadas e expandir gradualmente:
   Worker não se multiplica e as URLs/leases antigas são retiradas.
 - Editar/remover A enquanto B/C aguardam; mudanças não cancelam os demais.
   Testar rajadas, muitas camadas, pressão de orçamento e fallback por camada.
+- Alternar camada ativa e pan com renders pendentes; fila acompanha relevância,
+  sem reiniciar pixels ou impedir definitivamente os pedidos antigos. Conferir
+  efeitos externos próximos da borda, rotação e resize não uniforme. Ocultar/
+  mostrar durante preparação deve cancelar só o consumidor retirado.
 - Documentos acima dos limites experimentais devem continuar pelo compositor
   anterior; registrar motivo/backend e gargalos, não concluir que o limite foi
   aumentado ou o processamento inteiro ficou em Rust.
 
-Próximos passos: prioridades/visibilidade e orçamento entre janelas, cache/assets,
+Próximos passos: cache/assets e orçamento entre janelas,
 limites intrínsecos, medições repetidas isoladas e matriz visual de tolerâncias,
 antes de aumentar cobertura/ativar por padrão. C0/C1/C2 continuam abertos. C3 é a
 pilha documental/backdrop/transforms; C4 é a superfície única. O idioma e o modelo

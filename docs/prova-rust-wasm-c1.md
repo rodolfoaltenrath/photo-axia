@@ -2227,3 +2227,56 @@ seção 8 do [agendador V1](contrato-agendador-estilos-rust-v1.md). Faltam
 prioridades/visibilidade, cache/assets, limites intrínsecos, orçamento entre
 janelas e medições/QA antes do rollout. C0/C1/C2 continuam abertos; C3/C4 ainda
 não substituíram pilha/DOM/exportação.
+
+## 26. Prioridades justas no preview multicamadas — 2026-10-07
+
+A fila compartilhada prefere camada ativa, depois conteúdo no viewport, depois
+conteúdo fora dele. Empates são FIFO; após três ultrapassagens, o pedido mais
+antigo ganha despacho. Substituições pendentes conservam idade. Mudança de
+seleção/pan só reprioriza, sem interromper o ativo, recapturar pixels, buscar
+mídia ou alterar reserva/lease. Prioridade durante abertura lazy é conservada.
+
+Relevância usa offset/zoom/tamanho existentes do viewport, bounds rotacionados
+e halo convertido do raster ao documento. A conta inclui resize não uniforme,
+arredondamento, limite de escala e densidade de texto. Geometria não finita ou
+overflow permanece visível. Bounds são conservadores e servem somente à
+prioridade; não é culling, tiles ou suspensão regional. Ocultar continua retirando
+o componente e liberando o consumidor; mostrar solicita o conteúdo atual.
+
+Validação local:
+
+- `npm test`: **551** casos frontend, com checagem de tipos. Preview tem **24**
+  casos; geometria/política têm **seis**, incluindo offset/zoom, borda, rotação,
+  halo, escala não uniforme, densidade/clamp e geometria inválida/overflow.
+- `npm run test:rust-poc`: **349** casos — cinco standalone, um smoke Worker
+  e **343** nos scripts. O agendador tem **29** casos; os novos exercitam
+  prioridades/empates, ausência de preempção, repriorização sem repetir loader,
+  envelhecimento conservado durante rajadas e prioridade inválida isolada.
+- Preview/mídia/geometria/agendador (**65** casos) passaram **cinco vezes
+  consecutivas**. Scripts usam Worker/WASM reais e doubles explícitos de mídia/
+  Canvas/encoder. Não representa benchmark ou medição de FPS.
+- `cargo test --offline --locked`: **61** casos nativos; `go test ./...` passou.
+  Algoritmos Rust, ABI, goldens e versões não mudaram.
+- Build e integridade de bundle passaram. WASM permanece **100.281 bytes**,
+  `axia_pixel_core-674Kws7T.wasm`; Worker Rust e compositor normal conservaram
+  artefatos. Runtime continua lazy/opt-in, sem preload experimental no HTML.
+  O aviso existente de chunk >500 kB permanece.
+- Smokes Wails/WebView2 **Rust, WASM bloqueado e padrão** passaram. O fluxo
+  multicamadas conserva uma criação/pico de um Worker, buffers intocados e
+  handoff sem perder o ativo. Seleção/pan não aumentaram tentativas/fallbacks
+  nem mudaram URLs prontas; diagnóstico mostrou um ativo e dois visíveis.
+  A fixture ocupa o documento: classificação fora do viewport é coberta nos
+  testes de geometria, não anunciada como medida nesse smoke.
+- Ocultar uma das três camadas reduziu consumidores/leases para dois; mostrar
+  restaurou três sem recriar Worker. Ao final, zero consumidores/leases/bytes/
+  Workers de posse do experimento. Com WASM bloqueado houve uma tentativa,
+  cinco fallbacks ao longo das operações e zero Workers Rust.
+- A primeira aplicação mudou **3.176** pixels do screenshot sintético nas três
+  execuções. Esses checks não comprovam paridade de todos os consumidores,
+  FPS, RSS ou ganho percentual. Executáveis são temporários, sem novo release.
+
+Documentação atual no [preview V1](contrato-preview-estilos-rust-v1.md) e seção 9
+do [agendador V1](contrato-agendador-estilos-rust-v1.md). C0/C1/C2 continuam
+abertos. Faltam cache/assets, limites intrínsecos, orçamento entre janelas,
+medições e QA; C3/C4 não substituíram composição documental ou DOM. Texto,
+exportação, idioma e renderização padrão permanecem no caminho atual.
