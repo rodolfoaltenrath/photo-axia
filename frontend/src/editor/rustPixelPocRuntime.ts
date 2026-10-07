@@ -16,6 +16,7 @@ const MAX_POC_BYTES = 64 * 1024 * 1024
 let nextSourceId = 0
 
 interface RustPixelPocExports {
+  axia_poc_document_packet_version?(): number
   axia_poc_document_region?(packetPointer: number, packetLength: number, outputPointer: number, outputLength: number): number
   axia_poc_style_stages_region(sourcePointer: number, sourceLength: number, sourceWidth: number, sourceHeight: number,
     x: number, y: number, width: number, height: number, packetPointer: number, packetLength: number,
@@ -465,6 +466,10 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     if (disposed || typeof exports.axia_poc_document_region !== 'function' ||
         exports.axia_poc_document_region.length !== 4) throw new RustPixelPocError('wasm-unavailable')
     const { region, outputBytes, workingBytes } = documentCompositePacketLayout(packet)
+    if (packet[3] === 50 && (typeof exports.axia_poc_document_packet_version !== 'function' ||
+        exports.axia_poc_document_packet_version.length !== 0 || exports.axia_poc_document_packet_version() < 2)) {
+      throw new RustPixelPocError('wasm-unavailable')
+    }
     if (workingBytes + (staged?.length ?? 0) > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
     const started = performance.now()
     const allocations: { pointer: number; length: number }[] = []
@@ -483,7 +488,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       new Uint8Array(exports.memory.buffer, input.pointer, input.length).set(packet)
       copiedIn = performance.now()
       const status = exports.axia_poc_document_region(input.pointer, input.length, output.pointer, output.length)
-      if (status !== 0) throw new RustPixelPocError(status === 6 ? 'memory-limit' : 'wasm-failure')
+      if (status !== 0) throw new RustPixelPocError(status === 6 ? 'memory-limit' : status === 7 ? 'work-limit' : 'wasm-failure')
       computed = performance.now()
       rgba = new Uint8Array(exports.memory.buffer, output.pointer, output.length).slice()
       copiedOut = performance.now()

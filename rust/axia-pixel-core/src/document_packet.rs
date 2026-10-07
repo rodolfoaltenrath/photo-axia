@@ -1,10 +1,11 @@
-//! DCP1 contains relative offsets only; no pointers in layer descriptors.
+//! DCP1/DCP2 contain relative offsets only; no pointers in descriptors.
 
 use crate::composite::BlendMode;
 use crate::document_composite::{
     compose_document_region, DocumentCompositeError, DocumentCompositeJob, DocumentRasterLayer,
     LAYER_METADATA_BYTES, MAX_JOB_BYTES, MAX_LAYERS,
 };
+use crate::document_transform::{DocumentAffine, DocumentOutputGrid};
 use crate::{RasterRegion, MAX_POC_BYTES};
 
 const HEADER: usize = 48;
@@ -28,14 +29,19 @@ pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u
     {
         return Err(1);
     }
-    if &packet[..4] != b"DCP1" || integer(packet, 4) != 1 || integer(packet, 8) != HEADER as u32 {
-        return Err(2);
-    }
+    let (header, record_bytes, transformed) =
+        match (&packet[..4], integer(packet, 4), integer(packet, 8)) {
+            (b"DCP1", 1, 48) => (HEADER, RECORD, false),
+            (b"DCP2", 2, 80) if packet.len() >= 80 && packet[72..80].iter().all(|v| *v == 0) => {
+                (80, 80, true)
+            }
+            _ => return Err(2),
+        };
     let count = integer(packet, 12) as usize;
     if count > MAX_LAYERS {
         return Err(2);
     }
-    let mut cursor = HEADER + count * RECORD;
+    let mut cursor = header + count * record_bytes;
     if cursor > packet.len() {
         return Err(2);
     }
@@ -50,14 +56,14 @@ pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u
     let mut layers = Vec::new();
     layers.try_reserve_exact(count).map_err(|_| 6u32)?;
     for index in 0..count {
-        let record = HEADER + index * RECORD;
+        let record = header + index * record_bytes;
         let offset = integer(packet, record) as usize;
         let len = integer(packet, record + 4) as usize;
         let end = offset.checked_add(len).ok_or(2u32)?;
         if offset != cursor || len == 0 || !len.is_multiple_of(4) || end > packet.len() {
             return Err(2);
         }
-        let visible = match integer(packet, record + 24) {
+        let visible = match integer(packet, record + if transformed { 16 } else { 24 }) {
             0 => false,
             1 => true,
             _ => return Err(2),
@@ -66,11 +72,28 @@ pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u
             rgba: &packet[offset..end],
             width: integer(packet, record + 8) as usize,
             height: integer(packet, record + 12) as usize,
-            x: integer(packet, record + 16) as i32,
-            y: integer(packet, record + 20) as i32,
+            x: if transformed {
+                0
+            } else {
+                integer(packet, record + 16) as i32
+            },
+            y: if transformed {
+                0
+            } else {
+                integer(packet, record + 20) as i32
+            },
             visible,
-            opacity: double(packet, record + 32),
-            blend_mode: BlendMode::try_from(integer(packet, record + 28)).map_err(|_| 2u32)?,
+            opacity: double(packet, record + if transformed { 24 } else { 32 }),
+            blend_mode: BlendMode::try_from(integer(
+                packet,
+                record + if transformed { 20 } else { 28 },
+            ))
+            .map_err(|_| 2u32)?,
+            transform: transformed.then(|| {
+                DocumentAffine(std::array::from_fn(|index| {
+                    double(packet, record + 32 + index * 8)
+                }))
+            }),
         });
         cursor = end;
     }
@@ -87,15 +110,27 @@ pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u
                 width: integer(packet, 32) as usize,
                 height: integer(packet, 36) as usize,
             },
-            resolution_scale: double(packet, 40),
+            resolution_scale: if transformed { 1.0 } else { double(packet, 40) },
+            output_grid: transformed.then(|| DocumentOutputGrid {
+                scale_x: double(packet, 40),
+                scale_y: double(packet, 48),
+                origin_x: double(packet, 56),
+                origin_y: double(packet, 64),
+            }),
             layers_bottom_to_top: &layers,
         },
         output,
     )
     .map_err(|error| match error {
         DocumentCompositeError::MemoryBudget => 6,
+        DocumentCompositeError::WorkBudget => 7,
         _ => 2,
     })
+}
+
+#[no_mangle]
+pub extern "C" fn axia_poc_document_packet_version() -> u32 {
+    2
 }
 
 /// # Safety
@@ -246,5 +281,62 @@ mod tests {
             assert_eq!(compose_document_packet(&bytes, &mut output), Err(2));
             assert_eq!(output, [99; 4]);
         }
+    }
+
+    fn affine_packet() -> Vec<u8> {
+        let mut bytes = vec![0; 164];
+        bytes[..4].copy_from_slice(b"DCP2");
+        for (offset, value) in [
+            (4, 2),
+            (8, 80),
+            (12, 1),
+            (16, 2),
+            (20, 1),
+            (32, 2),
+            (36, 1),
+            (80, 160),
+            (84, 4),
+            (88, 1),
+            (92, 1),
+            (96, 1),
+        ] {
+            set(&mut bytes, offset, value);
+        }
+        for (offset, value) in [
+            (40, 1.0f64),
+            (48, 1.0),
+            (104, 100.0),
+            (112, 1.0),
+            (136, 1.0),
+            (144, 0.25),
+        ] {
+            bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes[160..164].copy_from_slice(&[40, 80, 120, 255]);
+        bytes
+    }
+
+    #[test]
+    fn dcp2_supports_fractional_geometry_and_reports_version() {
+        let mut output = [99; 8];
+        compose_document_packet(&affine_packet(), &mut output).unwrap();
+        assert_eq!(output, [40, 80, 120, 191, 40, 80, 120, 64]);
+        assert_eq!(axia_poc_document_packet_version(), 2);
+    }
+
+    #[test]
+    fn dcp2_reserved_bytes_and_invalid_transform_preserve_output() {
+        for offset in [40, 48, 112, 136] {
+            let mut bytes = affine_packet();
+            bytes[offset..offset + 8].fill(0);
+            let mut output = [99; 8];
+            assert_eq!(compose_document_packet(&bytes, &mut output), Err(2));
+            assert_eq!(output, [99; 8]);
+        }
+        let mut bytes = affine_packet();
+        bytes[72] = 1;
+        let mut output = [99; 8];
+        assert_eq!(compose_document_packet(&bytes, &mut output), Err(2));
+        assert_eq!(output, [99; 8]);
     }
 }

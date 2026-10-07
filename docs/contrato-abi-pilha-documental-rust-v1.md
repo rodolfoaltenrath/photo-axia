@@ -5,6 +5,11 @@ e Worker de diagnóstico. Sem consumidor editorial ou rollout. Continua com
 escala 1 e translação inteira do [núcleo inicial](contrato-pilha-documental-rust-v1.md).
 Não é a ABI completa de [ComposeRequestV1](contrato-compositor-v1.md).
 
+A fatia 3 adiciona [DCP2](contrato-transformacoes-documentais-rust-v1.md),
+grade global e transformação afim, sem estender silenciosamente este layout
+DCP1. O mesmo export aceita ambas as versões; consulta de capacidade distingue
+WASM anterior. As provas abaixo registram a entrega original da fatia 2.
+
 ## 1. Entrada e saída
 
 ```text
@@ -148,7 +153,9 @@ Goldens fixos de modos/alpha repetem os casos nativos; tiles irregulares têm
 comparação byte a byte com o render inteiro WASM. Não são comparação Canvas
 completa, teste de FPS ou QA de documentos reais.
 
-Próximos passos: transformação/reamostragem por grade global; estilos/Fill e
+Transformação/reamostragem inicial por grade global está implementada na fatia
+DCP2; qualidade de minificação e paridade Canvas continuam gates. Próximos
+passos: estilos/Fill e
 `Blend If` sobre backdrop; scheduler/ownership/admission da pilha; consumidor
 offscreen atrás de flag com matriz de paridade e cancelamento. Não plugar
 esta V1 diretamente em export/preview e reconstruir/uploadar tudo a cada tile.

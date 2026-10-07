@@ -723,6 +723,17 @@ admission/scheduler de documento ou otimização de upload por tile ainda.
 Alcance e limites no [contrato DCP1](contrato-abi-pilha-documental-rust-v1.md).
 C3 continua aberto e `renderDocument.ts`/DOM permanecem intactos.
 
+Terceira fatia de C3: grade global de saída e transformação afim de fontes
+preparadas no mesmo núcleo, com bilinear premultiplicado, cobertura geométrica
+separada e quota conservadora de trabalho por pedido. ABI DCP2 preserva DCP1,
+tem consulta de capacidade, rejeição transacional e integração experimental ao
+runtime/Worker. Goldens de rotação/espelhamento/alpha e tiles fracionários nos
+seis modos não apresentam emendas; diagnóstico Wails confere cobertura
+fracionária. [Contrato e limites](contrato-transformacoes-documentais-rust-v1.md)
+registram que minificação de alta qualidade/paridade Canvas, estilos/Fill/halos,
+`Blend If` subjacente, scheduler/reuso/admission documental e consumidores
+editoriais ainda faltam. Não altera preview/default/exportação nem encerra C3.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

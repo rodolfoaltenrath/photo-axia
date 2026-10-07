@@ -2,7 +2,9 @@
 
 Estado da fatia 1: **implementado e testado como função Rust segura**. A fatia 2
 adicionou [ABI DCP1/runtime/Worker](contrato-abi-pilha-documental-rust-v1.md),
-ainda sem consumidor editorial. Não substitui `renderDocument.ts`,
+ainda sem consumidor editorial. A fatia 3 acrescenta
+[transformações/grade global e DCP2](contrato-transformacoes-documentais-rust-v1.md).
+Não substitui `renderDocument.ts`,
 o preview DOM ou o executor de estilos. Relacionado ao
 [contrato lógico](contrato-compositor-v1.md) e ao
 [roadmap](roadmap-compositor-rust-internacionalizacao.md).
@@ -17,14 +19,15 @@ compose_document_region(DocumentCompositeJob, output: &mut [u8]) -> Result
 DocumentCompositeJob {
   document_width: u32, document_height: u32,
   region: { x: usize, y: usize, width: usize, height: usize },
-  resolution_scale: f64,
+  resolution_scale: f64, output_grid: Option<DocumentOutputGrid>,
   layers_bottom_to_top: &[DocumentRasterLayer]
 }
 
 DocumentRasterLayer {
   rgba: &[u8], width: usize, height: usize,
   x: i32, y: i32, visible: bool, opacity: f64,
-  blend_mode: Normal | Multiply | Screen | Overlay | Darken | Lighten
+  blend_mode: Normal | Multiply | Screen | Overlay | Darken | Lighten,
+  transform: Option<DocumentAffine>
 }
 ```
 
@@ -40,10 +43,11 @@ tocam não se sobrepõem. Os cálculos de interseção usam `i64`, também no WA
 para não somar origem assinada/dimensões em `usize` e provocar wrap.
 
 `resolution_scale` deve ser exatamente `1.0`: zero, escalas fracionárias,
-ampliação, NaN e infinito retornam `UnsupportedScale`. Não recebe rotação,
-escala da camada ou origem fracionária; nenhum adapter deve arredondar esses
-valores para fazê-los caber na interface. Antes da integração, ampliar o mesmo
-núcleo para transformação/grade global e testar o filtro de reamostragem.
+ampliação, NaN e infinito retornam `UnsupportedScale`. Sem `output_grid`,
+mantém a translação inteira original. A fatia 3 recebe escala de saída em
+`output_grid` e afim em `transform`, sem arredondar coordenadas da camada e
+sem aplicar `resolution_scale` novamente. Ver contrato DCP2 para amostragem,
+cobertura, quotas e paridade/qualidade ainda pendentes antes da integração.
 
 As fontes são **rasters já preparados**, eventualmente com estilos aplicados
 antes pelo executor Rust. Esta fatia não chama esse executor, não aplica Fill
@@ -150,8 +154,9 @@ testes de cada adapter antes de substituir essas chamadas.
 1. Adapter/ABI privada de pilha preparada: implementado na fatia 2 como DCP1,
    runtime e Worker. Scheduler, admission global/revisions e cancelamento
    documental entre tiles ainda pendentes antes de consumidor editorial.
-2. Transformações e amostragem com grade global e `resolution_scale`; fixtures
-   de escalas fracionárias, rotação, bordas e alpha, sem emendas.
+2. Transformações/grade global: primitiva e ABI DCP2 implementadas na fatia 3,
+   com fixtures fracionárias, rotação, bordas e alpha sem emendas. Ainda validar
+   filtro de minificação e paridade tolerante Canvas antes de consumidor real.
 3. Integrar executor de estilos/fill, halos e `Blend If` subjacente sobre o
    backdrop da pilha; congelar ordem/quantizações contra o oráculo.
 4. Integrar um consumidor offscreen atrás de flag e ampliar pelos gates da

@@ -243,5 +243,6 @@ Auditoria da primeira fatia C3 confirmou que a janela nativa atual de estilos
 só envia parâmetros ao editor, sem Worker Rust próprio. Coordenação agregada
 é gate para futuras instâncias concorrentes, não orçamento distribuído já
 implementado. O [núcleo inicial da pilha](contrato-pilha-documental-rust-v1.md)
-está testado em Rust nativo e pela ABI DCP1/WASM/Worker de diagnóstico, mas
-ainda não é usado por este preview.
+está testado em Rust nativo e pela ABI DCP1/WASM/Worker de diagnóstico. A
+[fatia DCP2](contrato-transformacoes-documentais-rust-v1.md) acrescenta afins e
+grade global, mas nenhuma dessas chamadas documentais é usada por este preview.

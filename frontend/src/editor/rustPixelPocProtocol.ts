@@ -88,4 +88,4 @@ export type RustPixelPocResponse =
   | { type: 'source-released'; id: number; sourceId: number }
   | { type: 'cancelled'; id: number }
   | { type: 'disposed'; id: number }
-  | { type: 'error'; id: number; code: 'wasm-unavailable' | 'invalid-input' | 'wasm-failure' | 'memory-limit' }
+  | { type: 'error'; id: number; code: 'wasm-unavailable' | 'invalid-input' | 'wasm-failure' | 'memory-limit' | 'work-limit' }

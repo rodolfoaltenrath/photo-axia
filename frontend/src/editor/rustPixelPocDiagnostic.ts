@@ -71,6 +71,16 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
         [...new Uint8Array(documentPixels.rgba)].join(',') !== '100,150,200,255,78,59,39,255') {
       throw new Error('Worker Rust divergiu na pilha documental DCP1.')
     }
+    const affinePacket = encodeDocumentComposite({ documentWidth: 2, documentHeight: 1,
+      region: { x: 0, y: 0, width: 2, height: 1 }, resolutionScale: 1,
+      outputGrid: { scaleX: 1, scaleY: 1, originX: 0, originY: 0 },
+      layersBottomToTop: [{ rgba: new Uint8Array([30, 60, 90, 255]), width: 1, height: 1,
+        x: 0, y: 0, visible: true, opacity: 100, blendMode: 'normal', sourceToDocument: [1, 0, 0, 1, 0.25, 0] }] })
+    const affinePixels = await send({ type: 'compose-document-region', packet: affinePacket.buffer }, [affinePacket.buffer])
+    if (affinePixels.type !== 'rendered-document-region' || affinePacket.byteLength !== 0 ||
+        [...new Uint8Array(affinePixels.rgba)].join(',') !== '30,60,90,191,30,60,90,64') {
+      throw new Error('Worker Rust divergiu na cobertura fracionária DCP2.')
+    }
     const gate = new RustPixelPocTileGate()
     const observer = new RustPixelPocPreviewObserver(gate)
     const source = new Uint8Array([10, 20, 30, 101, 90, 80, 70, 255])
