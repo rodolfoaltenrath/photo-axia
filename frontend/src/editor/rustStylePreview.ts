@@ -10,6 +10,7 @@ import type { RustPixelPocServiceRequest } from './rustPixelPocStyleService.ts'
 import type { RustPixelPocStyleScheduler, RustPixelPocSchedulerLimits } from './rustPixelPocStyleScheduler.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import { rustStylePriorityValid, type RustStylePriority } from './rustStyleScheduling.ts'
+import type { RustStylePreviewMediaCache } from './rustStylePreviewMediaCache.ts'
 import { RustStylePreviewCancelledError, type LayerStylePreviewRequest, type LayerStylePreviewResult } from './rustStylePreviewProtocol.ts'
 export { RustStylePreviewCancelledError, rustStylePreviewEnabled, type LayerStylePreviewRequest, type LayerStylePreviewResult } from './rustStylePreviewProtocol.ts'
 type Scheduler = Pick<RustPixelPocStyleScheduler, 'renderPrepared' | 'setPriority' | 'cancel' | 'dispose' | 'stats'>
@@ -38,7 +39,8 @@ export function rustStylePreviewPatternAssets(request: LayerStylePreviewRequest)
 
 export interface RustStylePreviewPorts {
   createScheduler(limits: RustPixelPocSchedulerLimits, onChange: () => void): Promise<Scheduler>
-  prepare(request: LayerStylePreviewRequest, signal: AbortSignal): Promise<Pick<RustPixelPocServiceRequest, 'source' | 'patterns'>>
+  prepare(request: LayerStylePreviewRequest, signal: AbortSignal, sourceIdentity: string): Promise<Pick<RustPixelPocServiceRequest, 'source' | 'patterns'>>
+  mediaCache?: Pick<RustStylePreviewMediaCache, 'maxBytes' | 'stats' | 'releaseConsumer' | 'clear'>
   fallback(request: LayerStyleRenderRequest): Promise<LayerStyleRenderResult>
   clock?: () => number
   onChange?: () => void
@@ -52,13 +54,18 @@ export class RustStylePreview {
   private retiring = Promise.resolve()
   private readonly ports: RustStylePreviewPorts
   private readonly clock: () => number
+  private readonly cacheBudgetBytes: number
   private counts = { attempts: 0, rendered: 0, fallbacks: 0, cancelled: 0 }
   private resultLeases = 0
   private resultBytes = 0
   private last: { backend: 'rust' | 'legacy'; fallbackReason: string | null; preparationMs: number;
     renderMs: number; totalMs: number; kernelMs: number | null; encodeMs: number | null } | null = null
 
-  constructor(ports: RustStylePreviewPorts) { this.ports = ports; this.clock = ports.clock ?? (() => performance.now()) }
+  constructor(ports: RustStylePreviewPorts) {
+    this.ports = ports; this.clock = ports.clock ?? (() => performance.now())
+    const bytes = this.cacheBudgetBytes = ports.mediaCache?.maxBytes ?? 0
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > 32 * MiB) throw new RustPixelPocError('invalid-input')
+  }
 
   get stats() {
     const priorities = { active: 0, visible: 0, background: 0 }
@@ -66,6 +73,7 @@ export class RustStylePreview {
     return { ...this.counts, resultLeases: this.resultLeases, retainedResultBytes: this.resultBytes,
       occupied: this.owners.size > 0, consumers: this.owners.size,
       priorities,
+      mediaCache: this.ports.mediaCache?.stats ?? null,
       circuitOpen: !!this.context?.failed || [...this.owners.values()].some(owner => owner.failed),
       backendCircuitOpen: this.context?.failed ?? false,
       service: this.context?.scheduler?.stats ?? null, last: this.last ? { ...this.last } : null }
@@ -122,7 +130,7 @@ export class RustStylePreview {
               inputBytes,
               prepare: async signal => {
                 check()
-                const prepared = await this.ports.prepare(request, signal)
+                const prepared = await this.ports.prepare(request, signal, sourceIdentity)
                 preparationMs = this.clock() - started
                 check()
                 return { ...request, sourceIdentity, ...prepared }
@@ -164,6 +172,7 @@ export class RustStylePreview {
           owner.failed = true
           controller.abort()
           context.scheduler?.cancel(input.consumerId)
+          this.ports.mediaCache?.releaseConsumer(input.consumerId)
           if (fallbackReason === 'wasm-unavailable') { context.failed = true; await this.retireScheduler(context) }
           // The revision still identifies this request after aborting its loaders.
           if (!same()) throw new RustStylePreviewCancelledError()
@@ -202,6 +211,7 @@ export class RustStylePreview {
   releaseConsumer(consumerId: string) {
     if (!this.owners.has(consumerId)) return Promise.resolve()
     this.cancel(consumerId); this.owners.delete(consumerId)
+    this.ports.mediaCache?.releaseConsumer(consumerId)
     let retired = Promise.resolve()
     if (!this.owners.size && this.context) {
       const context = this.context; this.context = undefined
@@ -215,6 +225,7 @@ export class RustStylePreview {
     for (const consumerId of this.owners.keys()) this.cancel(consumerId)
     this.owners.clear()
     const context = this.context; this.context = undefined
+    if (!context) this.ports.mediaCache?.clear()
     const retired = context ? this.retireScheduler(context) : this.retiring
     this.changed()
     return retired
@@ -231,7 +242,7 @@ export class RustStylePreview {
     context.opening = this.retiring.then(() => {
       if (this.context !== context || context.failed) throw new RustStylePreviewCancelledError()
       if (this.resultBytes >= 64 * MiB || this.resultLeases >= 64) throw new RustPixelPocError('memory-limit')
-      return this.ports.createScheduler({ maxResidentBytes: 256 * MiB - this.resultBytes,
+      return this.ports.createScheduler({ maxResidentBytes: 256 * MiB - this.resultBytes - this.cacheBudgetBytes,
         maxResultBytes: 64 * MiB - this.resultBytes, maxLeases: 64 - this.resultLeases }, () => this.changed())
     }).then(scheduler => {
       if (this.context !== context || context.failed) { void scheduler.dispose(); throw new RustStylePreviewCancelledError() }
@@ -242,6 +253,7 @@ export class RustStylePreview {
   }
 
   private retireScheduler(context: Context) {
+    this.ports.mediaCache?.clear()
     const disposed = context.scheduler?.dispose() ?? Promise.resolve()
     context.scheduler = undefined
     this.retiring = Promise.all([this.retiring, disposed]).then(() => {})

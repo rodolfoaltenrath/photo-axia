@@ -164,8 +164,8 @@ test('Fila limitada rejeita novo consumidor sem retirar o ativo ou impedir subst
 })
 
 test('Orçamento agrega ativo e entradas de todas as camadas; rejeição não cancela vizinhos', async () => {
-  const request = input(), fixtureText = await rustMediaBlob().text()
-  request.source = { type: 'raster', blob: new Blob([fixtureText, ' '.repeat(2000 - fixtureText.length)]) }
+  const request = input(), media = rustMediaBlob()
+  request.source = { type: 'raster', blob: new Blob([media, ' '.repeat(2000 - media.size)]) }
   const charge = snapshotRustPixelPocStyleRequest(request).inputBytes + 2
   const f = fixture({ holdEncoding: true }, { maxResidentBytes: workingBytes + charge * 2 })
   try {

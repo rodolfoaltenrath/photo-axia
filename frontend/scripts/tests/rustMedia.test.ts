@@ -40,6 +40,7 @@ test('Decode obsoleto fecha bitmap sem readback; erro de readback também limpa 
     const result = decodeRustStyleSource({ type: 'raster', blob: rustMediaBlob() }, layout, () => {
       if (!current) throw new RustPixelPocError('invalid-input')
     })
+    while (!state.decodes) await new Promise(resolve => setImmediate(resolve))
     current = false; unblock()
     await assert.rejects(result, errorCode('invalid-input'))
     assert.equal(state.closes, 1); assert.equal(state.reads, 0); assert.equal(state.canvases.length, 0)
@@ -93,7 +94,7 @@ test('Assets sem Blob, inconsistentes, grandes ou com dimensões reais diferente
     assert.throws(() => prepareRustStyleAssets(conflict, { pattern: rustMediaBlob() }), errorCode('invalid-input'))
     const mismatched = prepareRustStyleAssets(assetLayout, { pattern: rustMediaBlob({ width: 2 }) })
     await assert.rejects(decodeRustStyleAssets(mismatched, noop), errorCode('invalid-input'))
-    assert.equal(state.decodes, 1); assert.equal(state.closes, 1); assert.equal(state.reads, 0)
+    assert.equal(state.decodes, 0); assert.equal(state.closes, 0); assert.equal(state.reads, 0)
   } finally { restore() }
 })
 
@@ -143,4 +144,71 @@ test('Fila serial limita pendências e se recupera de falha sem bloquear o próx
   await rejection; assert.deepEqual(await Promise.all(next), [1, 2, 3, 4, 5, 6, 7])
   assert.deepEqual(order, [0, 1, 2, 3, 4, 5, 6, 7])
   assert.equal(await queue.run(async () => 8), 8)
+})
+
+test('Fonte intrínseca enorme não chega ao decoder mesmo se o preview solicitado for pequeno', async () => {
+  const { state, restore } = installRustMediaFixtures()
+  try {
+    for (const size of [{ width: 4097, height: 4096 }, { width: 16_385, height: 1 }]) {
+      await assert.rejects(decodeRustStyleSource({ type: 'raster', blob: rustMediaBlob(size) }, layout, noop), errorCode('memory-limit'))
+    }
+    assert.equal(state.decodes, 0); assert.equal(state.canvases.length, 0)
+    assert.equal((await decodeRustStyleSource({ type: 'raster', blob: rustMediaBlob() }, layout, noop)).data[0], 40)
+    assert.equal(state.decodes, 1); assert.equal(state.closes, 1)
+  } finally { restore() }
+})
+
+test('Orçamento de decode soma origem intrínseca, bitmap redimensionado, canvas e readback', async () => {
+  const { state, restore } = installRustMediaFixtures()
+  try {
+    const bigger = prepareRustStyleSourceLayout({ ...input, sourceWidth: 2048, sourceHeight: 2048 })
+    await assert.rejects(decodeRustStyleSource({ type: 'raster', blob: rustMediaBlob({ width: 4096, height: 4096 }) }, bigger, noop), errorCode('memory-limit'))
+    assert.equal(state.decodes, 0); assert.equal(state.canvases.length, 0)
+    await decodeRustStyleSource({ type: 'raster', blob: rustMediaBlob({ width: 4096, height: 4096 }) }, layout, noop)
+    assert.equal(state.decodes, 1); assert.equal(state.reads, 1)
+  } finally { restore() }
+})
+
+test('Padrão com cabeçalho enorme ou incompatível falha antes do decoder', async () => {
+  const { state, restore } = installRustMediaFixtures()
+  try {
+    for (const [size, code] of [[{ width: 8192, height: 8192 }, 'memory-limit'], [{ width: 2, height: 1 }, 'invalid-input']] as const) {
+      await assert.rejects(decodeRustStyleAssets(prepareRustStyleAssets(assetLayout, { pattern: rustMediaBlob(size) }), noop), errorCode(code))
+    }
+    assert.equal(state.decodes, 0); assert.equal(state.reads, 0)
+    assert.equal((await decodeRustStyleAssets(prepareRustStyleAssets(assetLayout, { pattern: rustMediaBlob() }), noop)).size, 1)
+  } finally { restore() }
+})
+
+test('Cabeçalho desconhecido não invoca decoder; MIME incorreto não impede PNG reconhecido', async () => {
+  const { state, restore } = installRustMediaFixtures()
+  try {
+    await assert.rejects(decodeRustStyleSource({ type: 'raster', blob: new Blob(['<svg/>'], { type: 'image/png' }) }, layout, noop), errorCode('invalid-input'))
+    assert.equal(state.decodes, 0)
+    await decodeRustStyleSource({ type: 'raster', blob: new Blob([rustMediaBlob()], { type: 'application/octet-stream' }) }, layout, noop)
+    assert.equal(state.decodes, 1)
+  } finally { restore() }
+})
+
+test('Bitmap que ignora resize é fechado sem criar canvas; padrão confere dimensões reais', async () => {
+  const { state, restore } = installRustMediaFixtures()
+  try {
+    globalThis.createImageBitmap = (async () => ({ width: 2, height: 2, close() { state.closes++ } })) as unknown as typeof createImageBitmap
+    await assert.rejects(decodeRustStyleSource({ type: 'raster', blob: rustMediaBlob() }, layout, noop), errorCode('invalid-input'))
+    await assert.rejects(decodeRustStyleAssets(prepareRustStyleAssets(assetLayout, { pattern: rustMediaBlob() }), noop), errorCode('invalid-input'))
+    assert.equal(state.closes, 2); assert.equal(state.canvases.length, 0)
+  } finally { restore() }
+})
+
+test('Axes trocados no cabeçalho permitem EXIF mas não dispensam validação após decode', async () => {
+  const { state, restore } = installRustMediaFixtures()
+  try {
+    const rotatedLayout = prepareRustStyleSourceLayout({ ...input, styles: normalizeLayerStyleConfig({ effects: [
+      { type: 'pattern-overlay', pattern: { ...pattern, width: 2, height: 1 } }
+    ] }) })
+    const prepared = prepareRustStyleAssets(rotatedLayout, { pattern: rustMediaBlob({ width: 1, height: 2 }) })
+    await assert.rejects(decodeRustStyleAssets(prepared, noop), errorCode('invalid-input'))
+    globalThis.createImageBitmap = (async () => ({ width: 2, height: 1, rgba: [1, 2, 3, 255], close() { state.closes++ } })) as unknown as typeof createImageBitmap
+    assert.equal((await decodeRustStyleAssets(prepared, noop)).get('pattern')!.width, 2)
+  } finally { restore() }
 })

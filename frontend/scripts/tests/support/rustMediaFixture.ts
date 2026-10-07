@@ -7,7 +7,14 @@ export interface RustMediaFixture {
 }
 
 export function rustMediaBlob(fixture: Partial<RustMediaFixture> = {}) {
-  return new Blob([JSON.stringify({ width: 1, height: 1, rgba: [40, 60, 80, 255], ...fixture })], { type: 'application/json' })
+  const media = { width: 1, height: 1, rgba: [40, 60, 80, 255], ...fixture }
+  const header = new Uint8Array(33), view = new DataView(header.buffer)
+  header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  view.setUint32(8, 13); view.setUint32(12, 0x49484452)
+  view.setUint32(16, media.width); view.setUint32(20, media.height)
+  header[24] = 8; header[25] = 6
+  // Header plus JSON is a decoder fixture, not a valid PNG.
+  return new Blob([header, JSON.stringify(media)], { type: 'image/png' })
 }
 
 /** Canvas/decoder doubles only; real PNG coverage lives in the WebView smoke. */
@@ -59,7 +66,7 @@ export function installRustMediaFixtures(options: { encodeDelayMs?: number; fail
   globalThis.OffscreenCanvas = Canvas as unknown as typeof OffscreenCanvas
   globalThis.createImageBitmap = (async (blob: Blob, options?: ImageBitmapOptions) => {
     state.decodes++; state.options.push(options)
-    const fixture: RustMediaFixture = JSON.parse(await blob.text())
+    const fixture: RustMediaFixture = JSON.parse(await blob.slice(33).text())
     if (state.block) await state.block
     if (fixture.delayMs) await new Promise(resolve => setTimeout(resolve, fixture.delayMs))
     return { ...fixture, width: options?.resizeWidth ?? fixture.width, height: options?.resizeHeight ?? fixture.height,

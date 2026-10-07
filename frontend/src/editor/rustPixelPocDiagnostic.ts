@@ -8,6 +8,7 @@ import { RustPixelPocStyleSession } from './rustPixelPocStyleSession.ts'
 import { DEFAULT_TEXT_LAYER } from './text.ts'
 import { createRustPixelPocStyleService } from '../services/rustPixelPocStyleService.ts'
 import { RustPixelPocStyleCancelledError } from './rustPixelPocStyleSession.ts'
+import { RustPixelPocError } from './rustPixelPocError.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
@@ -38,7 +39,7 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
       function onMessage(event: MessageEvent<RustPixelPocResponse>) {
         if (event.data.id !== id) return
         cleanup()
-        if (event.data.type === 'error') reject(new Error(`Worker Rust: ${event.data.code}`))
+        if (event.data.type === 'error') reject(new RustPixelPocError(event.data.code))
         else resolve(event.data)
       }
       function onError(event: ErrorEvent) {
@@ -397,6 +398,18 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     const mediaRequest = { ...preparedRequest, sourceIdentity: 'png-diagnostic-v1', source: async () => {
       mediaLoads++; return { type: 'raster' as const, blob: mediaBlob }
     } }
+    const largeHeader = new Uint8Array(await mediaBlob.slice(0, 33).arrayBuffer())
+    new DataView(largeHeader.buffer).setUint32(16, 8192)
+    new DataView(largeHeader.buffer).setUint32(20, 8192)
+    const largeMedia = new Blob([largeHeader], { type: 'image/png' })
+    for (const [blob, code] of [[largeMedia, 'memory-limit'], [new Blob(['<svg/>']), 'invalid-input']] as const) {
+      try {
+        await mediaSession.composeMedia({ ...mediaRequest, source: async () => ({ type: 'raster' as const, blob }) })
+        throw new Error('Worker aceitou cabeçalho intrínseco inseguro.')
+      } catch (error) {
+        if (!(error instanceof RustPixelPocError) || error.code !== code) throw error
+      }
+    }
     const media = await mediaSession.composeMedia(mediaRequest)
     if (media.width !== prepared.width || media.offsetX !== prepared.offsetX ||
         [...new Uint8Array(media.rgba)].join(',') !== '255,0,0,255,0,0,255,128') {
@@ -442,6 +455,12 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     const assetRequest = { ...mediaRequest, styles: normalizeLayerStyleConfig({ fillOpacity: 0,
       effects: [{ type: 'pattern-overlay', pattern: mediaPattern, opacity: 100 }] }) }
     const red = await mediaSession.composeMedia({ ...assetRequest, patterns: { [mediaPattern.id]: assetBlob } })
+    try {
+      await mediaSession.composeMedia({ ...assetRequest, patterns: { [mediaPattern.id]: largeMedia } })
+      throw new Error('Worker aceitou padrão intrínseco inseguro.')
+    } catch (error) {
+      if (!(error instanceof RustPixelPocError) || error.code !== 'memory-limit') throw error
+    }
     const green = await mediaSession.composeMedia({ ...assetRequest, patterns: { [mediaPattern.id]: await pngFixture([0, 255, 0, 255]) } })
     if (red.sourceId !== green.sourceId || [...new Uint8Array(red.rgba)].join(',') !== '255,0,0,255' ||
         [...new Uint8Array(green.rgba)].join(',') !== '0,255,0,255') {
@@ -464,6 +483,23 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     if (encodedText.sourceId !== text.sourceId ||
         !(await readPng(encodedText.blob, 120, 58)).some((value, index) => index % 4 === 3 && value > 0)) {
       throw new Error('Worker Rust codificou texto vazio ou perdeu reuso da fonte.')
+    }
+    const jpegCanvas = new OffscreenCanvas(1, 1)
+    let jpegBlob: Blob
+    try {
+      const context = jpegCanvas.getContext('2d')!
+      context.fillStyle = '#ff0000'; context.fillRect(0, 0, 1, 1)
+      jpegBlob = await jpegCanvas.convertToBlob({ type: 'image/jpeg', quality: 1 })
+    } finally { jpegCanvas.width = 1; jpegCanvas.height = 1 }
+    const gifBlob = new Blob([Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), value => value.charCodeAt(0))], { type: 'image/gif' })
+    for (const [blob, identity] of [[jpegBlob, 'jpeg'], [gifBlob, 'gif']] as const) {
+      const result = await mediaSession.composeMedia({ ...mediaRequest, sourceIdentity: identity,
+        styles: normalizeLayerStyleConfig({}), source: async () => ({ type: 'raster' as const, blob }) })
+      const pixels = new Uint8Array(result.rgba)
+      if (result.width !== 1 || result.height !== 1 || (identity === 'jpeg'
+        ? pixels[0]! < 250 || pixels[1]! > 5 || pixels[2]! > 5 || pixels[3] !== 255 : pixels[3] !== 0)) {
+        throw new Error(`Worker divergiu no decode real de ${identity}.`)
+      }
     }
     await mediaSession.dispose()
     const disposed = await send({ type: 'dispose' })

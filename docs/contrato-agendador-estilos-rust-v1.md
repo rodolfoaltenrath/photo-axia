@@ -213,3 +213,15 @@ lazy e encaminha mudanças à fila sem render novamente. O canvas calcula relev�
 com geometria/halo conservadores; não suprime pedidos fora da tela. Camadas ocultas
 continuam no lifecycle anterior de unmount. Cache/eviction, limites intrínsecos,
 orçamento entre janelas, medições e QA ainda faltam. C0/C1/C2 continuam abertos.
+
+## 10. Atualização da 27ª fatia — orçamento com cache externo
+
+O [cache codificado do preview](contrato-cache-midia-preview-rust-v1.md) fica fora
+do agendador. Sua capacidade de 32 MiB é descontada pela factory do preview,
+que passa 224 MiB ao serviço, menos PNGs antigos. A fila continua cobrando os
+Blobs emprestados como entrada, mesmo se também estiverem no cache; a conta
+é conservadora. Cache não altera capacidade de fila, prioridades, drenagem,
+watchdogs ou leases. `stats.reservedBytes` do agendador não inclui cache externo;
+o diagnóstico do adaptador expõe seus bytes/capacidade separadamente.
+Eviction não cancela pedido nem encerra Worker. Cache decodificado e orçamento
+entre janelas continuam pendentes; esta atualização não fecha C0/C1/C2.

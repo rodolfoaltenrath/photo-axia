@@ -196,3 +196,38 @@ test('Preflight da sessão rejeita região/assets antes do loader e compartilha 
     assert.equal(loads, 1)
   } finally { await session.dispose(); await harness.close() }
 })
+
+test('Worker rejeita origem intrínseca grande/indeterminada e permite staging válido depois', async () => {
+  const harness = createRustPixelWorkerHarness({ mediaFixtures: true }), { send } = harness
+  let generation = 0
+  try {
+    await send({ type: 'init', wasm: wasm.slice(0) })
+    for (const [blob, code] of [[rustMediaBlob({ width: 8192, height: 8192 }), 'memory-limit'],
+      [new Blob(['<svg/>'], { type: 'image/png' }), 'invalid-input']] as const) {
+      const result = await send({ type: 'stage-style-media', input, source: { type: 'raster', blob }, generation: ++generation })
+      assert.ok(result.type === 'error' && result.code === code)
+    }
+    const staged = await send({ type: 'stage-style-media', input, source: { type: 'raster', blob: rustMediaBlob() }, generation: ++generation })
+    assert.ok(staged.type === 'source-staged')
+    const rendered = await send({ type: 'style-media-staged-region', input, sourceId: staged.sourceId, region, patterns: {} })
+    assert.ok(rendered.type === 'rendered-staged-region')
+    assert.deepEqual([...new Uint8Array(rendered.rgba)], [40, 60, 80, 255])
+  } finally { await harness.close() }
+})
+
+test('Worker rejeita padrão intrínseco grande sem invalidar fonte preparada ou fila', async () => {
+  const harness = createRustPixelWorkerHarness({ mediaFixtures: true }), { send } = harness
+  try {
+    await send({ type: 'init', wasm: wasm.slice(0) })
+    const staged = await send({ type: 'stage-style-media', input, source: { type: 'raster', blob: rustMediaBlob() }, generation: 1 })
+    assert.ok(staged.type === 'source-staged')
+    const styled = { ...input, styles: normalizeLayerStyleConfig({ effects: [{ type: 'pattern-overlay', pattern }] }) }
+    const failed = await send({ type: 'style-media-staged-region', input: styled, sourceId: staged.sourceId, region,
+      patterns: { pattern: rustMediaBlob({ width: 8192, height: 8192 }) } })
+    assert.ok(failed.type === 'error' && failed.code === 'memory-limit')
+    const recovered = await send({ type: 'style-media-staged-region', input: styled, sourceId: staged.sourceId, region,
+      patterns: { pattern: rustMediaBlob({ rgba: [7, 8, 9, 255] }) } })
+    assert.ok(recovered.type === 'rendered-staged-region')
+    assert.equal(recovered.sourceId, staged.sourceId); assert.deepEqual([...new Uint8Array(recovered.rgba)], [7, 8, 9, 255])
+  } finally { await harness.close() }
+})

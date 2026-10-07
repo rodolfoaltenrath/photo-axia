@@ -6,6 +6,7 @@ import type { LayerStyleWorkerSource } from './layerStyleRenderProtocol.ts'
 import type { RustPixelPocStyleSourceLayout } from './rustPixelPocStylePreparation.ts'
 import type { LayerStylePatternAsset } from '../types/editor.ts'
 import type { RustPixelPocPatternRaster } from './rustPixelPocRuntime.ts'
+import { readRustStyleImageDimensions } from './rustStyleImageHeader.ts'
 
 const MAX_ENCODED_BYTES = 64 * 1024 * 1024
 const MAX_WORKING_BYTES = 96 * 1024 * 1024
@@ -35,9 +36,14 @@ export async function decodeRustStyleSource(source: LayerStyleWorkerSource,
   let canvas: OffscreenCanvas | undefined
   try {
     if (source.type === 'raster') {
+      const intrinsic = await readRustStyleImageDimensions(source.blob, ensureCurrent)
+      if (intrinsic.bytes + 3 * layout.sourceWidth * layout.sourceHeight * 4 > MAX_WORKING_BYTES) {
+        throw new RustPixelPocError('memory-limit')
+      }
       bitmap = await bitmapFrom(source.blob, { resizeWidth: layout.sourceWidth, resizeHeight: layout.sourceHeight,
         resizeQuality: layout.quality === 'interactive' ? 'medium' : 'high' })
       ensureCurrent()
+      if (bitmap.width !== layout.sourceWidth || bitmap.height !== layout.sourceHeight) throw new RustPixelPocError('invalid-input')
     }
     canvas = new OffscreenCanvas(layout.sourceWidth, layout.sourceHeight)
     const context = canvas.getContext('2d', { alpha: true, willReadFrequently: true })
@@ -116,6 +122,10 @@ export async function decodeRustStyleAssets(prepared: ReturnType<typeof prepareR
   if (prepared.entries.length) validatePlatform(true)
   for (const { asset, blob } of prepared.entries) {
     ensureCurrent()
+    const intrinsic = await readRustStyleImageDimensions(blob, ensureCurrent)
+    // EXIF may swap axes; the decoded bitmap must still match exactly.
+    if (!(intrinsic.width === asset.width && intrinsic.height === asset.height) &&
+        !(intrinsic.width === asset.height && intrinsic.height === asset.width)) throw new RustPixelPocError('invalid-input')
     const bitmap = await bitmapFrom(blob)
     let canvas: OffscreenCanvas | undefined
     try {

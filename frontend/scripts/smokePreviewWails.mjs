@@ -401,7 +401,11 @@ try {
         value.stats.service?.active === 0 && value.stats.service?.pending === 0), 'Preview multicamadas')
     assert.equal(multicamadas.workers.created, rustFallback ? 0 : 1)
     assert.equal(multicamadas.workers.peak, rustFallback ? 0 : 1)
-    if (!rustFallback) assert.equal(multicamadas.stats.fallbacks, 0)
+    if (!rustFallback) {
+      assert.equal(multicamadas.stats.fallbacks, 0)
+      assert.equal(multicamadas.stats.mediaCache.entries, 3)
+      assert.ok(multicamadas.stats.mediaCache.bytes > 0 && multicamadas.stats.mediaCache.bytes <= 32 * 1024 * 1024)
+    }
     const extras = multicamadas.layers.filter(layer => layer.id !== layerId)
     const removedId = extras[0].id, remainingId = extras[1].id
     let remainingSource = extras[1].source
@@ -474,12 +478,17 @@ try {
     })()`, value => value?.changed && value.ready && value.stats.resultLeases === (rustFallback ? 0 : 2), 'Edição isolada com handoff')
     assert.equal(updated.otherSource, remainingSource, 'Editar A modificou o buffer da outra camada.')
     assert.equal(updated.stats.last.backend, rustFallback ? 'legacy' : 'rust')
+    if (!rustFallback) {
+      assert.ok(updated.stats.mediaCache.hits > restored.stats.mediaCache.hits, 'Edição de estilo não reusou mídia codificada.')
+      assert.equal(updated.stats.mediaCache.loads, restored.stats.mediaCache.loads, 'Edição de estilo buscou a fonte novamente.')
+    }
     assert.equal(await evaluate('window.__axiaRustWorkers.created'), rustFallback ? 0 : 1)
     await removeLayer(remainingId)
     await waitFor(evaluate, 'JSON.parse(document.documentElement.dataset.axiaRustStylePreview || "null")',
       value => value?.consumers === 1 && value.resultLeases === (rustFallback ? 0 : 1), 'Última camada estilizada')
     rustMultilayer = { consumers: multicamadas.stats.consumers, leases: multicamadas.stats.resultLeases,
-      workers: multicamadas.workers, partialConsumers: partial.consumers, isolatedUpdate: true }
+      workers: multicamadas.workers, partialConsumers: partial.consumers, isolatedUpdate: true,
+      mediaCache: updated.stats.mediaCache }
   }
   let rustCleanup = null
   if (rustMode) {
@@ -505,6 +514,7 @@ try {
       'JSON.parse(document.documentElement.dataset.axiaRustStylePreview || "null")',
       value => value && !value.occupied && value.resultLeases === 0, 'Liberação das leases no unmount')
     await waitFor(evaluate, 'window.__axiaRustWorkers.alive', value => value === 0, 'Término do Worker compartilhado')
+    assert.equal(rustCleanup.mediaCache.entries, 0); assert.equal(rustCleanup.mediaCache.bytes, 0)
   }
   process.stdout.write(`${JSON.stringify({ status: 'pass', browser: browserVersion,
     platform: process.platform, osRelease: release(), cpu: cpus()[0]?.model,

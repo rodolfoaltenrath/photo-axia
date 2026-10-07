@@ -2280,3 +2280,118 @@ do [agendador V1](contrato-agendador-estilos-rust-v1.md). C0/C1/C2 continuam
 abertos. Faltam cache/assets, limites intrínsecos, orçamento entre janelas,
 medições e QA; C3/C4 não substituíram composição documental ou DOM. Texto,
 exportação, idioma e renderização padrão permanecem no caminho atual.
+
+## 27ª fatia — Cache bounded de mídia codificada no preview — 2026-10-07
+
+O preview experimental agora reutiliza Blobs codificados de fontes/padrões.
+Fonte usa consumidor/versão compacta/URL; padrão usa assetId/URL/dimensões.
+Só blob/data são retidos; texto, Blob direto e URLs mutáveis ficam sem retenção.
+LRU tem 32 MiB/64 entradas, incluindo metadados UTF-16. Uma entrada que não cabe
+continua renderizável, sem ser guardada. Hit não contorna abort/limite restante
+ou soma de assets. Erros não envenenam cache; clear/release/época e fill mais
+recente impedem retenção tardia. Record de assets não tem protótipo, preservando
+IDs especiais como propriedades próprias.
+
+A capacidade máxima do cache é descontada dos 256 MiB anteriores: factory
+passa 224 MiB ao serviço, menos PNGs de contexto retirado. Não aumenta orçamento
+nem finge que entrada emprestada deixou de existir. Eviction/clear não revogam
+Blobs de trabalho, URLs editoriais ou PNGs publicados. Não há cache RGBA/Canvas/
+resultado final; cada edição de estilo ainda calcula efeitos e gera PNG novo.
+
+Validação local:
+
+- `npm test`: **573** casos frontend, incluindo checagem de tipos. Preview tem
+  **29** casos; cache tem **11**; preparação tem **seis**. Cobrem LRU por bytes/
+  quantidade, metadados, versão/URL, protocolo mutável, limites/abort em hit,
+  fills tardios, empréstimo, reserva de orçamento, circuitos e soma de assets.
+- `npm run test:rust-poc`: **353** casos — cinco standalone, um smoke Worker
+  e **347** scripts. A nova suíte tem **quatro** casos de cache integrado ao
+  Worker/WASM reais com doubles explícitos de mídia/Canvas/encoder: edição de
+  efeito muda pixels com uma leitura; padrão compartilha bytes sem alias de
+  camada; conteúdo editado invalida leitura; troca de contexto descarta fonte
+  antiga. PNG publicado continua válido depois de dispose.
+- Preview/cache/preparação/Worker cache/agendador (**79** casos) passaram
+  **cinco vezes consecutivas**. Repetições são checks de estabilidade, não FPS.
+- `cargo test --offline --locked`: **61** nativos; `go test ./...` passou.
+  Rust/ABI/goldens/versões da stack não mudaram.
+- Build e integridade do bundle passaram; WASM permanece **100.281 bytes**,
+  `axia_pixel_core-674Kws7T.wasm`, e Workers Rust/padrão mantêm artefatos.
+  Runtime é lazy/opt-in, sem preload experimental no HTML padrão. O aviso
+  existente de chunk >500 kB permanece.
+- Smokes Wails/WebView2 **Rust, WASM bloqueado e padrão** passaram. Rust teve
+  uma criação/pico de um Worker, três camadas, remoção parcial, ocultar/mostrar,
+  seleção/pan sem novo render e edição isolada sem mexer no raster intocado.
+  Na edição de estilo, cache ganhou **um hit**, sem aumentar as **quatro leituras**
+  acumuladas do fluxo (três fontes iniciais + remontagem da camada mostrada).
+  Ao fim, zero consumidores/leases/bytes/Workers e zero entradas/bytes de cache.
+- Com WASM bloqueado houve uma tentativa experimental, cinco fallbacks, zero
+  Workers Rust e cache limpo após falha comum/final. A primeira aplicação mudou
+  **3.176** pixels no screenshot sintético nos três caminhos, sem perder o buffer
+  ativo. O smoke não compara todas as combinações, não mede RSS e não demonstra
+  ganho percentual de desempenho. Executáveis são temporários, sem novo release.
+
+Contrato no [cache de mídia V1](contrato-cache-midia-preview-rust-v1.md), com
+preview/agendador/roadmap atualizados. C0/C1/C2 continuam abertos. Próximos passos:
+limites intrínsecos, medir decode antes de decidir cache decodificado, orçamento
+entre janelas e matriz/QA. C3/C4 ainda não substituíram compositor documental,
+DOM ou exportação. Esta fatia reduz releituras, não transfere mais algoritmos
+para Rust nem altera texto/idioma/renderização padrão.
+
+## 28ª fatia — dimensões intrínsecas antes do decode (2026-10-07)
+
+O Worker verifica cabeçalhos PNG/JPEG/GIF em leitura de até **256 KiB**, sem
+confiar no MIME ou no tamanho editorial solicitado. Eixos acima de **16.384**,
+RGBA lógico acima de **64 MiB** e `intrinsicBytes + 3 × outputSourceBytes` acima
+de **96 MiB** são rejeitados antes de `createImageBitmap`. Padrões conferem o
+cabeçalho contra as dimensões declaradas (permitindo eixos trocados por EXIF)
+e continuam exigindo dimensões exatas do bitmap depois do decode. Fonte que
+ignora resize também falha antes de canvas/readback.
+
+Cabeçalho indeterminado/truncado ou formato não coberto usa `invalid-input` e
+fallback local. Isso pode restringir JPEG com SOF depois do limite; não amplia
+formatos nem muda importação/preview padrão. Não é sandbox de arquivos nem
+teto de RSS: decoder/frames de animação, memória interna e legado não recebem
+garantia de consumo. Fonte/texto/padding/leases preservam os limites anteriores.
+
+Testes do Worker comprovam recuperação após falha de staging (com nova geração)
+e rejeição de padrão sem perder a fonte staged. Integração preview/cache/Worker
+abre circuito apenas da camada grande, retira sua mídia e conserva outra camada
+no mesmo Worker. Remontar o consumidor permite nova tentativa. Doubles agora
+usam cabeçalho PNG mais JSON, **não um PNG completo**, deixando explícita a
+diferença em relação ao diagnóstico nativo.
+
+Validação local:
+
+- `npm test`: **581** casos frontend com tipos, incluindo oito testes novos de
+  cabeçalhos, limites inclusivos, segmentos/prefixos truncados, MIME enganoso,
+  leitura bounded, SOF tardio e cancelamento.
+- `npm run test:rust-poc`: **362** casos — cinco standalone, um smoke Worker e
+  **356** scripts. Nove casos adicionais cobrem decode/memória/recuperação e
+  fallback isolado. Nenhuma alteração nos kernels Rust ou ABI.
+- Cabeçalhos/mídia/Worker/cache integrado (**39** casos) passaram **cinco vezes
+  consecutivas**. São checks de estabilidade, não medições de desempenho.
+- `cargo test --offline --locked`: **61** nativos; `go test ./...` passou.
+- Build e integridade do bundle passaram. WASM continua **100.281 bytes**,
+  `axia_pixel_core-674Kws7T.wasm`; Worker Rust agora é
+  `rustPixelPoc.worker-DLlWnLSE.js`. Worker legado mantém o artefato anterior.
+  O aviso conhecido de chunk >500 kB continua, sem novo preload do experimento.
+- Diagnóstico **Wails/WebView2** passou: cabeçalho de fonte/padrão enorme retorna
+  `memory-limit` antes do decoder; cabeçalho desconhecido retorna `invalid-input`;
+  PNG real seguinte recupera a sessão; padrão inválido conserva a fonte. JPEG
+  real gerado pelo browser usa tolerância de cor explícita e GIF transparente
+  real preserva alfa. O RPC de diagnóstico agora preserva a classe/código de
+  erro como o cliente de produção, para distinguir as rejeições esperadas.
+- Smokes de preview **Rust, WASM bloqueado e padrão** passaram em
+  Edge/WebView2 **154.0.4258.62**. Rust teve uma criação/pico de um Worker para
+  três camadas, seleção/pan sem novo render, ocultar/mostrar e edição isolada.
+  Um hit no cache sem novas leituras; cleanup zerou consumidores, leases,
+  Workers e cache. WASM bloqueado preservou os cinco fallbacks/zero Workers Rust.
+  Nos três caminhos, **3.176** pixels mudaram no screenshot sintético e nenhum
+  buffer ativo foi perdido. Não é benchmark de FPS/RSS nem matriz visual completa.
+
+Contrato no [limite de decode V1](contrato-limites-decode-preview-rust-v1.md),
+com preview/cache/roadmap atualizados. C0/C1/C2 continuam abertos: medir decode,
+decidir cache decodificado com evidência, orçamento entre janelas e QA real.
+C3/C4 ainda não substituíram compositor de documento/DOM/exportação. Stack,
+texto, idioma, `.axia` e versões permanecem; os executáveis dos smokes são
+temporários, não novo instalador/portável.

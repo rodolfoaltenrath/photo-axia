@@ -1,6 +1,6 @@
 # Preview real de estilos Rust — integração experimental V1
 
-## 1. Alcance — atualização da 26ª fatia
+## 1. Alcance — atualização da 28ª fatia
 
 O serviço da [22ª fatia](contrato-servico-estilos-rust-v1.md) agora atende um
 consumidor real: `useLayerStyleRaster` no canvas. O PNG é produzido pelos passes
@@ -12,6 +12,11 @@ A 23ª fatia atendia um dono por janela. A 24ª criou o
 várias camadas reais à mesma instância, incluindo preparação serializada antes
 do fetch e smoke multicamadas Wails. A composição final ainda é DOM, não Rust.
 Na 26ª, a fila recebe prioridades do canvas, atualizadas sem reiniciar render.
+A 27ª acrescenta [cache LRU de mídia codificada](contrato-cache-midia-preview-rust-v1.md),
+reservado dentro do orçamento anterior, sem cache de RGBA ou de resultado final.
+A 28ª acrescenta [limites intrínsecos antes do decode](contrato-limites-decode-preview-rust-v1.md)
+para fontes/padrões PNG/JPEG/GIF. Dimensões indeterminadas ou acima do orçamento
+usam fallback local sem invocar o decoder Rust; isso não limita o RSS do legado.
 
 A integração permanece **desligada por padrão**. Ativação explícita:
 
@@ -49,7 +54,7 @@ conservadora evitam rebaixar efeitos próximos da borda; geometria indefinida fi
 no nível visível. Trata-se de prioridade, **não culling**: conteúdo fora da tela
 continua elegível. Tiles/suspensão regional pertencem a C4. Camadas ocultas já não
 eram montadas pelo canvas; seu unmount continua cancelando/liberando o consumidor.
-Ao mostrar, a montagem solicita a versão atual, sem cache editorial novo.
+Ao mostrar, a montagem solicita a versão atual, sem conservar a fonte do dono oculto.
 
 Seleção/pan só atualizam prioridade; não entram no watcher de pixels/estilos,
 não alteram identidade, reserva, URL ou lease, nem buscam mídia novamente.
@@ -89,9 +94,12 @@ interrompe/cancela o corpo assim que ultrapassa o limite, inclusive com header
 ausente/incorreto. Cada Blob e a soma dos assets têm limite de 64 MiB.
 
 Metadados/efeitos/insets/geometria/PNG e limites de buffers seguem os contratos
-do serviço/Worker. A reserva agregada padrão é 256 MiB. Não cobre cópias internas
+do serviço/Worker. A reserva agregada padrão continua em 256 MiB: capacidade de
+32 MiB do cache é descontada do serviço (224 MiB, menos PNGs de contextos antigos).
+Blobs emprestados à entrada também são cobrados pelo serviço, conservadoramente.
+Não cobre cópias internas
 de rede/stream/Blob/Canvas, heap real, URLs editoriais já existentes, memória WASM
-já crescida ou imagem intrínseca antes de resize. Limites intrínsecos, caches,
+já crescida ou imagem intrínseca antes de resize. Limites intrínsecos, caches decodificados,
 processamento legado e orçamento entre janelas continuam pendentes. Não é RSS.
 
 ## 3. Identidade, cache e paridade
@@ -108,8 +116,12 @@ do pedido. Remontar uma camada com o mesmo ID não reutiliza versão antiga.
 O agendador também separa identidades por consumidor; só existe um slot staged,
 portanto alternar camadas exige staging, não cache de fontes por camada. PNGs
 Rust não entram no cache compartilhado legado ou no cache de decoded de
-exportação. Não há cache adicional de PNG/padrão no adaptador, nem resultado
-Rust disfarçado de hit legado. Renderização integral de uma camada usa a mesma
+exportação. O cache de mídia guarda fonte por consumidor/versão compacta/URL e
+padrões por assetId/URL/dimensões; até 64 entradas e 32 MiB incluindo metadados.
+Só blob/data são retidos; fonte direta/texto não entram. Edição de conteúdo
+invalida fonte mesmo com URL igual. Clear/release/abort impedem fills tardios.
+Não há cache adicional de PNG/RGBA no adaptador, nem resultado
+Rust disfarçado de hit legado; fromCache continua false. Renderização integral de uma camada usa a mesma
 sessão regional já testada; tiles do viewport são um passo posterior.
 
 Texto com traçado nativo continua no caminho vetorial existente e pode nem
@@ -159,7 +171,7 @@ O motivo está no diagnóstico; não colocar texto, URL ou conteúdo do document
 Somente com o caminho opt-in carregado, `data-axia-rust-style-preview` no elemento
 raiz guarda um snapshot limitado: tentativas/renders/fallbacks/cancelamentos,
 consumidores e contagem por prioridade, circuito local/comum, leases/bytes publicados (inclusive antigos),
-contas do agendador, preparação/fila ativa e último backend/motivo.
+contas do agendador, preparação/fila ativa, cache codificado e último backend/motivo.
 Timings agrupam espera de instância/fila + preparação de Blob/assets, render
 do serviço (abertura do Worker, staging/decode, efeitos e encode), total do
 adaptador, kernel e encode PNG. Não são tempos exclusivos de CPU de cada fase.
@@ -189,6 +201,8 @@ contagens não substituem QA de fontes, cores, DPR, camadas grandes ou desempenh
 Os smokes opt-in também selecionam outra camada e fazem pan sem novos renders
 ou troca dos buffers prontos. Ocultar uma camada reduz consumidores/leases sem
 terminar o Worker restante; mostrar recompõe mantendo uma única criação de Worker.
+Editar estilo deve aumentar hits do cache codificado sem nova leitura da fonte.
+Ao retirar o último consumidor, entradas/bytes do cache também precisam zerar.
 
 ## 7. QA manual e próxima fatia
 
@@ -211,8 +225,8 @@ ligada, começar com poucas camadas estilizadas e expandir gradualmente:
   anterior; registrar motivo/backend e gargalos, não concluir que o limite foi
   aumentado ou o processamento inteiro ficou em Rust.
 
-Próximos passos: cache/assets e orçamento entre janelas,
-limites intrínsecos, medições repetidas isoladas e matriz visual de tolerâncias,
+Próximos passos: ampliar cobertura/QA dos limites intrínsecos e orçamento entre janelas,
+medição de decode/cache decodificado, medições repetidas isoladas e matriz visual de tolerâncias,
 antes de aumentar cobertura/ativar por padrão. C0/C1/C2 continuam abertos. C3 é a
 pilha documental/backdrop/transforms; C4 é a superfície única. O idioma e o modelo
 editorial permanecem separados desta integração.

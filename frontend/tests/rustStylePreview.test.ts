@@ -9,6 +9,8 @@ import type { RustPixelPocServiceRequest, RustPixelPocResultLease } from '../src
 import { DEFAULT_TEXT_LAYER } from '../src/editor/text.ts'
 import type { RustPixelPocScheduledPreparation, RustPixelPocSchedulerLimits, RustPixelPocSchedulingOptions } from '../src/editor/rustPixelPocStyleScheduler.ts'
 import type { RustStylePriority } from '../src/editor/rustStyleScheduling.ts'
+import { RustStylePreviewMediaCache } from '../src/editor/rustStylePreviewMediaCache.ts'
+import { prepareRustStylePreviewMedia } from '../src/editor/rustStylePreviewPreparation.ts'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -333,4 +335,70 @@ test('Prioridade encaminhada à fila não recompõe nem altera leases publicadas
   const changes = f.state.reprioritized.length
   preview.setPriority('canvas:a', 'visible'); assert.equal(f.state.reprioritized.length, changes)
   result.release(); await preview.dispose()
+})
+
+test('Cache é descontado do orçamento, inclusive junto a PNG de contexto retirado', async () => {
+  const f = fixture(), cache = new RustStylePreviewMediaCache(), MiB = 1024 * 1024
+  f.ports.mediaCache = cache
+  const preview = new RustStylePreview(f.ports), first = await preview.render(input())
+  assert.equal(f.state.limits[0]!.maxResidentBytes, 224 * MiB)
+  await preview.dispose(); const next = await preview.render(input('canvas:b'))
+  assert.equal(f.state.limits[1]!.maxResidentBytes, 224 * MiB - first.blob.size)
+  assert.equal(f.state.limits[1]!.maxResultBytes, 64 * MiB - first.blob.size)
+  assert.equal(f.state.limits[1]!.maxLeases, 63)
+  first.release(); next.release(); await preview.dispose()
+})
+
+test('Capacidade inválida do cache é rejeitada antes de abrir agendador', () => {
+  const f = fixture(), cache = new RustStylePreviewMediaCache()
+  for (const maxBytes of [-1, 1.5, NaN, 32 * 1024 * 1024 + 1]) {
+    f.ports.mediaCache = { maxBytes, stats: cache.stats, clear() {}, releaseConsumer() {} }
+    assert.throws(() => new RustStylePreview(f.ports), error => error instanceof RustPixelPocError && error.code === 'invalid-input')
+  }
+  assert.equal(f.state.factories, 0)
+})
+
+test('Prepare recebe identidade compacta estável; edição/recriação não reusa mídia antiga', async () => {
+  const f = fixture(), cache = new RustStylePreviewMediaCache(); let loads = 0
+  f.ports.mediaCache = cache
+  f.ports.prepare = (request, signal, identity) => prepareRustStylePreviewMedia(request, signal, identity, cache,
+    async () => new Blob([String(++loads)]))
+  const preview = new RustStylePreview(f.ports), request = { ...input(), sourceUrl: 'blob:source', sourceIdentity: 'A'.repeat(5000) }
+  const a = await preview.render(request), edited = await preview.render({ ...request, styles: normalizeLayerStyleConfig({ fillOpacity: 50 }) })
+  assert.equal(loads, 1); assert.equal(preview.stats.mediaCache?.hits, 1)
+  const changed = await preview.render({ ...request, sourceIdentity: request.sourceIdentity + ':edited' })
+  assert.equal(loads, 2)
+  await preview.releaseConsumer('canvas:a'); assert.equal(preview.stats.mediaCache?.bytes, 0)
+  const again = await preview.render(request)
+  assert.equal(loads, 3)
+  for (const result of [a, edited, changed, again]) result.release()
+  await preview.dispose(); assert.equal(preview.stats.mediaCache?.entries, 0)
+})
+
+test('Circuito local retira apenas fonte do dono; circuito comum limpa o cache inteiro', async () => {
+  const f = fixture(), cache = new RustStylePreviewMediaCache()
+  f.ports.mediaCache = cache
+  const reader = async () => new Blob(['x'])
+  for (const key of ['source:canvas:a', 'source:canvas:b', 'pattern:p']) await cache.read(key, '1', 'blob:x', new AbortController().signal, 64, reader)
+  f.service.renderPrepared = async () => { throw new RustPixelPocError('memory-limit') }
+  const preview = new RustStylePreview(f.ports)
+  await preview.render(input()); assert.equal(cache.stats.entries, 2)
+  f.service.renderPrepared = async () => { throw new RustPixelPocError('wasm-unavailable') }
+  await preview.render(input('canvas:b')); assert.equal(cache.stats.entries, 0)
+  assert.equal(cache.stats.bytes, 0); await preview.dispose()
+})
+
+test('Dispose durante cache fill não permite retenção tardia nem revoga PNG publicado', async () => {
+  const f = fixture(), cache = new RustStylePreviewMediaCache(), gate = deferred<Blob>(), entered = deferred<void>()
+  f.ports.mediaCache = cache
+  const preview = new RustStylePreview(f.ports), first = await preview.render(input())
+  f.ports.prepare = (request, signal, identity) => prepareRustStylePreviewMedia(request, signal, identity, cache,
+    async () => { entered.resolve(); return gate.promise })
+  const pending = preview.render({ ...input(), sourceUrl: 'blob:source' })
+  const obsolete = assert.rejects(pending, RustStylePreviewCancelledError)
+  await entered.promise; await preview.dispose(); await obsolete
+  assert.equal(preview.stats.resultLeases, 1)
+  gate.resolve(new Blob(['late'])); await new Promise(resolve => setImmediate(resolve))
+  assert.equal(cache.stats.entries, 0); assert.equal(cache.stats.bytes, 0)
+  assert.equal(f.state.releases, 0); first.release(); assert.equal(f.state.releases, 1)
 })

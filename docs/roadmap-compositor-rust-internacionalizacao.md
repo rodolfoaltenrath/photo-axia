@@ -653,6 +653,19 @@ sem recomposição e ocultar/mostrar sem multiplicar Workers. Default, exportaç
 texto, ABI, passes Rust e versões permanecem. Cache/assets, limites intrínsecos,
 orçamento entre janelas e medições/QA seguem pendentes. C0/C1/C2 ficam abertos.
 
+Uma vigésima sétima fatia cria **cache LRU de mídia codificada** no preview opt-in.
+Fontes usam consumidor/versão compacta/URL; padrões ativos compartilham assetId/
+URL/dimensões. Apenas blob/data são retidos; paths/HTTP continuam leitura
+bounded. Até 32 MiB/64 entradas, incluindo metadados, com eviction sem revogar
+Blobs emprestados ou leases do handoff. A capacidade é descontada dos 256 MiB,
+não somada; serviço fica em 224 MiB menos PNGs antigos. Abort/clear/release/época
+impedem fills tardios, e fallback comum/último consumidor/reset limpam tudo.
+Estilo editado reusa mídia, mas continua gerando pixels/PNG novos em Rust;
+não é cache de RGBA nem de composição. Texto/ABI/default/exportação/versões
+não mudam. Falta medir decode para decidir cache decodificado; limites
+intrínsecos, orçamento entre janelas e medições/QA permanecem. C0/C1/C2 seguem
+abertos. Detalhes no [contrato de cache](contrato-cache-midia-preview-rust-v1.md).
+
 O despacho raster e o cálculo de insets no TS agora usam `switch` exaustivo
 derivado do mapa efeito→estágio. Um efeito desconhecido chega a
 `LayerStyleUnsupportedEffectError` com código e tipos; os goldens puros e os
@@ -661,6 +674,19 @@ esse código/tipos e identifica também padrão não decodificado; o fallback se
 Worker usa as mesmas classes. O teste de protocolo cobre a serialização por
 `structuredClone` e mensagem legada. A validação visual manual e os demais
 gates C2 continuam pendentes.
+
+Uma vigésima oitava fatia adiciona **limites intrínsecos antes do decode** no
+preview opt-in. Cabeçalhos PNG/JPEG/GIF são lidos em até 256 KiB, sem confiar
+no MIME ou no tamanho solicitado do preview. Eixo acima de 16.384, RGBA lógico
+acima de 64 MiB ou fonte intrínseca + três saídas acima de 96 MiB falham antes
+do decoder. Padrões com dimensões inconsistentes também são barrados antes
+da alocação; dimensões do bitmap continuam sendo conferidas depois do decode.
+Formato/cabeçalho indeterminado usa fallback local, sem afetar outras camadas.
+Isso não garante RSS nem limita o decoder legado/frames internos de animação.
+Texto/default/exportação/ABI/Rust/versões permanecem. C0/C1/C2 seguem abertos:
+faltam medições/QA, decisão de cache decodificado e orçamento entre janelas.
+C3/C4 ainda não substituíram a pilha/DOM. Detalhes no
+[contrato de decode](contrato-limites-decode-preview-rust-v1.md).
 
 ### C3 — Um compositor offscreen do documento
 
