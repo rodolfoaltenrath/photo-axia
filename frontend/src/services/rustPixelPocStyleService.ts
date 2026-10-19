@@ -13,7 +13,7 @@ export function createRustPixelPocStyleScheduler(limits: RustPixelPocSchedulerLi
   return new RustPixelPocStyleScheduler(connectRustStyleWorker, limits, onChange)
 }
 
-async function connectRustStyleWorker(signal: AbortSignal) {
+export async function connectRustStyleWorker(signal: AbortSignal) {
     let client: RustPixelPocWorkerClient | undefined
     const abort = () => { void client?.terminate() }
     signal.addEventListener('abort', abort, { once: true })

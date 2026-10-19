@@ -5,7 +5,7 @@
 <script type="module">
 import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
 import { LayerStyleUnsupportedEffectError } from '../src/editor/layerStyleCompositor.ts'
-import { renderDocumentPNG } from '../src/services/renderDocument.ts'
+import { renderDocumentPNG, renderDocumentBlob, sampleDocumentColor } from '../src/services/renderDocument.ts'
 import { createRustPixelPocRuntime } from '../src/editor/rustPixelPocRuntime.ts'
 import wasmUrl from '../src/generated/axia_pixel_core.wasm?url'
 
@@ -180,10 +180,62 @@ async function compareRustUnderlying() {
   } finally { runtime.dispose() }
 }
 
+async function compareEditorialConsumer() {
+  const original = location.href
+  const back = imageLayer('editorial-back', [100, 150, 200, 255, 64, 90, 150, 128, 192, 80, 40, 255, 255, 200, 100, 128])
+  const styles = createLayerStyleConfig(); styles.fillOpacity = 65
+  const overlay = createDefaultLayerEffect('color-overlay', 'editorial-overlay'); overlay.color = '#00ff00'; overlay.opacity = 37
+  const shadow = createDefaultLayerEffect('drop-shadow', 'editorial-shadow')
+  Object.assign(shadow, { color: '#0000ff', distance: 1, size: 0, angle: 0, useGlobalLight: false, blendMode: 'normal' })
+  styles.effects = [shadow, overlay]
+  styles.blendIf.channel = 'red'; styles.blendIf.underlyingLayer.shadows = [0, 128]
+  const top = imageLayer('editorial-top', [240, 50, 130, 101, 20, 210, 70, 203, 120, 100, 230, 255, 240, 50, 130, 3],
+    { styles, opacity: 63.7, blendMode: 'multiply' })
+  const fixtures = [
+    { document: doc('editorial-transparent', 'transparent'), layers: [top, back] },
+    { document: doc('editorial-background', 'white'), layers: [top, back, layer('background', 'background', {}, undefined)] }
+  ]
+  const references = []
+  for (const fixture of fixtures) references.push({ pixels: await pixelsFromPng(await renderDocumentPNG(fixture.document, fixture.layers)),
+    color: await sampleDocumentColor(fixture.document, fixture.layers, 3, 2) })
+  const enabled = new URL(location.href); enabled.searchParams.set('axiaRustDocument', '1'); enabled.searchParams.set('axiaRustStyles', '1')
+  let maxAlphaDifference = 0, maxPremultipliedDifference = 0
+  const backend = () => JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+  const compare = (actual, expected) => {
+    for (let i = 0; i < actual.length; i += 4) {
+      maxAlphaDifference = Math.max(maxAlphaDifference, Math.abs(actual[i + 3] - expected[i + 3]))
+      for (let c = 0; c < 3; c++) maxPremultipliedDifference = Math.max(maxPremultipliedDifference,
+        Math.abs(actual[i + c] * actual[i + 3] / 255 - expected[i + c] * expected[i + 3] / 255))
+    }
+  }
+  history.replaceState(null, '', enabled)
+  try {
+    for (let index = 0; index < fixtures.length; index++) {
+      const fixture = fixtures[index], reference = references[index]
+      const png = await renderDocumentPNG(fixture.document, fixture.layers)
+      if (backend().backend !== 'rust') throw new Error(`PNG editorial em fallback: ${JSON.stringify(backend())}`)
+      compare(await pixelsFromPng(png), reference.pixels)
+      const blob = await renderDocumentBlob(fixture.document, fixture.layers)
+      if (backend().backend !== 'rust') throw new Error('Blob editorial em fallback')
+      const url = URL.createObjectURL(blob)
+      try { compare(await pixelsFromPng(url), reference.pixels) } finally { URL.revokeObjectURL(url) }
+      const sampled = await sampleDocumentColor(fixture.document, fixture.layers, 3, 2)
+      if (backend().backend !== 'rust') throw new Error('Conta-gotas editorial em fallback')
+      for (let c = 0; c < 3; c++) if (Math.abs(parseInt(sampled.slice(1 + c * 2, 3 + c * 2), 16) -
+        parseInt(reference.color.slice(1 + c * 2, 3 + c * 2), 16)) > 2) throw new Error('Conta-gotas divergiu do Canvas')
+    }
+    await renderDocumentPNG(doc('fallback', 'transparent'), [rectangle('unsupported', '#ffffff', { x: 1, y: 1, width: 3, height: 3 })])
+    if (backend().backend !== 'legacy' || backend().reason !== 'non-image-layer') throw new Error('Fallback editorial ausente')
+    if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade editorial: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
+    return { documents: fixtures.length, consumers: ['PNG', 'Blob', 'sample'], fallback: true, maxAlphaDifference, maxPremultipliedDifference }
+  } finally { history.replaceState(null, '', original) }
+}
+
 try {
   const cases = await renderCases()
   await assertUnsupportedShapeStyleRejects()
   const rustUnderlying = await compareRustUnderlying()
+  const rustEditorial = await compareEditorialConsumer()
   if (new URLSearchParams(location.search).has('record')) {
     result.textContent = JSON.stringify({ status: 'record', width, height, cases })
   } else {
@@ -222,7 +274,7 @@ try {
           errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)
         }
       }
-      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying })
+      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial })
     }
   }
 } catch (error) {

@@ -9,10 +9,10 @@ de aparência. Qualquer alteração deste contrato requer versão e teste de par
 O [núcleo inicial da pilha Rust](contrato-pilha-documental-rust-v1.md) já compõe
 rasters preparados em regiões documentais, com translação inteira, opacidade e
 seis modos. Sua [ABI privada DCP1](contrato-abi-pilha-documental-rust-v1.md)
-já conecta WASM/runtime/Worker, sem consumidor editorial. A
+já conecta WASM/runtime/Worker. A
 [fatia DCP2](contrato-transformacoes-documentais-rust-v1.md) acrescenta grade
 global, transformações afins, bilinear premultiplicado e cobertura geométrica;
-paridade ampla Canvas/minificação e integração editorial continuam
+paridade ampla Canvas/minificação e integração editorial integral continuam
 pendentes. Não promove este contrato lógico a ABI definitiva nem substitui Canvas/DOM.
 
 A [preparação de pilha estilizada](contrato-pilha-estilizada-rust-v1.md)
@@ -20,9 +20,11 @@ integra STG1/Fill/Esta camada e composição regional no núcleo nativo, reutili
 fontes entre tiles. A [fatia SDP1/cache documental](contrato-cache-documental-wasm-v1.md)
 já a conecta ao WASM/runtime/Worker experimental, sem reupload ou efeitos por tile.
 O [filtro documental DCP3](contrato-blend-if-documental-rust-v1.md) já consulta o
-backdrop regional, preservando a ordem de opacidade/quantização. Preparação
-editorial, scheduler e consumidores reais continuam pendentes; não é o fluxo
-atual do preview.
+backdrop regional, preservando a ordem de opacidade/quantização. O
+[primeiro consumidor editorial](contrato-consumidor-documental-rust-v1.md)
+conecta imagens/fundo a PNG/Blob/export elegível e conta-gotas sob flag, com
+tiles finais e fallback. Cobertura integral, scheduler persistente e preview
+de superfície única ainda faltam; não muda o preview padrão.
 
 O [lote local experimental](contrato-lote-local-v1.md) tem ABI própria para
 fill/overlays/filtro terminal. Ainda não implementa a pilha ou transformações

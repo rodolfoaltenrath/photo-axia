@@ -14,7 +14,9 @@ import type { RustStyleDecodeTimings } from './rustStyleMediaTimings.ts'
 import type { RustPixelPocBlendIf, RustPixelPocColorOverlay, RustPixelPocGradientOverlay, RustPixelPocPatternOverlay,
   RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 import type { RustDocumentOutputGrid } from './rustDocumentComposite.ts'
+import type { RustDocumentMediaInput } from './rustDocumentEditorial.ts'
 export type RustPixelPocRequest =
+  | { type: 'prepare-document-media'; id: number; input: RustDocumentMediaInput; generation: number }
   | { type: 'prepare-document'; id: number; packet: ArrayBuffer; generation: number }
   | { type: 'compose-prepared-document'; id: number; documentId: number; region: RustPixelPocRegion; grid?: RustDocumentOutputGrid }
   | { type: 'release-document'; id: number; documentId: number }

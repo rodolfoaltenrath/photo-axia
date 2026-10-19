@@ -20,7 +20,7 @@ type Owner = { consumerId: string; epoch: number; revision: symbol; controller?:
 type Context = { epoch: number; failed: boolean; scheduler?: Scheduler; opening?: Promise<Scheduler> }
 const MiB = 1024 * 1024
 
-export function rustStylePreviewPatternAssets(request: LayerStylePreviewRequest) {
+export function rustStylePreviewPatternAssets(request: Pick<LayerStylePreviewRequest, 'styles'>) {
   const pipeline = buildLayerStylePipeline(request.styles), assets = new Map<string, LayerStylePatternAsset>()
   function add(asset: LayerStylePatternAsset | undefined) {
     if (!asset) return

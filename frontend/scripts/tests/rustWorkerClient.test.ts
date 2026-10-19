@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { RustPixelPocError } from '../../src/editor/rustPixelPocError.ts'
 import { RustPixelPocWorkerClient, type RustPixelPocWorkerPort } from '../../src/editor/rustPixelPocWorkerClient.ts'
+import type { RustDocumentMediaInput } from '../../src/editor/rustDocumentEditorial.ts'
 
 const code = (expected: string) => (error: unknown) => error instanceof RustPixelPocError && error.code === expected
 function fixture(timeoutMs = 1000) {
@@ -102,6 +103,15 @@ for (const trigger of ['failure', 'malformed', 'timeout'] as const) {
     await assert.rejects(f.client.send({ type: 'dispose' }), code('wasm-unavailable'))
   })
 }
+
+test('RPC preserva preparação documental de mídia como barreira de ciclo de vida', async () => {
+  const f = fixture()
+  try {
+    const request = f.client.send({ type: 'prepare-document-media', input: {} as RustDocumentMediaInput, generation: 1 })
+    f.client.cancel(request.id); assert.equal(f.state.posts.length, 1)
+    f.message({ id: request.id, type: 'document-prepared', documentId: 1 }); await request
+  } finally { await f.client.terminate() }
+})
 
 test('RPC valida timeout antes de registrar listeners', () => {
   const port = {} as RustPixelPocWorkerPort

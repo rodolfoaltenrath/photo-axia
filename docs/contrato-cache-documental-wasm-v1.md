@@ -10,6 +10,9 @@ Atualização da fatia 6: [DCP3/filtro subjacente](contrato-blend-if-documental-
 também pode ser preparado e mantido neste cache. SDP1 e seu ciclo de vida não
 mudam; o DCP interno passa a aceitar a versão 3. As provas locais ao fim desta
 página registram a entrega original da fatia 5.
+Na [fatia 7](contrato-consumidor-documental-rust-v1.md), o primeiro consumidor
+editorial usa este cache entre tiles da mesma transação, ainda sem mantê-lo
+residente entre chamadas/consumidores.
 
 Relacionado a [DCP1](contrato-abi-pilha-documental-rust-v1.md),
 [DCP2](contrato-transformacoes-documentais-rust-v1.md),

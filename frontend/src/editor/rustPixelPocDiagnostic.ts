@@ -590,6 +590,27 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
       latest.release()
       if (service.stats.retainedResultBytes !== 0) throw new Error('Serviço não liberou leases.')
     } finally { await service.dispose() }
+    const originalUrl = location.href, mediaUrl = URL.createObjectURL(mediaBlob)
+    try {
+      const diagnosticUrl = new URL(originalUrl); diagnosticUrl.searchParams.set('axiaRustDocument', '1')
+      history.replaceState(null, '', diagnosticUrl)
+      const { renderDocumentBlob, sampleDocumentColor } = await import('../services/renderDocument.ts')
+      const document = { id: 'editorial-diagnostic', name: 'editorial-diagnostic', width: 2, height: 1,
+        unit: 'px' as const, physicalWidth: 2, physicalHeight: 1, resolutionDpi: 72, colorSpace: 'srgb' as const,
+        background: 'transparent' as const, createdAt: '', layerStyleGlobalLight: preparedRequest.globalLight }
+      const layers = [{ id: 'editorial-layer', name: 'editorial-layer', kind: 'pixel' as const, visible: true,
+        opacity: 100, blendMode: 'normal' as const, styles: preparedStyles,
+        image: { width: 1, height: 1, mimeType: 'image/png', sourceUrl: mediaUrl },
+        transform: { x: 1, y: 0, width: 1, height: 1, rotation: 0 } }]
+      const blob = await renderDocumentBlob(document, layers)
+      const backend = () => JSON.parse(window.document.documentElement.dataset.axiaRustDocument ?? '{}').backend
+      if (backend() !== 'rust' || (await readPng(blob, 2, 1)).join(',') !== '255,0,0,255,0,0,255,128') {
+        throw new Error('Consumidor editorial Blob não usou o compositor Rust corretamente.')
+      }
+      if (await sampleDocumentColor(document, layers, 0, 0) !== '#ff0000' || backend() !== 'rust') {
+        throw new Error('Consumidor editorial de cor não usou o compositor Rust corretamente.')
+      }
+    } finally { history.replaceState(null, '', originalUrl); URL.revokeObjectURL(mediaUrl) }
     return { elapsedMs: performance.now() - started, wasmBytes }
   } finally {
     worker.terminate()

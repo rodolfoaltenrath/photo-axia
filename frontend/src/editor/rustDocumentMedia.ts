@@ -1,0 +1,57 @@
+import { prepareRustStyleSourceLayout, prepareRustStyleJob, padRustStyleSource } from './rustPixelPocStylePreparation.ts'
+import { decodeRustStyleSource, prepareRustStyleAssets, decodeRustStyleAssets } from './rustPixelPocMedia.ts'
+import { readRustStyleImageDimensions } from './rustStyleImageHeader.ts'
+import { encodeStyledDocument } from './rustStyledDocument.ts'
+import { rustEditorialUnderlying, type RustDocumentMediaInput } from './rustDocumentEditorial.ts'
+import type { RustDocumentRasterLayer } from './rustDocumentComposite.ts'
+import type { RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
+import { RustPixelPocError } from './rustPixelPocError.ts'
+import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
+
+export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, check: () => void) {
+  check()
+  if (!input || !Array.isArray(input.layers) || input.layers.length > 32) throw new RustPixelPocError('invalid-input')
+  if (rustPixelPocStyleMetadataBytes(input) > 1024 * 1024) throw new RustPixelPocError('memory-limit')
+  let encoded = 0, padded = 0
+  const layouts = input.layers.map(layer => {
+    const layout = prepareRustStyleSourceLayout(layer.input)
+    if (layout.width > 16384 || layout.height > 16384) throw new RustPixelPocError('memory-limit')
+    padded += layout.width * layout.height * 4
+    if (layer.source.type === 'raster') {
+      if (!(layer.source.blob instanceof Blob)) throw new RustPixelPocError('invalid-input')
+      encoded += layer.source.blob.size
+    } else if (layer.source.type !== 'solid' || layer.input.sourceWidth !== 1 || layer.input.sourceHeight !== 1 ||
+        !Array.isArray(layer.source.color) || layer.source.color.length !== 4 ||
+        layer.source.color.some(value => !Number.isInteger(value) || value < 0 || value > 255)) {
+      throw new RustPixelPocError('invalid-input')
+    }
+    const assets = prepareRustStyleAssets(layout, layer.patterns)
+    for (const blob of Object.values(layer.patterns)) encoded += blob.size
+    padded += assets.decodedBytes
+    if (padded > 16 * 1024 * 1024 || encoded > 32 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+    return { layout, assets }
+  })
+  const layers: RustDocumentRasterLayer[] = [], plans: RustPixelPocStagesPlan[] = []
+  for (let index = 0; index < input.layers.length; index++) {
+    check()
+    const layer = input.layers[index]!, { layout, assets } = layouts[index]!
+    if (layer.source.type === 'raster') {
+      const intrinsic = await readRustStyleImageDimensions(layer.source.blob, check)
+      if (intrinsic.bytes > 16 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+    }
+    const source = layer.source.type === 'raster' ? await decodeRustStyleSource(layer.source, layout, check) :
+      { width: 1, height: 1, data: new Uint8ClampedArray(layer.source.color) }
+    const patterns = await decodeRustStyleAssets(assets, check)
+    const job = prepareRustStyleJob({ ...layer.input, patterns })
+    const rgba = padRustStyleSource(source, job), [a, b, c, d, tx, ty] = layer.matrix
+    layers.push({ rgba, width: job.width, height: job.height, x: 0, y: 0, visible: true,
+      opacity: layer.opacity, blendMode: layer.blendMode,
+      sourceToDocument: [a, b, c, d, tx + a * job.offsetX + c * job.offsetY, ty + b * job.offsetX + d * job.offsetY],
+      underlyingBlendIf: rustEditorialUnderlying(layer.input) })
+    plans.push(job.plan)
+  }
+  check()
+  return encodeStyledDocument({ documentWidth: input.documentWidth, documentHeight: input.documentHeight,
+    region: { x: 0, y: 0, width: Math.min(256, input.width), height: Math.min(256, input.height) },
+    resolutionScale: 1, outputGrid: input.grid, layersBottomToTop: layers }, plans)
+}

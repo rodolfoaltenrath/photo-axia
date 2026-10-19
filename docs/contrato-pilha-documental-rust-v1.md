@@ -131,6 +131,11 @@ seus testes e diagnóstico são separados e descritos no contrato da ABI.
 
 ## 5. Consumidores a migrar, sem apagar o caminho atual
 
+Atualização da [fatia 7](contrato-consumidor-documental-rust-v1.md): PNG/Blob,
+exportação elegível e conta-gotas já podem usar Rust sob flag para imagens/fundo,
+com preparação editorial e tiles finais. Demais tipos/escalas usam fallback.
+A tabela continua sendo o gate de cobertura integral, não uma migração concluída.
+
 Inventário em `frontend/src/services/renderDocument.ts`:
 
 | Entrada | Uso atual | Gate obrigatório antes da troca |
@@ -170,6 +175,8 @@ testes de cada adapter antes de substituir essas chamadas.
 4. Integrar um consumidor offscreen atrás de flag e ampliar pelos gates da
    tabela, compartilhando kernel, scheduler e orçamento. Não manter um
    compositor alternativo de aparência como otimização de preview.
+   Primeiro adapter/consumidor implementado na fatia 7; ainda ampliar fontes,
+   escalas, sessão persistente/admission e demais entradas antes do rollout.
 5. Só então superfície única C4, rollout/QA e retirada condicionada do legado.
 
 C3 continua aberto. Essa sequência não impede ajustes guiados por teste/medição.

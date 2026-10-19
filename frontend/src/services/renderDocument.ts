@@ -345,6 +345,18 @@ async function renderDocumentCanvas(
   purpose: 'export' | 'layer' | 'merge' | 'sample' | 'smart' | 'thumbnail',
   viewport: DocumentBounds = { x: 0, y: 0, width: document.width, height: document.height }
 ) {
+  if ((purpose === 'export' || purpose === 'sample') &&
+      new URLSearchParams(window.location.search).get('axiaRustDocument') === '1') {
+    try {
+      const { renderRustDocumentCanvas } = await import('./rustDocumentRenderer.ts')
+      const canvas = await renderRustDocumentCanvas(document, layers, width, height, viewport)
+      window.document.documentElement.dataset.axiaRustDocument = JSON.stringify({ backend: 'rust', purpose })
+      return canvas
+    } catch (error) {
+      window.document.documentElement.dataset.axiaRustDocument = JSON.stringify({ backend: 'legacy', purpose,
+        reason: error instanceof Error ? error.message : 'unknown' })
+    }
+  }
   const canvas = window.document.createElement('canvas')
   canvas.width = width
   canvas.height = height

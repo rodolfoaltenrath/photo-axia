@@ -769,6 +769,18 @@ registram que adapters editoriais, minificação/paridade ampla, scheduler/admis
 e consumidores reais continuam pendentes. Não altera preview/default/exportação
 nem encerra C3/C4.
 
+Sétima fatia de C3: **primeiro consumidor editorial offscreen real**, sob
+`axiaRustDocument=1`/`--axia-rust-document-preview`. PNG/Blob/export elegível e
+conta-gotas recebem snapshot de imagens/fundo, decodificados no Worker; insets,
+unidades e matrizes alimentam SDP1/DCP3. Um job prepara estilos uma vez e retorna
+tiles finais de até 256×256. Fila limitada, contexto documental exclusivo,
+release/terminação e circuito de timeout evitam Workers concorrentes/resultado
+parcial publicado. O oráculo exige backend Rust nas APIs públicas e compara
+com Canvas; diagnóstico Wails valida Blob/cor reais. [Contrato e limites](contrato-consumidor-documental-rust-v1.md)
+registram fallback para texto/formas, minificação/escalas/limites, e a sequência
+até remover o legado. Sem flag, default continua igual; canvas único C4,
+cobertura integral e scheduler persistente ainda faltam. C3/C4 ficam abertos.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

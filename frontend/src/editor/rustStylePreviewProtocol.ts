@@ -9,5 +9,6 @@ export class RustStylePreviewCancelledError extends Error {
 }
 
 export function rustStylePreviewEnabled(search: string) {
-  return new URLSearchParams(search).get('axiaRustStyles') === '1'
+  const flags = new URLSearchParams(search)
+  return flags.get('axiaRustStyles') === '1' && flags.get('axiaRustDocument') !== '1'
 }

@@ -5,6 +5,7 @@ import { RustPixelPocMediaQueue } from '../editor/rustPixelPocMediaQueue.ts'
 import { encodeRustStylePng, rustStylePngLayout } from '../editor/rustPixelPocPng.ts'
 import type { RustPixelPocRequest, RustPixelPocResponse } from '../editor/rustPixelPocProtocol.ts'
 import { emptyRustStyleDecodeTimings } from '../editor/rustStyleMediaTimings.ts'
+import { prepareRustDocumentMedia } from '../editor/rustDocumentMedia.ts'
 
 type Runtime = Awaited<ReturnType<typeof createRustPixelPocRuntime>>
 let runtimePromise: Promise<Runtime> | null = null
@@ -13,6 +14,8 @@ const pending = new Set<number>()
 const cancelled = new Set<number>()
 const mediaQueue = new RustPixelPocMediaQueue()
 let preparedSource: { sourceId: number; sourceKey: string } | null = null
+let mode: 'document' | 'general' | null = null
+let documentPreparation: symbol | null = null
 
 function reply(message: RustPixelPocResponse, transfer: Transferable[] = []) {
   self.postMessage(message, { transfer })
@@ -25,6 +28,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     return
   }
   if (request.type === 'dispose') {
+    mode = null; documentPreparation = null
     generation++
     preparedSource = null
     const previous = runtimePromise
@@ -39,6 +43,7 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     return
   }
   if (request.type === 'init') {
+    mode = null; documentPreparation = null
     preparedSource = null
     const previous = runtimePromise
     if (previous) void previous.then((engine) => engine.dispose()).catch(() => {})
@@ -76,6 +81,20 @@ self.onmessage = (event: MessageEvent<RustPixelPocRequest>) => {
     }
     const ensureCurrent = () => {
       if (current !== generation || cancelled.has(request.id)) throw new RustPixelPocError('invalid-input')
+    }
+    if (documentPreparation || request.type === 'prepare-document-media' && mode === 'general' ||
+        mode === 'document' && !['prepare-document-media', 'compose-prepared-document', 'release-document'].includes(request.type)) {
+      throw new RustPixelPocError('invalid-input')
+    }
+    mode ??= request.type === 'prepare-document-media' ? 'document' : 'general'
+    if (request.type === 'prepare-document-media') {
+      const token = documentPreparation = Symbol()
+      try {
+        const packet = await mediaQueue.run(() => prepareRustDocumentMedia(request.input, ensureCurrent))
+        ensureCurrent()
+        reply({ type: 'document-prepared', id: request.id, ...engine.prepareDocumentPacket(packet, request.generation) })
+      } finally { if (documentPreparation === token) documentPreparation = null }
+      return
     }
     if (request.type === 'prepare-document') {
       if (!(request.packet instanceof ArrayBuffer)) throw new RustPixelPocError('invalid-input')

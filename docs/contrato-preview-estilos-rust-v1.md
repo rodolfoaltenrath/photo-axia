@@ -249,3 +249,8 @@ grade global. A [fatia SDP1](contrato-cache-documental-wasm-v1.md) prepara fonte
 estilizadas e mantém um DCP residente no WASM para pedidos regionais. Nenhuma
 dessas chamadas documentais é usada por este preview; a exclusividade de cache
 SDP1/fonte individual no runtime experimental não muda seu agendador atual.
+
+O [consumidor offscreen documental](contrato-consumidor-documental-rust-v1.md)
+usa flag separado `axiaRustDocument=1`, ainda sem substituir esta superfície.
+Quando presente desde a abertura, tem precedência sobre `axiaRustStyles=1` e
+este experimento usa o fallback, evitando contextos Rust paralelos nessa janela.
