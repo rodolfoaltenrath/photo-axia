@@ -8,10 +8,11 @@ import { prepareRustStyleSourceLayout, type RustPixelPocStyleSourceInput } from 
 import type { RustDocumentRasterLayer, RustDocumentOutputGrid } from './rustDocumentComposite.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
+import { planRustDocumentShape, type RustDocumentShapeSource } from './rustDocumentShape.ts'
 
 type Matrix = NonNullable<RustDocumentRasterLayer['sourceToDocument']>
 export interface RustEditorialLayer {
-  source: { type: 'raster'; url: string } | { type: 'solid'; color: [number, number, number, number] }
+  source: { type: 'raster'; url: string } | { type: 'solid'; color: [number, number, number, number] } | RustDocumentShapeSource
   input: RustPixelPocStyleSourceInput
   matrix: Matrix
   opacity: number
@@ -23,7 +24,7 @@ export interface RustEditorialPlan {
 }
 export interface RustDocumentMediaInput extends Omit<RustEditorialPlan, 'layers'> {
   layers: (Omit<RustEditorialLayer, 'source'> & {
-    source: { type: 'raster'; blob: Blob } | { type: 'solid'; color: [number, number, number, number] }
+    source: { type: 'raster'; blob: Blob } | { type: 'solid'; color: [number, number, number, number] } | RustDocumentShapeSource
     patterns: Record<string, Blob>
   })[]
 }
@@ -72,6 +73,24 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
   let sourceBytes = 0, metadata = 0
   for (const layer of [...layers].reverse()) {
     if (!layer.visible || !layer.transform || !styledLayerIntersectsBounds(layer, viewport, light)) continue
+    if (!layer.image && layer.shape && !layer.text) {
+      if (!Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 100) throw new RustPixelPocError('invalid-input')
+      if (activeLayerStyleEffects(layer.styles).length || !layerStyleBlendIfIsDefault(layer.styles.blendIf)) {
+        throw new RustDocumentUnsupported('shape-style')
+      }
+      const source = planRustDocumentShape(layer.shape, layer.transform, document.width, document.height,
+        (layer.opacity / 100) * layerStyleFillOpacity(layer.styles))
+      if (!source) continue
+      sourceBytes += source.width * source.height * 4
+      metadata += rustPixelPocStyleMetadataBytes(source)
+      if (sourceBytes > 16 * 1024 * 1024 || result.layers.length >= 32 || metadata > 512 * 1024) {
+        throw new RustPixelPocError('memory-limit')
+      }
+      result.layers.push({ source, input: { sourceIdentity: `shape:${layer.id}`, sourceWidth: source.width,
+        sourceHeight: source.height, styles: normalizeLayerStyleConfig({}), globalLight: light, quality: 'final' },
+        matrix: [1, 0, 0, 1, source.originX, source.originY], opacity: 100, blendMode: layer.blendMode })
+      continue
+    }
     if (!layer.image) throw new RustDocumentUnsupported('non-image-layer')
     const image = layer.image, transform = layer.transform
     if (transform.width < image.width || transform.height < image.height) throw new RustDocumentUnsupported('source-minification')

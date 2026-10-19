@@ -26,6 +26,11 @@ conecta imagens/fundo a PNG/Blob/export elegível e conta-gotas sob flag, com
 tiles finais e fallback. Cobertura integral, scheduler persistente e preview
 de superfície única ainda faltam; não muda o preview padrão.
 
+O [adapter de formas](contrato-formas-documentais-rust-v1.md) amplia esse
+consumidor com fontes vetoriais transitórias desenhadas na grade documental
+no Worker. Rust compõe os tiles sem aplicar outra escala/rotação à fonte;
+modelo vetorial e estratégia atual de texto permanecem preservados.
+
 O [lote local experimental](contrato-lote-local-v1.md) tem ABI própria para
 fill/overlays/filtro terminal. Ainda não implementa a pilha ou transformações
 documentais especificadas aqui.

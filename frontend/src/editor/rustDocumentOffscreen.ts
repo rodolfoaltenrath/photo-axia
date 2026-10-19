@@ -18,7 +18,7 @@ export async function loadRustDocumentMedia(plan: RustEditorialPlan, signal: Abo
       const blob = await read(asset.sourceUrl, signal, 32 * 1024 * 1024 - encoded)
       encoded += blob.size; patterns[asset.id] = blob
     }
-    const source = layer.source.type === 'solid' ? layer.source :
+    const source = layer.source.type !== 'raster' ? layer.source :
       { type: 'raster' as const, blob: await read(layer.source.url, signal, 32 * 1024 * 1024 - encoded) }
     if (source.type === 'raster') encoded += source.blob.size
     if (encoded > 32 * 1024 * 1024) throw new RustPixelPocError('memory-limit')

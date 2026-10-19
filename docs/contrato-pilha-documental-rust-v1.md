@@ -135,6 +135,9 @@ Atualização da [fatia 7](contrato-consumidor-documental-rust-v1.md): PNG/Blob,
 exportação elegível e conta-gotas já podem usar Rust sob flag para imagens/fundo,
 com preparação editorial e tiles finais. Demais tipos/escalas usam fallback.
 A tabela continua sendo o gate de cobertura integral, não uma migração concluída.
+Na [fatia 8](contrato-formas-documentais-rust-v1.md), esses consumidores também
+aceitam formas sem efeitos/Blend If, mantendo texto e escalas não cobertas no
+fallback. Camada isolada/mesclagem fora do documento ainda não usa esse adapter.
 
 Inventário em `frontend/src/services/renderDocument.ts`:
 

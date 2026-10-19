@@ -6,6 +6,11 @@ e conta-gotas suportadas. Não é mais apenas uma sonda de pacotes: a entrada é
 `DocumentSpec`/`LayerItem[]`, e PNG/Blob/cor continuam saindo pelas APIs públicas
 existentes. Não conclui toda a migração nem habilita a superfície única C4.
 
+Atualização da [fatia 8](contrato-formas-documentais-rust-v1.md): formas simples
+também são elegíveis, traçadas no Worker em pixels documentais, sem perder a
+editabilidade. As provas da seção 6 abaixo registram a entrega original da
+fatia 7; o novo contrato registra a cobertura/provas adicionais.
+
 Relacionado a [DCP3](contrato-blend-if-documental-rust-v1.md),
 [SDP1/cache documental](contrato-cache-documental-wasm-v1.md),
 [inventário dos consumidores](contrato-pilha-documental-rust-v1.md) e
@@ -38,7 +43,8 @@ Cobertura inicial deliberadamente restrita:
 - fonte completa com padding, não um recorte sem halo da região pedida;
 - saída em escala **1 pixel de saída por pixel documental**, inclusive conta-gotas.
 
-Texto, formas, fonte reduzida em relação à resolução original, mudança de escala
+Na fatia 7, formas usavam fallback; a fatia 8 cobre os quatro tipos sem efeitos
+nem Blend If. Texto, fonte de imagem reduzida em relação à resolução original, mudança de escala
 de saída, saída acima de 64 MiB/eixos acima de 16384, limites excedidos e erros
 de plataforma/runtime permanecem no Canvas anterior. Camadas ocultas/fora dos
 bounds relevantes não exigem suporte de um adapter que não seria usado.
@@ -99,8 +105,9 @@ snapshot editorial → fila → carregar Blobs com limite/AbortSignal
 ```
 
 Reaproveita os decoders, normalização, insets, executor STG1 e composição
-documental já testados. Canvas no Worker só decodifica fontes/assets; estilos
-e blend da pilha são calculados em Rust. Não copiar pixels intermediários para
+documental já testados. Canvas no Worker prepara conteúdo: decode de fontes/assets
+e, a partir da fatia 8, traçado vetorial de formas. Estilos de imagem e blend da
+pilha são calculados em Rust. Não copiar pixels intermediários para
 a UI, codificar/decode PNG a cada tile ou reexecutar efeitos a cada região.
 
 `prepare-document-media` é barreira RPC não cancelável isoladamente. O Worker

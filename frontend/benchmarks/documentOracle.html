@@ -8,6 +8,7 @@ import { LayerStyleUnsupportedEffectError } from '../src/editor/layerStyleCompos
 import { renderDocumentPNG, renderDocumentBlob, sampleDocumentColor } from '../src/services/renderDocument.ts'
 import { createRustPixelPocRuntime } from '../src/editor/rustPixelPocRuntime.ts'
 import wasmUrl from '../src/generated/axia_pixel_core.wasm?url'
+import { DEFAULT_TEXT_LAYER } from '../src/editor/text.ts'
 
 const result = document.querySelector('#result')
 const width = 8
@@ -224,10 +225,48 @@ async function compareEditorialConsumer() {
       for (let c = 0; c < 3; c++) if (Math.abs(parseInt(sampled.slice(1 + c * 2, 3 + c * 2), 16) -
         parseInt(reference.color.slice(1 + c * 2, 3 + c * 2), 16)) > 2) throw new Error('Conta-gotas divergiu do Canvas')
     }
-    await renderDocumentPNG(doc('fallback', 'transparent'), [rectangle('unsupported', '#ffffff', { x: 1, y: 1, width: 3, height: 3 })])
+    await renderDocumentPNG(doc('fallback', 'transparent'), [layer('unsupported', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 })])
     if (backend().backend !== 'legacy' || backend().reason !== 'non-image-layer') throw new Error('Fallback editorial ausente')
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade editorial: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
     return { documents: fixtures.length, consumers: ['PNG', 'Blob', 'sample'], fallback: true, maxAlphaDifference, maxPremultipliedDifference }
+  } finally { history.replaceState(null, '', original) }
+}
+
+async function compareShapeConsumer() {
+  const original = location.href, enabled = new URL(original); enabled.searchParams.set('axiaRustDocument', '1')
+  let cases = 0, maxAlphaDifference = 0, maxPremultipliedDifference = 0
+  try {
+    for (const kind of ['rectangle', 'ellipse', 'triangle', 'star']) {
+      for (const [index, blendMode] of ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten'].entries()) {
+        const fractional = index >= 2, rotation = [0, 0, 37, -90, 128, 180][index]
+        const top = rectangle(`shape-${cases}`, '#e04090', {
+          x: fractional ? 1.125 : 1, y: fractional ? 0.75 : 1,
+          width: fractional ? 4.25 : 5, height: fractional ? 3.25 : 4, rotation
+        }, { opacity: index % 2 ? 63.7 : 100, blendMode })
+        Object.assign(top.shape, { kind, baseWidth: 100, baseHeight: 80, cornerRadius: 3,
+          squareness: index % 2 ? 55 : 0, starPoints: 7, starInnerRatio: 37 })
+        top.styles.fillOpacity = index % 2 ? 37 : 100
+        const bottom = index % 2 ? imageLayer('shape-image-back', [
+          20, 96, 255, 109, 20, 96, 255, 109, 20, 96, 255, 109, 20, 96, 255, 109
+        ]) : rectangle('shape-back', '#2060ff', { x: 0, y: 0, width, height, rotation: 0 }, { opacity: 43.7 })
+        const documentSpec = doc(`shape-document-${cases}`, index % 2 ? 'white' : 'transparent')
+        const layers = [top, bottom, layer('background', 'background', {}, undefined)]
+        const expected = await pixelsFromPng(await renderDocumentPNG(documentSpec, layers))
+        history.replaceState(null, '', enabled)
+        const actual = await pixelsFromPng(await renderDocumentPNG(documentSpec, layers))
+        const backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+        if (backend.backend !== 'rust') throw new Error(`Forma ${kind}/${blendMode} em fallback: ${JSON.stringify(backend)}`)
+        history.replaceState(null, '', original)
+        for (let i = 0; i < actual.length; i += 4) {
+          maxAlphaDifference = Math.max(maxAlphaDifference, Math.abs(actual[i + 3] - expected[i + 3]))
+          for (let c = 0; c < 3; c++) maxPremultipliedDifference = Math.max(maxPremultipliedDifference,
+            Math.abs(actual[i + c] * actual[i + 3] / 255 - expected[i + c] * expected[i + 3] / 255))
+        }
+        cases++
+      }
+    }
+    if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade de formas: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
+    return { cases, maxAlphaDifference, maxPremultipliedDifference, alphaTolerance: 2, premultipliedTolerance: 3 }
   } finally { history.replaceState(null, '', original) }
 }
 
@@ -236,6 +275,7 @@ try {
   await assertUnsupportedShapeStyleRejects()
   const rustUnderlying = await compareRustUnderlying()
   const rustEditorial = await compareEditorialConsumer()
+  const rustShapes = await compareShapeConsumer()
   if (new URLSearchParams(location.search).has('record')) {
     result.textContent = JSON.stringify({ status: 'record', width, height, cases })
   } else {
@@ -274,7 +314,7 @@ try {
           errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)
         }
       }
-      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial })
+      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes })
     }
   }
 } catch (error) {

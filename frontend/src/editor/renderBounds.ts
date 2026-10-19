@@ -26,7 +26,7 @@ export function layerIntersectsDocument(layer: LayerItem, document: Pick<Documen
   return layerIntersectsBounds(layer, { x: 0, y: 0, width: document.width, height: document.height })
 }
 
-export function layerDocumentBounds(layer: LayerItem): DocumentBounds | undefined {
+export function layerDocumentBounds(layer: Pick<LayerItem, 'transform'>): DocumentBounds | undefined {
   return layer.transform ? transformedBounds(layer.transform) : undefined
 }
 

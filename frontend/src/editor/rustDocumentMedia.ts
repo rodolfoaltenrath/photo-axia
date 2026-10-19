@@ -7,6 +7,9 @@ import type { RustDocumentRasterLayer } from './rustDocumentComposite.ts'
 import type { RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
+import { drawRustDocumentShape, validateRustDocumentShape } from './rustDocumentShape.ts'
+import { activeLayerStyleEffects } from './layerStyleCompositor.ts'
+import { layerStyleBlendIfIsDefault } from './layerStyles.ts'
 
 export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, check: () => void) {
   check()
@@ -20,6 +23,15 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
     if (layer.source.type === 'raster') {
       if (!(layer.source.blob instanceof Blob)) throw new RustPixelPocError('invalid-input')
       encoded += layer.source.blob.size
+    } else if (layer.source.type === 'shape') {
+      const source = layer.source, matrix = [1, 0, 0, 1, source.originX, source.originY]
+      validateRustDocumentShape(source, input.documentWidth, input.documentHeight)
+      if (layer.input.sourceWidth !== source.width || layer.input.sourceHeight !== source.height ||
+          layer.opacity !== 100 || layer.input.styles.fillOpacity !== 100 || activeLayerStyleEffects(layer.input.styles).length ||
+          !layerStyleBlendIfIsDefault(layer.input.styles.blendIf) ||
+          !Array.isArray(layer.matrix) || layer.matrix.length !== 6 || matrix.some((value, index) => value !== layer.matrix[index])) {
+        throw new RustPixelPocError('invalid-input')
+      }
     } else if (layer.source.type !== 'solid' || layer.input.sourceWidth !== 1 || layer.input.sourceHeight !== 1 ||
         !Array.isArray(layer.source.color) || layer.source.color.length !== 4 ||
         layer.source.color.some(value => !Number.isInteger(value) || value < 0 || value > 255)) {
@@ -31,7 +43,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
     if (padded > 16 * 1024 * 1024 || encoded > 32 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
     return { layout, assets }
   })
-  const layers: RustDocumentRasterLayer[] = [], plans: RustPixelPocStagesPlan[] = []
+  const layers: RustDocumentRasterLayer[] = [], plans: (RustPixelPocStagesPlan | null)[] = []
   for (let index = 0; index < input.layers.length; index++) {
     check()
     const layer = input.layers[index]!, { layout, assets } = layouts[index]!
@@ -40,6 +52,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
       if (intrinsic.bytes > 16 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
     }
     const source = layer.source.type === 'raster' ? await decodeRustStyleSource(layer.source, layout, check) :
+      layer.source.type === 'shape' ? drawRustDocumentShape(layer.source, check) :
       { width: 1, height: 1, data: new Uint8ClampedArray(layer.source.color) }
     const patterns = await decodeRustStyleAssets(assets, check)
     const job = prepareRustStyleJob({ ...layer.input, patterns })
@@ -48,7 +61,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
       opacity: layer.opacity, blendMode: layer.blendMode,
       sourceToDocument: [a, b, c, d, tx + a * job.offsetX + c * job.offsetY, ty + b * job.offsetX + d * job.offsetY],
       underlyingBlendIf: rustEditorialUnderlying(layer.input) })
-    plans.push(job.plan)
+    plans.push(layer.source.type === 'shape' ? null : job.plan)
   }
   check()
   return encodeStyledDocument({ documentWidth: input.documentWidth, documentHeight: input.documentHeight,

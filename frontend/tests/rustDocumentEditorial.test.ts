@@ -4,6 +4,8 @@ import { planRustEditorialDocument, rustDocumentSourceMatrix, RustDocumentUnsupp
 import { rustStylePreviewEnabled } from '../src/editor/rustStylePreviewProtocol.ts'
 import { layer, image, transform, styles } from './editorTestFixtures.ts'
 import type { DocumentSpec } from '../src/types/editor.ts'
+import { DEFAULT_SHAPE_CONFIG } from '../src/editor/shape.ts'
+import { planRustDocumentShape, validateRustDocumentShape } from '../src/editor/rustDocumentShape.ts'
 
 const document: DocumentSpec = { id: 'doc', name: 'doc', width: 8, height: 6, unit: 'px',
   physicalWidth: 8, physicalHeight: 6, resolutionDpi: 72, colorSpace: 'srgb', background: 'transparent',
@@ -34,12 +36,61 @@ test('conta-gotas usa origem documental sem recentralizar ou recortar fontes/hal
   assert.equal(plan.layers[0]!.input.sourceWidth, 2); assert.equal(plan.layers[0]!.matrix[4], 3)
 })
 
-test('texto/formas, redução de fonte e escala de saída ficam explicitamente no fallback', () => {
+test('texto, redução de imagem e escala de saída ficam explicitamente no fallback', () => {
   assert.throws(() => planRustEditorialDocument(document, [layer({ kind: 'text', transform: transform() })], 8, 6, viewport), RustDocumentUnsupported)
   const smaller = picture(); smaller.transform!.width = 1
   assert.throws(() => planRustEditorialDocument(document, [smaller], 8, 6, viewport), /source-minification/)
   assert.throws(() => planRustEditorialDocument(document, [picture()], 4, 3, viewport), /output-scale-or-size/)
   assert.equal(planRustEditorialDocument(document, [layer({ kind: 'text', visible: false, transform: transform() })], 8, 6, viewport).layers.length, 0)
+})
+
+test('formas são traçadas em pixels documentais, inclusive ao reduzir suas dimensões vetoriais', () => {
+  for (const kind of ['rectangle', 'ellipse', 'triangle', 'star'] as const) {
+    const item = layer({ kind: 'shape', shape: { ...DEFAULT_SHAPE_CONFIG, kind, baseWidth: 1000, baseHeight: 500 },
+      transform: transform({ x: 1, y: 2, width: 4, height: 2 }), opacity: 63.7, styles: styles({ fillOpacity: 37 }) })
+    const plan = planRustEditorialDocument(document, [item], 8, 6, viewport), entry = plan.layers[0]!
+    assert.equal(entry.source.type, 'shape'); assert.equal(entry.opacity, 100)
+    assert.equal(entry.input.styles.fillOpacity, 100); assert.deepEqual(entry.matrix, [1, 0, 0, 1, 1, 2])
+    if (entry.source.type !== 'shape') throw new Error('fonte ausente')
+    assert.equal(entry.source.width, 4); assert.equal(entry.source.height, 2)
+    assert.equal(entry.source.alpha, (63.7 / 100) * 0.37)
+    item.shape!.color = '#ff0000'; assert.equal(entry.source.shape.color, '#000000')
+  }
+})
+
+test('forma fracionária/rotacionada não passa por segunda amostragem afim', () => {
+  const item = layer({ kind: 'shape', shape: { ...DEFAULT_SHAPE_CONFIG, baseWidth: 4, baseHeight: 2 },
+    transform: transform({ x: 1.25, y: 1.125, width: 4.5, height: 2.75, rotation: 37 }) })
+  const entry = planRustEditorialDocument(document, [item], 8, 6, viewport).layers[0]!
+  assert.equal(entry.source.type, 'shape')
+  if (entry.source.type !== 'shape') throw new Error('fonte ausente')
+  assert.deepEqual(entry.matrix, [1, 0, 0, 1, entry.source.originX, entry.source.originY])
+  assert.ok(Number.isInteger(entry.source.originX) && Number.isInteger(entry.source.originY))
+  assert.equal(entry.source.transform.rotation, 37)
+})
+
+test('bounds de forma são inteiros e recortados no documento, não no tile do conta-gotas', () => {
+  const shape = { ...DEFAULT_SHAPE_CONFIG, baseWidth: 4, baseHeight: 4 }
+  const clipped = planRustDocumentShape(shape, transform({ x: -1.25, y: -1.5, width: 4, height: 4 }), 8, 6, 1)!
+  assert.deepEqual([clipped.originX, clipped.originY, clipped.width, clipped.height], [0, 0, 3, 3])
+  validateRustDocumentShape(clipped, 8, 6)
+  assert.throws(() => validateRustDocumentShape({ ...clipped, originX: 1 }, 8, 6), /invalid-input/)
+  assert.equal(planRustDocumentShape(shape, transform({ x: 100, y: 100, width: 4, height: 4 }), 8, 6, 1), null)
+  const item = layer({ kind: 'shape', shape, transform: transform({ x: 1, y: 1, width: 4, height: 4 }) })
+  const source = planRustEditorialDocument(document, [item], 1, 1, { x: 2, y: 2, width: 1, height: 1 }).layers[0]!.source
+  assert.equal(source.type, 'shape'); if (source.type === 'shape') assert.deepEqual([source.width, source.height], [4, 4])
+})
+
+test('efeitos/Blend If de forma permanecem explícitos no fallback; dimensão/cor inválidas não alocam', () => {
+  const shape = { ...DEFAULT_SHAPE_CONFIG, baseWidth: 4, baseHeight: 4 }
+  const item = layer({ kind: 'shape', shape, transform: transform({ width: 4, height: 4 }) })
+  item.styles.blendIf.thisLayer.shadows = [0, 128]
+  assert.throws(() => planRustEditorialDocument(document, [item], 8, 6, viewport), /shape-style/)
+  item.styles = styles({ fillOpacity: 37 }); item.opacity = 125
+  assert.throws(() => planRustEditorialDocument(document, [item], 8, 6, viewport), /invalid-input/)
+  assert.throws(() => planRustDocumentShape({ ...shape, color: 'red' }, item.transform!, 8, 6, 1), /invalid-input/)
+  assert.throws(() => planRustDocumentShape({ ...shape, baseWidth: 0 }, item.transform!, 8, 6, 1), /invalid-input/)
+  assert.throws(() => planRustDocumentShape(shape, transform({ width: 4096, height: 2048 }), 4096, 2048, 1), /memory-limit/)
 })
 
 test('preflight editorial limita fonte e metadata antes do clone/fetch/decode', () => {

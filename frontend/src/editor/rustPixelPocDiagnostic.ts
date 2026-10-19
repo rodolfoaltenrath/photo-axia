@@ -6,6 +6,7 @@ import { styledRasterPreviewSnapshot } from './rustPixelPocStyledSource.ts'
 import { normalizeLayerStyleConfig } from './layerStyles.ts'
 import { RustPixelPocStyleSession } from './rustPixelPocStyleSession.ts'
 import { DEFAULT_TEXT_LAYER } from './text.ts'
+import { DEFAULT_SHAPE_CONFIG } from './shape.ts'
 import { createRustPixelPocStyleService } from '../services/rustPixelPocStyleService.ts'
 import { RustPixelPocStyleCancelledError } from './rustPixelPocStyleSession.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
@@ -609,6 +610,15 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
       }
       if (await sampleDocumentColor(document, layers, 0, 0) !== '#ff0000' || backend() !== 'rust') {
         throw new Error('Consumidor editorial de cor não usou o compositor Rust corretamente.')
+      }
+      const shapes = [{ ...layers[0]!, kind: 'shape' as const, image: undefined, opacity: 50,
+        styles: normalizeLayerStyleConfig({ fillOpacity: 50 }),
+        shape: { ...DEFAULT_SHAPE_CONFIG, color: '#ff0000', baseWidth: 100, baseHeight: 50 },
+        transform: { x: 0, y: 0, width: 2, height: 1, rotation: 0 } }]
+      const shapeBlob = await renderDocumentBlob(document, shapes)
+      if (backend() !== 'rust' || (await readPng(shapeBlob, 2, 1)).join(',') !== '255,0,0,64,255,0,0,64' ||
+          await sampleDocumentColor(document, shapes, 1, 0) !== '#ff0000' || backend() !== 'rust') {
+        throw new Error('Forma vetorial não preservou Fill/opacidade no compositor Rust.')
       }
     } finally { history.replaceState(null, '', originalUrl); URL.revokeObjectURL(mediaUrl) }
     return { elapsedMs: performance.now() - started, wasmBytes }

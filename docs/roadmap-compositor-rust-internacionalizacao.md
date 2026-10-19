@@ -781,6 +781,18 @@ registram fallback para texto/formas, minificação/escalas/limites, e a sequên
 até remover o legado. Sem flag, default continua igual; canvas único C4,
 cobertura integral e scheduler persistente ainda faltam. C3/C4 ficam abertos.
 
+Oitava fatia de C3: **formas no consumidor offscreen experimental**. Retângulo,
+elipse, triângulo e estrela reutilizam o traçado vetorial no Worker diretamente
+na grade documental; rotação/resize não viram reamostragem de um bitmap antigo.
+Fill/opacidade são incorporados uma vez, e Rust compõe a fonte 1:1 sem STG1
+duplicado. Bounds inteiros/clipping, preflight e cleanup mantêm os limites
+anteriores. Oráculo acrescenta 24 casos de formas nos seis modos, além de prova
+Blob/conta-gotas no Wails. [Contrato e limites](contrato-formas-documentais-rust-v1.md)
+registram que efeitos/Blend If em formas seguem a rejeição editorial existente;
+texto, escala/minificação de imagem, sessão persistente e demais consumidores
+ainda exigem trabalho. Sem mudança
+do preview padrão, rollout ou remoção do legado. C3/C4 permanecem abertos.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

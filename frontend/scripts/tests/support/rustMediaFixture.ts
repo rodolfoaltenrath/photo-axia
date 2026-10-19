@@ -20,7 +20,7 @@ export function rustMediaBlob(fixture: Partial<RustMediaFixture> = {}) {
 /** Canvas/decoder doubles only; real PNG coverage lives in the WebView smoke. */
 export function installRustMediaFixtures(options: { encodeDelayMs?: number; failEncodeCount?: number } = {}) {
   const originals = { OffscreenCanvas: globalThis.OffscreenCanvas, createImageBitmap: globalThis.createImageBitmap, ImageData: globalThis.ImageData }
-  const state = { decodes: 0, closes: 0, reads: 0, textDraws: 0,
+  const state = { decodes: 0, closes: 0, reads: 0, textDraws: 0, shapeFills: 0,
     encodes: 0, uploads: 0, failedEncodes: options.failEncodeCount ?? 0, badMime: false, emptyBlob: false,
     onEncode: null as (() => void) | null, encodeBlock: null as Promise<void> | null,
     options: [] as (ImageBitmapOptions | undefined)[], canvases: [] as Canvas[], block: null as Promise<void> | null }
@@ -41,8 +41,15 @@ export function installRustMediaFixtures(options: { encodeDelayMs?: number; fail
     }
     getContext() {
       const canvas = this
-      return {
+      const context = {
+        globalAlpha: 1, fillStyle: '#000000',
         save() {}, restore() {}, scale() {}, translate() {}, rotate() {}, fillRect() {},
+        beginPath() {}, closePath() {}, lineTo() {}, moveTo() {}, quadraticCurveTo() {},
+        fill() {
+          state.shapeFills++
+          canvas.pixels = [1, 3, 5].map(offset => Number.parseInt(context.fillStyle.slice(offset, offset + 2), 16))
+          canvas.pixels.push(Math.round(255 * context.globalAlpha))
+        },
         measureText(content: string) { return { width: content.length * 8 } },
         fillText() { state.textDraws++; canvas.pixels = [0, 0, 0, 255] },
         putImageData(pixels: ImageData) { state.uploads++; canvas.pixels = [...pixels.data] },
@@ -54,6 +61,7 @@ export function installRustMediaFixtures(options: { encodeDelayMs?: number; fail
           return { width, height, data }
         }
       }
+      return context
     }
   }
   class Pixels {

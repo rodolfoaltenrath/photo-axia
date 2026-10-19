@@ -9,6 +9,8 @@ import { RustPixelPocWorkerClient } from '../../src/editor/rustPixelPocWorkerCli
 import type { RustDocumentMediaInput, RustEditorialPlan } from '../../src/editor/rustDocumentEditorial.ts'
 import { createRustPixelWorkerHarness } from './support/rustPixelWorkerHarness.ts'
 import { rustMediaBlob, installRustMediaFixtures } from './support/rustMediaFixture.ts'
+import { planRustDocumentShape, drawRustDocumentShape } from '../../src/editor/rustDocumentShape.ts'
+import { DEFAULT_SHAPE_CONFIG } from '../../src/editor/shape.ts'
 
 const wasm = Uint8Array.from(readFileSync(new URL('../../../rust/axia-pixel-core/target/wasm32-unknown-unknown/release/axia_pixel_core.wasm', import.meta.url))).buffer
 function input(): RustDocumentMediaInput {
@@ -23,6 +25,69 @@ function plan(): RustEditorialPlan {
   const request = input()
   return { ...request, layers: request.layers.map(layer => ({ ...layer, source: { type: 'raster', url: 'blob:fixture' } })) }
 }
+
+function shapeInput(): RustDocumentMediaInput {
+  const request = input(), source = planRustDocumentShape({ ...DEFAULT_SHAPE_CONFIG, color: '#ff0000', baseWidth: 100, baseHeight: 50 },
+    { x: 0, y: 0, width: 2, height: 1, rotation: 0 }, 2, 1, (50 / 100) * 0.5)!
+  const layer = request.layers[0]!
+  layer.source = source; layer.input.sourceWidth = 2; layer.matrix = [1, 0, 0, 1, 0, 0]
+  return request
+}
+
+test('fonte vetorial prepara cobertura/Fill/opacidade uma vez sem decoder nem STG1 (Canvas double)', async () => {
+  const fixtures = installRustMediaFixtures(), runtime = await createRustPixelPocRuntime(wasm)
+  try {
+    const request = shapeInput(), packet = await prepareRustDocumentMedia(request, () => {})
+    const view = new DataView(packet.buffer)
+    assert.equal(view.getUint32(32, true), 0); assert.equal(view.getUint32(36, true), 0)
+    const document = runtime.prepareDocumentPacket(packet, 1)
+    assert.deepEqual([...runtime.composePreparedDocument(document.documentId, { x: 0, y: 0, width: 2, height: 1 }).rgba],
+      [255, 0, 0, 64, 255, 0, 0, 64])
+    assert.equal(fixtures.state.shapeFills, 1); assert.equal(fixtures.state.decodes, 0)
+    assert.ok(fixtures.state.canvases.every(canvas => canvas.width === 1 && canvas.height === 1))
+  } finally { fixtures.restore(); runtime.dispose() }
+})
+
+test('fonte vetorial falsificada é rejeitada antes de Canvas e não aceita opacidade/Fill duplicados', async () => {
+  const fixtures = installRustMediaFixtures()
+  try {
+    for (const mutate of [
+      (request: RustDocumentMediaInput) => { request.layers[0]!.opacity = 50 },
+      (request: RustDocumentMediaInput) => { request.layers[0]!.input.styles.fillOpacity = 50 },
+      (request: RustDocumentMediaInput) => { request.layers[0]!.matrix = [2, 0, 0, 1, 0, 0] },
+      (request: RustDocumentMediaInput) => { if (request.layers[0]!.source.type === 'shape') request.layers[0]!.source.originX = 1 }
+    ]) {
+      const request = shapeInput(); mutate(request)
+      await assert.rejects(prepareRustDocumentMedia(request, () => {}), /invalid-input/)
+    }
+    assert.equal(fixtures.state.shapeFills, 0); assert.equal(fixtures.state.canvases.length, 0)
+  } finally { fixtures.restore() }
+})
+
+test('falha ou cancelamento do traçado libera o canvas temporário (Canvas double)', () => {
+  const fixtures = installRustMediaFixtures(), source = shapeInput().layers[0]!.source
+  try {
+    if (source.type !== 'shape') throw new Error('forma ausente')
+    let checks = 0
+    assert.throws(() => drawRustDocumentShape(source, () => { if (++checks === 2) throw new Error('obsolete') }), /obsolete/)
+    assert.ok(fixtures.state.canvases.every(canvas => canvas.width === 1 && canvas.height === 1))
+  } finally { fixtures.restore() }
+})
+
+test('Worker documental real recebe descritor de forma sem Blob e compõe tiles (Canvas double)', async () => {
+  const worker = createRustPixelWorkerHarness({ mediaFixtures: true })
+  try {
+    await worker.send({ type: 'init', wasm: wasm.slice(0) })
+    const prepared = await worker.send({ type: 'prepare-document-media', input: shapeInput(), generation: 1 })
+    if (prepared.type !== 'document-prepared') throw new Error('documento ausente')
+    for (const x of [0, 1]) {
+      const tile = await worker.send({ type: 'compose-prepared-document', documentId: prepared.documentId,
+        region: { x, y: 0, width: 1, height: 1 } })
+      if (tile.type !== 'rendered-prepared-document') throw new Error('tile ausente')
+      assert.deepEqual([...new Uint8Array(tile.rgba)], [255, 0, 0, 64]); assert.equal(tile.timings.copyInMs, 0)
+    }
+  } finally { await worker.close() }
+})
 
 test('preparação documental decodifica, estiliza e corrige insets antes da composição Rust', async () => {
   const fixtures = installRustMediaFixtures(), runtime = await createRustPixelPocRuntime(wasm)
