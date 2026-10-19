@@ -5,6 +5,10 @@ Worker experimental. DCP1 continua aceito, sem alteração de layout ou resultad
 Preview normal, exportação, texto e `renderDocument.ts` continuam nos caminhos
 atuais. Não encerra C3 nem habilita o canvas único C4.
 
+Atualização da fatia 6: [DCP3](contrato-blend-if-documental-rust-v1.md) reutiliza
+esta grade/amostragem e adiciona filtro subjacente por camada. DCP2 e suas
+provas abaixo permanecem preservados; a consulta de capacidade passa a `3`.
+
 Relacionado à [pilha inicial](contrato-pilha-documental-rust-v1.md),
 [ABI DCP1](contrato-abi-pilha-documental-rust-v1.md),
 [contrato lógico](contrato-compositor-v1.md) e

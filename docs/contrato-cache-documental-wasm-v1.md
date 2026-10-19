@@ -6,6 +6,11 @@ um pacote documental preparado residente para renders regionais. Não há ainda
 consumidor editorial, scheduler documental, mudança do preview padrão ou
 substituição de `renderDocument.ts`/DOM. C3/C4 continuam abertos.
 
+Atualização da fatia 6: [DCP3/filtro subjacente](contrato-blend-if-documental-rust-v1.md)
+também pode ser preparado e mantido neste cache. SDP1 e seu ciclo de vida não
+mudam; o DCP interno passa a aceitar a versão 3. As provas locais ao fim desta
+página registram a entrega original da fatia 5.
+
 Relacionado a [DCP1](contrato-abi-pilha-documental-rust-v1.md),
 [DCP2](contrato-transformacoes-documentais-rust-v1.md),
 [STG1](contrato-estagios-v1.md) e ao
@@ -63,7 +68,7 @@ Sem estilo é exatamente `0/0`. Entradas com estilo têm comprimento mínimo de
 32 bytes e múltiplo de 8; ficam contíguas na ordem das camadas, imediatamente
 após o DCP. Não aceitar gaps, alias, padding entre pacotes ou bytes finais.
 
-O DCP1 ou DCP2 completo fica imediatamente após a tabela, preservando seu
+O DCP1, DCP2 ou DCP3 completo fica imediatamente após a tabela, preservando seu
 layout/validação. O envelope tem comprimento múltiplo de 4 e até **64 MiB**.
 Um STG1 pode começar em endereço não alinhado a 8: decodificação usa leituras
 little-endian de bytes, não casts alinhados.
@@ -94,8 +99,8 @@ arbitrários. O chamador deve cumprir esse contrato de segurança.
 
 O adapter nativo só escreve a saída depois de todos os estilos terminarem.
 Não altera a entrada. O export documental regional de quatro argumentos,
-DCP1/DCP2 e STG1 continuam iguais. A consulta de versão documental continua
-retornando `2`; SDP1 é uma capacidade separada, detectada pelo novo export de
+DCP1/DCP2 e STG1 continuam iguais. A consulta de versão documental retornava
+`2` na fatia 5 e passa a `3` com DCP3; SDP1 é uma capacidade separada, detectada pelo export de
 cinco argumentos. WASM antigo ainda atende suas operações anteriores, mas não
 pode preparar SDP1 (`wasm-unavailable`). Não é a ABI pública definitiva.
 
@@ -220,6 +225,8 @@ precisam ser implementados no futuro consumidor/scheduler, não inferidos do ID.
 
 Não há medida de ganho de FPS no editor, QA manual do usuário, instalador,
 portável ou remoção de legado nesta entrega. Os smokes limparam seus executáveis
-temporários. Próximos gates: `Blend If` subjacente sobre backdrop, minificação/
-paridade Canvas, preparação editorial, scheduler/revisões/admission e primeiro
-consumidor offscreen atrás de flag; depois superfície única C4.
+temporários. Na entrega original, `Blend If` subjacente ainda era pendente;
+a [fatia 6](contrato-blend-if-documental-rust-v1.md) o integra sobre o backdrop.
+Próximos gates atuais: minificação/paridade ampla Canvas, preparação editorial,
+scheduler/revisões/admission e primeiro consumidor offscreen atrás de flag;
+depois superfície única C4.

@@ -163,7 +163,10 @@ testes de cada adapter antes de substituir essas chamadas.
    à pilha nativa com fontes reutilizáveis. A
    [fatia 5](contrato-cache-documental-wasm-v1.md) acrescenta SDP1/runtime/Worker
    e cache DCP residente para tiles/grades sem reaplicar estilos. Adapter de
-   insets/unidades, scheduler/revisões e filtro subjacente ainda pendentes.
+   insets/unidades e scheduler/revisões ainda pendentes. A
+   [fatia 6/DCP3](contrato-blend-if-documental-rust-v1.md) integra filtro
+   subjacente sobre o backdrop regional, com quantização e comparação Canvas
+   delimitadas; não constitui ainda um consumidor editorial.
 4. Integrar um consumidor offscreen atrás de flag e ampliar pelos gates da
    tabela, compartilhando kernel, scheduler e orçamento. Não manter um
    compositor alternativo de aparência como otimização de preview.

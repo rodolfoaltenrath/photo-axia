@@ -11,6 +11,8 @@ pub mod document_packet;
 pub mod document_style_packet;
 pub mod document_styles;
 pub mod document_transform;
+#[cfg(test)]
+mod document_underlying_tests;
 pub mod drop_shadow;
 mod effect_math;
 pub mod glow;

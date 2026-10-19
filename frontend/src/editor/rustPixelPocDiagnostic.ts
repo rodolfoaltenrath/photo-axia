@@ -98,6 +98,24 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     }
     const releasedDocument = await send({ type: 'release-document', documentId: document.documentId })
     if (releasedDocument.type !== 'document-released') throw new Error('Release SDP1 falhou.')
+    const filteredPacket = encodeStyledDocument({ documentWidth: 1, documentHeight: 1,
+      region: { x: 0, y: 0, width: 1, height: 1 }, resolutionScale: 1,
+      outputGrid: { scaleX: 1, scaleY: 1, originX: 0, originY: 0 }, layersBottomToTop: [
+        { rgba: new Uint8Array([64, 20, 30, 255]), width: 1, height: 1, x: 0, y: 0,
+          visible: true, opacity: 100, blendMode: 'normal', sourceToDocument: [1, 0, 0, 1, 0, 0] },
+        { rgba: new Uint8Array([255, 255, 255, 1]), width: 1, height: 1, x: 0, y: 0,
+          visible: true, opacity: 50, blendMode: 'normal', sourceToDocument: [1, 0, 0, 1, 0, 0],
+          underlyingBlendIf: { channel: 'red', shadows: [0, 128], highlights: [255, 255] } }
+      ] }, [null, null])
+    const filteredDocument = await send({ type: 'prepare-document', packet: filteredPacket.buffer, generation: 2 }, [filteredPacket.buffer])
+    if (filteredDocument.type !== 'document-prepared') throw new Error('Preparação DCP3 falhou.')
+    const filteredTile = await send({ type: 'compose-prepared-document', documentId: filteredDocument.documentId,
+      region: { x: 0, y: 0, width: 1, height: 1 } })
+    if (filteredTile.type !== 'rendered-prepared-document' || filteredTile.generation !== 2 ||
+        [...new Uint8Array(filteredTile.rgba)].join(',') !== '65,21,31,255') throw new Error('Blend If DCP3 divergiu.')
+    if ((await send({ type: 'release-document', documentId: filteredDocument.documentId })).type !== 'document-released') {
+      throw new Error('Release DCP3 falhou.')
+    }
     const gate = new RustPixelPocTileGate()
     const observer = new RustPixelPocPreviewObserver(gate)
     const source = new Uint8Array([10, 20, 30, 101, 90, 80, 70, 255])

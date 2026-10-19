@@ -44,7 +44,11 @@ impl BlendIfConfig {
         Ok(())
     }
 
-    fn opacity(self, pixel: &[u8]) -> f64 {
+    pub(crate) fn is_default(self) -> bool {
+        self.shadows == [0, 0] && self.highlights == [255, 255]
+    }
+
+    pub(crate) fn opacity(self, pixel: &[u8]) -> f64 {
         // Keep TS's evaluation order and f64 precision, including gray luma.
         let value = match self.channel {
             BlendIfChannel::Gray => {

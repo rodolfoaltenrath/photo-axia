@@ -475,14 +475,19 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
     } finally { if (latestGeneration === generation) preparation = null }
   }
 
+  function requireDocumentVersion(packet: Uint8Array) {
+    const version = packet[3]! - 48
+    if (version >= 2 && (typeof exports.axia_poc_document_packet_version !== 'function' ||
+        exports.axia_poc_document_packet_version.length !== 0 || exports.axia_poc_document_packet_version() < version)) {
+      throw new RustPixelPocError('wasm-unavailable')
+    }
+  }
+
   function composeDocumentPacket(packet: Uint8Array) {
     if (disposed || typeof exports.axia_poc_document_region !== 'function' ||
         exports.axia_poc_document_region.length !== 4) throw new RustPixelPocError('wasm-unavailable')
     const { region, outputBytes, workingBytes } = documentCompositePacketLayout(packet)
-    if (packet[3] === 50 && (typeof exports.axia_poc_document_packet_version !== 'function' ||
-        exports.axia_poc_document_packet_version.length !== 0 || exports.axia_poc_document_packet_version() < 2)) {
-      throw new RustPixelPocError('wasm-unavailable')
-    }
+    requireDocumentVersion(packet)
     if (workingBytes + (staged?.length ?? 0) + (preparedDocument?.length ?? 0) > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
     const started = performance.now()
     const allocations: { pointer: number; length: number }[] = []
@@ -523,6 +528,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       throw new RustPixelPocError('invalid-input')
     }
     const layout = styledDocumentPacketLayout(packet), extra = preparedDocument?.length ?? 0
+    requireDocumentVersion(packet.subarray(layout.documentOffset, layout.documentOffset + layout.documentBytes))
     if (layout.workingBytes + extra > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
     const started = performance.now(), allocations: { pointer: number; length: number }[] = []
     try {
@@ -557,7 +563,7 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
       throw new RustPixelPocError('invalid-input')
     }
     const packet = new Uint8Array(exports.memory.buffer, document.pointer, document.length)
-    const transformed = packet[3] === 50
+    const transformed = packet[3] !== 49
     if (grid !== undefined && (!transformed || !grid || typeof grid !== 'object')) throw new RustPixelPocError('invalid-input')
     const saved = packet.slice(24, transformed ? 72 : 40)
     const started = performance.now()

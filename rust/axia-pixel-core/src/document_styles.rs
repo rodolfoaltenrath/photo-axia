@@ -277,6 +277,7 @@ mod tests {
             opacity: 100.0,
             blend_mode: BlendMode::Normal,
             transform: None,
+            underlying_blend_if: None,
         }
     }
     fn job<'a>(

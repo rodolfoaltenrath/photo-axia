@@ -1,5 +1,6 @@
-//! DCP1/DCP2 contain relative offsets only; no pointers in descriptors.
+//! DCP packets contain relative offsets only; no pointers in descriptors.
 
+use crate::blend_if::{BlendIfChannel, UnderlyingBlendIf};
 use crate::composite::BlendMode;
 use crate::document_composite::{
     compose_document_region, DocumentCompositeError, DocumentCompositeJob, DocumentRasterLayer,
@@ -60,6 +61,9 @@ pub(crate) fn decode_document_packet(
             (b"DCP2", 2, 80) if packet.len() >= 80 && packet[72..80].iter().all(|v| *v == 0) => {
                 (80, 80, true)
             }
+            (b"DCP3", 3, 80) if packet.len() >= 80 && packet[72..80].iter().all(|v| *v == 0) => {
+                (80, 96, true)
+            }
             _ => return Err(2),
         };
     let count = integer(packet, 12) as usize;
@@ -93,6 +97,24 @@ pub(crate) fn decode_document_packet(
             1 => true,
             _ => return Err(2),
         };
+        let underlying_blend_if = if record_bytes == 96 {
+            let extra = &packet[record + 80..record + 96];
+            match integer(extra, 0) {
+                0 if extra.iter().all(|v| *v == 0) => None,
+                1 if extra[12..16].iter().all(|v| *v == 0) => {
+                    let config = UnderlyingBlendIf {
+                        channel: BlendIfChannel::try_from(integer(extra, 4)).map_err(|_| 2u32)?,
+                        shadows: [extra[8], extra[9]],
+                        highlights: [extra[10], extra[11]],
+                    };
+                    config.validate().map_err(|_| 2u32)?;
+                    Some(config)
+                }
+                _ => return Err(2),
+            }
+        } else {
+            None
+        };
         layers.push(DocumentRasterLayer {
             rgba: &packet[offset..end],
             width: integer(packet, record + 8) as usize,
@@ -119,6 +141,7 @@ pub(crate) fn decode_document_packet(
                     double(packet, record + 32 + index * 8)
                 }))
             }),
+            underlying_blend_if,
         });
         cursor = end;
     }
@@ -156,7 +179,7 @@ pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u
 
 #[no_mangle]
 pub extern "C" fn axia_poc_document_packet_version() -> u32 {
-    2
+    3
 }
 
 /// # Safety
@@ -347,7 +370,7 @@ mod tests {
         let mut output = [99; 8];
         compose_document_packet(&affine_packet(), &mut output).unwrap();
         assert_eq!(output, [40, 80, 120, 191, 40, 80, 120, 64]);
-        assert_eq!(axia_poc_document_packet_version(), 2);
+        assert_eq!(axia_poc_document_packet_version(), 3);
     }
 
     #[test]
@@ -361,6 +384,47 @@ mod tests {
         }
         let mut bytes = affine_packet();
         bytes[72] = 1;
+        let mut output = [99; 8];
+        assert_eq!(compose_document_packet(&bytes, &mut output), Err(2));
+        assert_eq!(output, [99; 8]);
+    }
+
+    fn underlying_packet() -> Vec<u8> {
+        let original = affine_packet();
+        let mut bytes = vec![0; 180];
+        bytes[..160].copy_from_slice(&original[..160]);
+        bytes[..4].copy_from_slice(b"DCP3");
+        set(&mut bytes, 4, 3);
+        set(&mut bytes, 80, 176);
+        set(&mut bytes, 160, 1);
+        set(&mut bytes, 164, 1);
+        bytes[168..172].copy_from_slice(&[0, 128, 255, 255]);
+        bytes[176..180].copy_from_slice(&original[160..]);
+        bytes
+    }
+
+    #[test]
+    fn dcp3_filters_on_the_live_backdrop_and_keeps_disabled_records_canonical() {
+        let mut bytes = underlying_packet();
+        let mut output = [99; 8];
+        compose_document_packet(&bytes, &mut output).unwrap();
+        assert_eq!(output, [0; 8]);
+        bytes[160..176].fill(0);
+        compose_document_packet(&bytes, &mut output).unwrap();
+        assert_eq!(output, [40, 80, 120, 191, 40, 80, 120, 64]);
+    }
+
+    #[test]
+    fn dcp3_rejects_invalid_filter_fields_before_output_changes() {
+        for (offset, value) in [(160, 2), (164, 4), (168, 200), (171, 0), (172, 1)] {
+            let mut bytes = underlying_packet();
+            bytes[offset] = value;
+            let mut output = [99; 8];
+            assert!(compose_document_packet(&bytes, &mut output).is_err());
+            assert_eq!(output, [99; 8]);
+        }
+        let mut bytes = underlying_packet();
+        set(&mut bytes, 160, 0);
         let mut output = [99; 8];
         assert_eq!(compose_document_packet(&bytes, &mut output), Err(2));
         assert_eq!(output, [99; 8]);

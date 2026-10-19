@@ -1,5 +1,6 @@
 //! Prepared document stack with integer fast path and affine sampling.
 
+use crate::blend_if::UnderlyingBlendIf;
 use crate::composite::{composite_pixel_values, BlendMode};
 use crate::document_transform::{DocumentAffine, DocumentOutputGrid, DocumentSampler};
 use crate::{RasterRegion, MAX_POC_BYTES};
@@ -21,6 +22,7 @@ pub struct DocumentRasterLayer<'a> {
     pub opacity: f64,
     pub blend_mode: BlendMode,
     pub transform: Option<DocumentAffine>,
+    pub underlying_blend_if: Option<UnderlyingBlendIf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -44,6 +46,7 @@ pub enum DocumentCompositeError {
     TooManyLayers,
     InvalidTransform,
     WorkBudget,
+    InvalidBlendIf,
 }
 
 pub(crate) fn raster_bytes(width: usize, height: usize) -> Result<usize, DocumentCompositeError> {
@@ -104,6 +107,11 @@ pub(crate) fn validate_job(
         if !layer.opacity.is_finite() || !(0.0..=100.0).contains(&layer.opacity) {
             return Err(DocumentCompositeError::InvalidOpacity);
         }
+        if let Some(config) = layer.underlying_blend_if {
+            config
+                .validate()
+                .map_err(|_| DocumentCompositeError::InvalidBlendIf)?;
+        }
         if layer.transform.is_some() && (job.output_grid.is_none() || layer.x != 0 || layer.y != 0)
         {
             return Err(DocumentCompositeError::InvalidTransform);
@@ -134,6 +142,26 @@ pub(crate) fn validate_job(
                     }
                 }
             }
+        } else if layer.visible
+            && layer.opacity > 0.0
+            && layer
+                .underlying_blend_if
+                .is_some_and(|config| !config.is_default())
+        {
+            let left = (region.x as i64).max(i64::from(layer.x));
+            let top = (region.y as i64).max(i64::from(layer.y));
+            let right = ((region.x + region.width) as i64)
+                .min(i64::from(job.document_width))
+                .min(i64::from(layer.x) + layer.width as i64);
+            let bottom = ((region.y + region.height) as i64)
+                .min(i64::from(job.document_height))
+                .min(i64::from(layer.y) + layer.height as i64);
+            samples = samples
+                .checked_add((right - left).max(0) as usize * (bottom - top).max(0) as usize)
+                .ok_or(DocumentCompositeError::WorkBudget)?;
+            if samples > MAX_TRANSFORM_SAMPLES {
+                return Err(DocumentCompositeError::WorkBudget);
+            }
         }
         // Count every reference, including hidden layers and shared buffers.
         total = total
@@ -144,6 +172,27 @@ pub(crate) fn validate_job(
         }
     }
     Ok(())
+}
+
+fn compose_layer_pixel(
+    target: &mut [u8; 4],
+    mut color: [f64; 3],
+    mut alpha: f64,
+    layer: &DocumentRasterLayer<'_>,
+) {
+    if let Some(config) = layer
+        .underlying_blend_if
+        .filter(|config| !config.is_default())
+    {
+        // Match the document-space RGBA8 source stage before filtering and final blend.
+        alpha = (alpha + 0.5).floor();
+        alpha = (alpha * config.opacity(target) + 0.5).floor();
+        color = color.map(|value| (value.clamp(0.0, 255.0) + 0.5).floor());
+    }
+    composite_pixel_values(target, color, alpha, layer.blend_mode);
+    if target[3] == 0 {
+        target.fill(0);
+    }
 }
 
 pub fn compose_document_region(
@@ -187,15 +236,7 @@ pub fn compose_document_region(
                         let target: &mut [u8; 4] = (&mut output[index..index + 4])
                             .try_into()
                             .expect("validated RGBA output");
-                        composite_pixel_values(
-                            target,
-                            color,
-                            alpha * (layer.opacity / 100.0),
-                            layer.blend_mode,
-                        );
-                        if target[3] == 0 {
-                            target.fill(0);
-                        }
+                        compose_layer_pixel(target, color, alpha * (layer.opacity / 100.0), layer);
                     }
                 }
             }
@@ -224,7 +265,7 @@ pub fn compose_document_region(
                 let target: &mut [u8; 4] = (&mut output[output_index..output_index + 4])
                     .try_into()
                     .expect("validated RGBA output");
-                composite_pixel_values(
+                compose_layer_pixel(
                     target,
                     [
                         f64::from(pixel[0]),
@@ -232,11 +273,8 @@ pub fn compose_document_region(
                         f64::from(pixel[2]),
                     ],
                     f64::from(pixel[3]) * opacity,
-                    layer.blend_mode,
+                    layer,
                 );
-                if target[3] == 0 {
-                    target.fill(0);
-                }
             }
         }
     }
@@ -263,6 +301,7 @@ mod tests {
             opacity: 100.0,
             blend_mode: BlendMode::Normal,
             transform: None,
+            underlying_blend_if: None,
         }
     }
 

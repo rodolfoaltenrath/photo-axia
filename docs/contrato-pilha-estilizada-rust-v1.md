@@ -10,6 +10,8 @@ Atualização da fatia 5: [SDP1/cache documental WASM](contrato-cache-documental
 expõe esta preparação no runtime/Worker, com resultado residente reutilizado
 entre regiões/grades. A descrição e as provas abaixo registram a fatia 4;
 o contrato novo registra a ABI e sua validação. Ainda não há consumidor editorial.
+Na [fatia 6/DCP3](contrato-blend-if-documental-rust-v1.md), o filtro subjacente
+passa a ser avaliado durante a composição regional, não na preparação dos estilos.
 
 Relacionado à [pilha](contrato-pilha-documental-rust-v1.md),
 [transformações DCP2](contrato-transformacoes-documentais-rust-v1.md),

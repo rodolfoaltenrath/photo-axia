@@ -12,15 +12,17 @@ seis modos. Sua [ABI privada DCP1](contrato-abi-pilha-documental-rust-v1.md)
 já conecta WASM/runtime/Worker, sem consumidor editorial. A
 [fatia DCP2](contrato-transformacoes-documentais-rust-v1.md) acrescenta grade
 global, transformações afins, bilinear premultiplicado e cobertura geométrica;
-paridade Canvas/minificação, backdrop `Blend If` e integração editorial continuam
+paridade ampla Canvas/minificação e integração editorial continuam
 pendentes. Não promove este contrato lógico a ABI definitiva nem substitui Canvas/DOM.
 
 A [preparação de pilha estilizada](contrato-pilha-estilizada-rust-v1.md)
 integra STG1/Fill/Esta camada e composição regional no núcleo nativo, reutilizando
 fontes entre tiles. A [fatia SDP1/cache documental](contrato-cache-documental-wasm-v1.md)
 já a conecta ao WASM/runtime/Worker experimental, sem reupload ou efeitos por tile.
-Filtro subjacente, preparação editorial, scheduler e consumidores reais continuam
-pendentes; não é o fluxo atual do preview.
+O [filtro documental DCP3](contrato-blend-if-documental-rust-v1.md) já consulta o
+backdrop regional, preservando a ordem de opacidade/quantização. Preparação
+editorial, scheduler e consumidores reais continuam pendentes; não é o fluxo
+atual do preview.
 
 O [lote local experimental](contrato-lote-local-v1.md) tem ABI própria para
 fill/overlays/filtro terminal. Ainda não implementa a pilha ou transformações

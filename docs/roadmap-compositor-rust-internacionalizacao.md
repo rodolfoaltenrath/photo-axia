@@ -757,6 +757,18 @@ registram que ainda faltam filtro subjacente, adapters editoriais, minificação
 paridade Canvas, scheduler/admission e consumidores reais. C3/C4 ficam abertos;
 nenhuma troca de preview/default/exportação, stack, idioma ou versão.
 
+Sexta fatia de C3: **Mesclar se — Camada abaixo no compositor documental**.
+ABI DCP3 preserva DCP1/DCP2 e acrescenta filtro por camada; SDP1 retém seus
+descritores ao preparar estilos. O filtro consulta o backdrop regional da pilha
+após transformação/opacidade e antes do blend, com quantização explícita e sem
+buffers adicionais. Default mantém o caminho anterior. Testes exatos cobrem
+filtro TS isolado, alfa parcial, seis modos, estilos em cache, tiles/zoom/pan e
+compatibilidade com WASM DCP2; oráculo browser compara 24 casos com Canvas e
+preserva três goldens. [Contrato e limites](contrato-blend-if-documental-rust-v1.md)
+registram que adapters editoriais, minificação/paridade ampla, scheduler/admission
+e consumidores reais continuam pendentes. Não altera preview/default/exportação
+nem encerra C3/C4.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.
