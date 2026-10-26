@@ -11,7 +11,7 @@ import { drawRustDocumentShape, validateRustDocumentShape } from './rustDocument
 import { validateRustDocumentTextPixels } from './rustDocumentText.ts'
 import { activeLayerStyleEffects } from './layerStyleCompositor.ts'
 import { layerStyleBlendIfIsDefault } from './layerStyles.ts'
-import { rustRasterBilinearSupported } from './rustDocumentSampling.ts'
+import { rustRasterSamplingSupported } from './rustDocumentSampling.ts'
 
 export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, check: () => void) {
   check()
@@ -19,8 +19,9 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
   if (rustPixelPocStyleMetadataBytes(input) > 1024 * 1024) throw new RustPixelPocError('memory-limit')
   let encoded = 0, padded = 0
   const layouts = input.layers.map(layer => {
-    if (layer.sampling !== undefined && (layer.source.type !== 'raster' || !['raster-bilinear', 'raster-bilinear-precise'].includes(layer.sampling) ||
-        !Array.isArray(layer.matrix) || !rustRasterBilinearSupported(layer.matrix, input.grid))) throw new RustPixelPocError('invalid-input')
+    if (layer.sampling !== undefined && (layer.source.type !== 'raster' ||
+        !['raster-bilinear', 'raster-bilinear-precise', 'raster-area'].includes(layer.sampling) ||
+        !Array.isArray(layer.matrix) || !rustRasterSamplingSupported(layer.matrix, input.grid, layer.sampling))) throw new RustPixelPocError('invalid-input')
     const layout = prepareRustStyleSourceLayout(layer.input)
     if (layout.width > 16384 || layout.height > 16384) throw new RustPixelPocError('memory-limit')
     padded += layout.width * layout.height * 4

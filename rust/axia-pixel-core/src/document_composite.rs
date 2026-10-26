@@ -141,8 +141,12 @@ pub(crate) fn validate_job(
             )?;
             if layer.visible && layer.opacity > 0.0 {
                 if let Some(bounds) = sampler.bounds(region) {
+                    // Area sampling reads a footprint of texels per output pixel.
+                    let work = (bounds.width * bounds.height)
+                        .checked_mul(sampler.work_per_sample())
+                        .ok_or(DocumentCompositeError::WorkBudget)?;
                     samples = samples
-                        .checked_add(bounds.width * bounds.height)
+                        .checked_add(work)
                         .ok_or(DocumentCompositeError::WorkBudget)?;
                     if samples > MAX_TRANSFORM_SAMPLES {
                         return Err(DocumentCompositeError::WorkBudget);

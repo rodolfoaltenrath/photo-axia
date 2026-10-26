@@ -43,13 +43,20 @@ test('DCP4 versiona sampler por camada sem alterar layouts DCP1/2/3', () => {
 test('DCP4 preflight rejeita flags, reserva, redução, shear e grade sem suporte', () => {
   const sparse = [1, 0, 0, 1, 0, 0]; delete sparse[4]
   assert.throws(() => encodeDocumentComposite(job([source(sparse as unknown as Matrix)])), /invalid-input/)
-  for (const matrix of [[0.5, 0, 0, 1, 0, 0], [1, 0.1, 0, 1, 0, 0]] as Matrix[]) {
+  // Redução abaixo do mínimo bilinear (0,5) pertence à média de área; cisalhamento a nenhum modo.
+  for (const matrix of [[0.25, 0, 0, 1, 0, 0], [1, 0.1, 0, 1, 0, 0]] as Matrix[]) {
     assert.throws(() => encodeDocumentComposite(job([source(matrix)])), /invalid-input/)
   }
+  for (const matrix of [[2, 0, 0, 2, 0, 0], [0.3, 0, 0, 2, 0, 0]] as Matrix[]) {
+    assert.throws(() => encodeDocumentComposite(job([{ ...source(matrix), sampling: 'raster-area' }])), /invalid-input/)
+  }
+  const area = decodeDocumentComposite(encodeDocumentComposite(job([{ ...source([0.25, 0, 0, 0.5, 0, 0]), sampling: 'raster-area' }])))
+  assert.equal(area.layersBottomToTop[0]!.sampling, 'raster-area')
   for (const grid of [{ scaleX: 2, scaleY: 1, originX: 0, originY: 0 }, { scaleX: 1, scaleY: 1, originX: 0.25, originY: 0 }]) {
     assert.throws(() => encodeDocumentComposite({ ...job(), outputGrid: grid }), /invalid-input/)
   }
-  for (const [offset, value] of [[172, 3], [160, 2], [164, 1], [72, 1]]) {
+  // Modo 3 é a média de área; 4 é o primeiro desconhecido.
+  for (const [offset, value] of [[172, 4], [160, 2], [164, 1], [72, 1]]) {
     const packet = encodeDocumentComposite(job()); new DataView(packet.buffer).setUint32(offset!, value!, true)
     assert.throws(() => decodeDocumentComposite(packet), /invalid-input/)
   }

@@ -169,7 +169,8 @@ fn raster_global_tiles_match_whole_in_all_modes_without_extra_source_buffers() {
 #[test]
 fn unsupported_raster_sampling_rejects_even_hidden_layers_before_output_write() {
     for matrix in [
-        [0.5, 0.0, 0.0, 1.0, 0.0, 0.0],
+        // Below the bilinear minimum: reductions under 0.5 belong to RasterArea.
+        [0.25, 0.0, 0.0, 1.0, 0.0, 0.0],
         [1.0, 0.1, 0.0, 1.0, 0.0, 0.0],
         [1.0, 0.0, 0.0, 1.0, f64::NAN, 0.0],
     ] {
@@ -243,7 +244,8 @@ fn dcp4_sampler_is_versioned_and_malformed_modes_preserve_output() {
     let mut output = [99; 8];
     compose_document_packet(&packet, &mut output).unwrap();
     assert_eq!(output, [255, 0, 0, 255, 0, 0, 0, 0]);
-    for (offset, value) in [(172, 3), (160, 2), (164, 1), (72, 1)] {
+    // Mode 3 is RasterArea; 4 is the first unknown mode.
+    for (offset, value) in [(172, 4), (160, 2), (164, 1), (72, 1)] {
         let mut invalid = packet.clone();
         invalid[offset] = value;
         output.fill(99);
@@ -255,4 +257,126 @@ fn dcp4_sampler_is_versioned_and_malformed_modes_preserve_output() {
     output.fill(99);
     assert!(compose_document_packet(&packet, &mut output).is_err());
     assert_eq!(output, [99; 8]);
+}
+
+fn area(rgba: &[u8], width: usize, height: usize, matrix: [f64; 6]) -> DocumentRasterLayer<'_> {
+    DocumentRasterLayer {
+        sampling: DocumentSampling::RasterArea,
+        ..layer(rgba, width, height, matrix)
+    }
+}
+
+#[test]
+fn area_averages_the_exact_box_in_premultiplied_space() {
+    // red | blue | green | transparent red-hidden texel, halved horizontally.
+    let bytes = [255, 0, 0, 255, 0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 0];
+    let source = area(&bytes, 4, 1, [0.5, 0.0, 0.0, 1.0, 0.0, 0.0]);
+    // Left: mean of red and blue. Right: green over half the footprint, and the hidden
+    // RGB of the transparent texel must not tint it.
+    assert_eq!(
+        render(job(&[source], 2, 1)),
+        [128, 0, 128, 255, 0, 255, 0, 128]
+    );
+}
+
+#[test]
+fn area_gives_partially_covered_edges_exact_area_alpha() {
+    let red = [255, 0, 0, 255].repeat(4);
+    let source = area(&red, 2, 2, [0.5, 0.0, 0.0, 0.5, 0.25, 0.0]);
+    // The 1×1 footprint covers x in [0.25, 1.25]: 75% of pixel 0 and 25% of pixel 1.
+    assert_eq!(
+        render(job(&[source], 2, 1)),
+        [255, 0, 0, 191, 255, 0, 0, 64]
+    );
+}
+
+#[test]
+fn area_quarter_turn_averages_the_rotated_footprint() {
+    let bytes = [
+        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+    ];
+    let source = area(&bytes, 2, 2, [0.0, 0.5, -0.5, 0.0, 1.0, 0.0]);
+    assert_eq!(render(job(&[source], 1, 1)), [128, 128, 128, 255]);
+}
+
+#[test]
+fn area_rejects_magnification_shear_and_mixed_scales() {
+    for matrix in [
+        [2.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+        [0.3, 0.0, 0.0, 2.0, 0.0, 0.0],
+        [0.3, 0.1, 0.0, 0.3, 0.0, 0.0],
+    ] {
+        let source = area(&[255, 0, 0, 255], 1, 1, matrix);
+        let mut output = [99; 4];
+        assert!(compose_document_region(job(&[source], 1, 1), &mut output).is_err());
+        assert_eq!(output, [99; 4]);
+    }
+}
+
+#[test]
+fn area_tiles_match_the_whole_render_in_global_coordinates() {
+    let pixels: Vec<u8> = (0..16 * 12 * 4).map(|i| (i * 37 % 256) as u8).collect();
+    for matrix in [
+        [0.3, 0.0, 0.0, 0.3, 0.75, 1.5],
+        [0.0, 0.45, -0.35, 0.0, 6.25, 0.5],
+        [-0.25, 0.0, 0.0, 0.4, 5.5, 0.125],
+    ] {
+        let source = area(&pixels, 16, 12, matrix);
+        let layers = [source];
+        let whole = render(job(&layers, 8, 6));
+        for (x, y, width, height) in [(0, 0, 3, 2), (3, 0, 5, 2), (0, 2, 8, 4)] {
+            let mut request = job(&layers, 8, 6);
+            request.region = RasterRegion {
+                x,
+                y,
+                width,
+                height,
+            };
+            let tile = render(request);
+            for row in 0..height {
+                let start = ((y + row) * 8 + x) * 4;
+                assert_eq!(
+                    &tile[row * width * 4..(row + 1) * width * 4],
+                    &whole[start..start + width * 4]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn area_work_per_sample_counts_the_source_footprint() {
+    use crate::document_transform::DocumentSampler;
+    let grid = DocumentOutputGrid {
+        scale_x: 1.0,
+        scale_y: 1.0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+    };
+    let work = |matrix: [f64; 6], sampling| {
+        DocumentSampler::new(DocumentAffine(matrix), grid, 64, 64, 64, 64, sampling)
+            .unwrap()
+            .work_per_sample()
+    };
+    assert_eq!(
+        work(
+            [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            DocumentSampling::RasterBilinear
+        ),
+        1
+    );
+    assert_eq!(
+        work(
+            [0.25, 0.0, 0.0, 0.25, 0.0, 0.0],
+            DocumentSampling::RasterArea
+        ),
+        25
+    );
+    assert_eq!(
+        work(
+            [0.0, 0.5, -0.1, 0.0, 0.0, 0.0],
+            DocumentSampling::RasterArea
+        ),
+        33
+    );
 }

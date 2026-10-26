@@ -11,7 +11,7 @@ import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import { planRustDocumentShape, type RustDocumentShapeSource } from './rustDocumentShape.ts'
 import { planRustDocumentText, rustDocumentTextFontsReady,
   type RustDocumentTextPixels, type RustDocumentTextSource } from './rustDocumentText.ts'
-import { rustRasterBilinearSupported, rustRasterBilinearMode } from './rustDocumentSampling.ts'
+import { rustRasterSamplingMode } from './rustDocumentSampling.ts'
 
 type Matrix = NonNullable<RustDocumentRasterLayer['sourceToDocument']>
 export type RustDocumentBoundsPolicy = 'document' | 'appearance'
@@ -136,10 +136,11 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     }
     if (!layer.image) throw new RustDocumentUnsupported('non-image-layer')
     const image = layer.image, transform = layer.transform
-    if (transform.width < image.width || transform.height < image.height) throw new RustDocumentUnsupported('source-minification')
     const matrix = rustDocumentSourceMatrix(transform, image.width, image.height)
     const resampled = !pixelAlignedSource(matrix)
-    if (resampled && !rustRasterBilinearSupported(matrix, result.grid)) throw new RustDocumentUnsupported('source-transform-quality')
+    // Ampliação e redução até 0,5 usam o bilinear compatível com Canvas; abaixo, a média de área.
+    const sampling = resampled ? rustRasterSamplingMode(matrix, result.grid, layer.blendMode) : undefined
+    if (resampled && !sampling) throw new RustDocumentUnsupported('source-transform-quality')
     const styles = normalizeLayerStyleConfig(layer.styles)
     metadata += rustPixelPocStyleMetadataBytes({ id: layer.id, url: image.sourceUrl, styles })
     if (metadata > 512 * 1024) throw new RustPixelPocError('memory-limit')
@@ -152,7 +153,7 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     const [a, b, c, d, tx, ty] = matrix
     result.layers.push({ source: { type: 'raster', url: image.sourceUrl }, input,
       matrix: [a, b, c, d, tx - shiftX, ty - shiftY], opacity: layer.opacity, blendMode: layer.blendMode,
-      ...(resampled ? { sampling: rustRasterBilinearMode(matrix, layer.blendMode) } : {}) })
+      ...(sampling ? { sampling } : {}) })
   }
   if (result.layers.some(layer => layer.sampling) && result.layers.some(layer => layerStyleBlendIfUsesUnderlying(layer.input.styles.blendIf))) {
     throw new RustDocumentUnsupported('source-transform-blend-if')

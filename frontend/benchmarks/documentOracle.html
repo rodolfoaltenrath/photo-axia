@@ -450,11 +450,20 @@ async function compareAppearanceConsumers() {
     }
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade aparência/mesclagem: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
     history.replaceState(null, '', enabled)
-    const reduced = imageLayer('appearance-reduced', new Array(4).fill([255, 0, 0, 255]).flat())
-    Object.assign(reduced.transform, { width: 1, height: 1 })
-    await renderLayerAppearance(spec, reduced)
+    // Redução deixou de ser fallback: 0,5 usa o bilinear e 0,25 a média de área.
+    for (const size of [1, 0.5]) {
+      const reduced = imageLayer(`appearance-reduced-${size}`, new Array(4).fill([255, 0, 0, 255]).flat())
+      Object.assign(reduced.transform, { width: size, height: size })
+      await renderLayerAppearance(spec, reduced)
+      const reducedBackend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+      if (reducedBackend.backend !== 'rust' || reducedBackend.purpose !== 'layer') throw new Error(`Redução ${size} da aparência fora do Rust: ${JSON.stringify(reducedBackend)}`)
+    }
+    // Rotação arbitrária continua sem modo raster e mantém o fallback da aparência.
+    const rotated = imageLayer('appearance-rotated', new Array(4).fill([255, 0, 0, 255]).flat())
+    Object.assign(rotated.transform, { rotation: 30 })
+    await renderLayerAppearance(spec, rotated)
     const fallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
-    if (fallback.backend !== 'legacy' || fallback.purpose !== 'layer' || fallback.reason !== 'source-minification') throw new Error('Fallback de minificação da aparência ausente')
+    if (fallback.backend !== 'legacy' || fallback.purpose !== 'layer' || fallback.reason !== 'source-transform-quality') throw new Error('Fallback de transformação da aparência ausente')
     const text = layer('merge-text-fallback', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { blendMode: 'multiply' })
     await renderMergedLayers(spec, [text])
     const textFallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')

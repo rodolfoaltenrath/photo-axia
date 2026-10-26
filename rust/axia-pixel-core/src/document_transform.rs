@@ -35,7 +35,14 @@ pub enum DocumentSampling {
     CoverageBilinear,
     RasterBilinear,
     RasterBilinearPrecise,
+    /// Exact box-filter average over each output pixel's source footprint. Used for
+    /// reductions below 0.5, where bilinear starts skipping texels and aliases.
+    RasterArea,
 }
+
+/// Smallest axis scale the raster bilinear modes accept. Below it bilinear samples
+/// stop touching every texel; `RasterArea` covers that range instead.
+pub const RASTER_BILINEAR_MIN_SCALE: f64 = 0.5;
 
 impl DocumentAffine {
     pub fn validate(self) -> Result<(), DocumentCompositeError> {
@@ -113,9 +120,22 @@ impl DocumentSampler {
                 }
             }
             let [a, b, c, d, _, _] = transform.0;
-            if !((b == 0.0 && c == 0.0 && a.abs() >= 1.0 && d.abs() >= 1.0)
-                || (a == 0.0 && d == 0.0 && b.abs() >= 1.0 && c.abs() >= 1.0))
-            {
+            // Axis-aligned or quarter turn; scales are the non-zero pair.
+            let scales = if b == 0.0 && c == 0.0 {
+                Some((a.abs(), d.abs()))
+            } else if a == 0.0 && d == 0.0 {
+                Some((b.abs(), c.abs()))
+            } else {
+                None
+            };
+            let supported = scales.is_some_and(|(sx, sy)| {
+                if sampling == DocumentSampling::RasterArea {
+                    sx > 0.0 && sy > 0.0 && sx <= 1.0 && sy <= 1.0
+                } else {
+                    sx >= RASTER_BILINEAR_MIN_SCALE && sy >= RASTER_BILINEAR_MIN_SCALE
+                }
+            });
+            if !supported {
                 return Err(DocumentCompositeError::InvalidTransform);
             }
         }
@@ -218,7 +238,89 @@ impl DocumentSampler {
         })
     }
 
+    /// Upper bound of source texels read per output sample, for the work budget.
+    pub fn work_per_sample(&self) -> usize {
+        if self.sampling != DocumentSampling::RasterArea {
+            return 1;
+        }
+        // A unit output pixel maps to a source footprint of these extents.
+        let footprint_u = (self.inverse[0].abs() / self.grid.scale_x
+            + self.inverse[2].abs() / self.grid.scale_y)
+            .ceil();
+        let footprint_v = (self.inverse[1].abs() / self.grid.scale_x
+            + self.inverse[3].abs() / self.grid.scale_y)
+            .ceil();
+        // Validated scales keep both extents within [1, 1e6]; saturate rather than wrap.
+        ((footprint_u as usize).saturating_add(1))
+            .saturating_mul((footprint_v as usize).saturating_add(1))
+    }
+
+    /// Box-filter average of the source over the output pixel square, in premultiplied
+    /// space. Texels outside the source count as transparent, so partially covered
+    /// edge pixels get exact area coverage instead of a hard clip.
+    fn sample_area(&self, rgba: &[u8], x: usize, y: usize) -> ([f64; 3], f64) {
+        let (px, py) = (x as f64, y as f64);
+        if px < self.document[0]
+            || py < self.document[1]
+            || px + 1.0 > self.document[2]
+            || py + 1.0 > self.document[3]
+        {
+            return ([0.0; 3], 0.0);
+        }
+        let corners = [(px, py), (px + 1.0, py + 1.0)].map(|(cx, cy)| {
+            let dx = cx / self.grid.scale_x + self.grid.origin_x - self.translation[0];
+            let dy = cy / self.grid.scale_y + self.grid.origin_y - self.translation[1];
+            (
+                self.inverse[0] * dx + self.inverse[2] * dy,
+                self.inverse[1] * dx + self.inverse[3] * dy,
+            )
+        });
+        let (u0, u1) = (
+            corners[0].0.min(corners[1].0),
+            corners[0].0.max(corners[1].0),
+        );
+        let (v0, v1) = (
+            corners[0].1.min(corners[1].1),
+            corners[0].1.max(corners[1].1),
+        );
+        let area = (u1 - u0) * (v1 - v0);
+        let (cu0, cu1) = (u0.max(0.0), u1.min(self.width as f64));
+        let (cv0, cv1) = (v0.max(0.0), v1.min(self.height as f64));
+        if area <= 0.0 || cu0 >= cu1 || cv0 >= cv1 {
+            return ([0.0; 3], 0.0);
+        }
+        let mut alpha = 0.0;
+        let mut color = [0.0; 3];
+        // Fixed summation order (rows, then columns) keeps the result reproducible.
+        let mut iy = cv0.floor() as usize;
+        while (iy as f64) < cv1 {
+            let wy = cv1.min(iy as f64 + 1.0) - cv0.max(iy as f64);
+            let mut ix = cu0.floor() as usize;
+            while (ix as f64) < cu1 {
+                let wx = cu1.min(ix as f64 + 1.0) - cu0.max(ix as f64);
+                let offset = (iy * self.width + ix) * 4;
+                let contribution = f64::from(rgba[offset + 3]) * (wx * wy);
+                alpha += contribution;
+                for channel in 0..3 {
+                    color[channel] += f64::from(rgba[offset + channel]) * contribution;
+                }
+                ix += 1;
+            }
+            iy += 1;
+        }
+        if alpha == 0.0 {
+            return ([0.0; 3], 0.0);
+        }
+        for channel in &mut color {
+            *channel /= alpha;
+        }
+        (color, alpha / area)
+    }
+
     pub fn sample(&self, rgba: &[u8], x: usize, y: usize) -> ([f64; 3], f64) {
+        if self.sampling == DocumentSampling::RasterArea {
+            return self.sample_area(rgba, x, y);
+        }
         // Evaluate global coordinates independently; never accumulate from tile origin.
         let dx = (x as f64 + 0.5) / self.grid.scale_x + self.grid.origin_x - self.translation[0];
         let dy = (y as f64 + 0.5) / self.grid.scale_y + self.grid.origin_y - self.translation[1];

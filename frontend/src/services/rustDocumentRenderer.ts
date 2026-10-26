@@ -5,6 +5,7 @@ import { RustDocumentOffscreen } from '../editor/rustDocumentOffscreen.ts'
 import { connectRustStyleWorker } from './rustPixelPocStyleService.ts'
 import { RustPixelPocError } from '../editor/rustPixelPocError.ts'
 import { rustDocumentSamplingCompatible } from './rustDocumentSamplingCompatibility.ts'
+import { rustRasterSamplingNeedsPlatformProbe } from '../editor/rustDocumentSampling.ts'
 
 let renderer: RustDocumentOffscreen | undefined
 let retiring = Promise.resolve()
@@ -24,7 +25,8 @@ export async function renderRustDocumentCanvas(document: DocumentSpec, layers: L
   viewport: DocumentBounds, boundsPolicy: RustDocumentBoundsPolicy = 'document') {
   const current = epoch
   const plan = planRustEditorialDocument(document, layers, width, height, viewport, boundsPolicy)
-  if (plan.layers.some(layer => layer.sampling) && !await rustDocumentSamplingCompatible()) {
+  // A média de área é convenção do Rust; só os modos bilineares dependem do Canvas da plataforma.
+  if (plan.layers.some(layer => rustRasterSamplingNeedsPlatformProbe(layer.sampling)) && !await rustDocumentSamplingCompatible()) {
     throw new RustDocumentUnsupported('source-transform-platform')
   }
   await retiring

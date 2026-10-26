@@ -5,7 +5,7 @@ import { createRustPixelPocRuntime } from '../../src/editor/rustPixelPocRuntime.
 import { rasterParityAnyPrecision, rasterParityDifference, rasterParityWithin, rasterSourceEdges } from '../../src/editor/rustRasterParity.ts'
 
 const wasm = Uint8Array.from(readFileSync(new URL('../../../rust/axia-pixel-core/target/wasm32-unknown-unknown/release/axia_pixel_core.wasm', import.meta.url))).buffer
-// Gravado no WebView2 real do executável Wails (scripts/recordWebView2Resampling.mjs).
+// Gravado no WebView2 real do executável Wails (scripts/recordCanvasReferences.mjs).
 const recorded = JSON.parse(readFileSync(new URL('../../tests/fixtures/webview2Resampling.v1.json', import.meta.url), 'utf8')) as {
   encoding: 'rgba-base64'; userAgent: string; width: number; height: number; backdrop: number[]; opacity: number
   matrices: number[][]; sources: number[][]
@@ -47,6 +47,32 @@ test('kernel Rust casa estritamente com o Canvas do WebView2 real fora dos pixel
   } finally { runtime.dispose() }
   assert.ok(maxAlpha <= 2 && maxColor <= 3)
   assert.ok(ties > 0, 'a gravação precisa exercitar pixels de empate')
+})
+
+test('redução de 0,5 a 0,99 no WebView2 distribuído (CPU) é o bilinear do Rust, sem mipmap', async () => {
+  const minified = JSON.parse(readFileSync(new URL('../../tests/fixtures/webview2Minification.v1.json', import.meta.url), 'utf8')) as {
+    encoding: string; width: number; height: number; size: number; backdrop: number[]; opacity: number
+    matrices: number[][]; sources: number[][]; cases: { matrixIndex: number; mode: Mode; rgba: string }[]
+  }
+  assert.equal(minified.encoding, 'rgba-base64'); assert.equal(minified.cases.length, 36)
+  const runtime = await createRustPixelPocRuntime(wasm)
+  try {
+    for (const item of minified.cases) {
+      const matrix = minified.matrices[item.matrixIndex]!
+      assert.ok(Math.min(Math.hypot(matrix[0]!, matrix[1]!), Math.hypot(matrix[2]!, matrix[3]!)) >= 0.5)
+      const candidates = precisions.map(variant => ({ variant, rgba: runtime.composeDocumentRegion({
+        documentWidth: minified.width, documentHeight: minified.height,
+        region: { x: 0, y: 0, width: minified.width, height: minified.height }, resolutionScale: 1,
+        outputGrid: { scaleX: 1, scaleY: 1, originX: 0, originY: 0 }, layersBottomToTop: [
+          { rgba: new Uint8Array(minified.backdrop), width: 1, height: 1, x: 0, y: 0, visible: true, opacity: 100,
+            blendMode: 'normal', sourceToDocument: [minified.width, 0, 0, minified.height, 0, 0] },
+          { rgba: new Uint8Array(minified.sources[0]!), width: minified.size, height: minified.size, x: 0, y: 0, visible: true,
+            opacity: minified.opacity, blendMode: item.mode, sourceToDocument: matrix as never, sampling: variant }] }).rgba }))
+      const best = rasterParityAnyPrecision(Buffer.from(item.rgba, 'base64'), candidates, minified.width, minified.height,
+        [rasterSourceEdges(matrix, minified.size, minified.size)])
+      assert.ok(rasterParityWithin(best), `m${item.matrixIndex} [${matrix.join(',')}] ${item.mode}: ${best.alpha}/${best.color.toFixed(2)}`)
+    }
+  } finally { runtime.dispose() }
 })
 
 test('sem a máscara de empate o WebView2 diverge: a exceção é necessária, não decorativa', async () => {

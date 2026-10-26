@@ -38,10 +38,8 @@ test('conta-gotas usa origem documental sem recentralizar ou recortar fontes/hal
   assert.equal(plan.layers[0]!.input.sourceWidth, 2); assert.equal(plan.layers[0]!.matrix[4], 3)
 })
 
-test('camada de texto sem conteúdo, redução de imagem e escala de saída ficam no fallback', () => {
+test('camada de texto sem conteúdo e escala de saída ficam no fallback', () => {
   assert.throws(() => planRustEditorialDocument(document, [layer({ kind: 'text', transform: transform() })], 8, 6, viewport), RustDocumentUnsupported)
-  const smaller = picture(); smaller.transform!.width = 1
-  assert.throws(() => planRustEditorialDocument(document, [smaller], 8, 6, viewport), /source-minification/)
   assert.throws(() => planRustEditorialDocument(document, [picture()], 4, 3, viewport), /output-scale-or-size/)
   assert.equal(planRustEditorialDocument(document, [layer({ kind: 'text', visible: false, transform: transform() })], 8, 6, viewport).layers.length, 0)
 })
@@ -151,12 +149,13 @@ test('fundo sintético preserva o retângulo original, sem preencher toda a view
   assert.equal(result.documentWidth, 12); assert.equal(result.documentHeight, 9)
 })
 
-test('aparência não libera redução raster, texto sem conteúdo nem origens não inteiras ou extremas', () => {
+test('aparência não libera texto sem conteúdo nem origens não inteiras ou extremas', () => {
   for (const x of [0.5, 0x1_0000_0000, Infinity]) {
     assert.throws(() => planRustEditorialDocument(document, [], 2, 2, { x, y: 0, width: 2, height: 2 }, 'appearance'), /invalid-input/)
   }
   const item = picture(); item.transform!.width = 1
-  assert.throws(() => planRustEditorialDocument(document, [item], 2, 2, { x: 0, y: 0, width: 2, height: 2 }, 'appearance'), /source-minification/)
+  assert.equal(planRustEditorialDocument(document, [item], 2, 2, { x: 0, y: 0, width: 2, height: 2 }, 'appearance').layers[0]!.sampling,
+    'raster-bilinear')
   assert.throws(() => planRustEditorialDocument(document, [layer({ kind: 'text', transform: transform() })],
     2, 2, { x: 0, y: 0, width: 2, height: 2 }, 'appearance'), /non-image-layer/)
 })
@@ -205,4 +204,19 @@ test('flag documental é explícito e tem precedência sobre estilos Rust separa
   assert.equal(rustDocumentEnabled('?axiaRustDocument=true'), false)
   assert.equal(rustStylePreviewEnabled('?axiaRustStyles=1'), true)
   assert.equal(rustStylePreviewEnabled('?axiaRustDocument=1&axiaRustStyles=1'), false)
+})
+
+test('redução escolhe bilinear até 0,5, média de área abaixo e recusa o que nenhum modo representa', () => {
+  const sized = (width: number, height: number, rotation = 0) => {
+    const item = picture(); Object.assign(item.transform!, { width, height, rotation }); return item
+  }
+  const sampling = (item: ReturnType<typeof picture>) => planRustEditorialDocument(document, [item], 8, 6, viewport).layers[0]!.sampling
+  assert.equal(sampling(sized(1, 1.5)), 'raster-bilinear') // 0,5 × 0,75
+  assert.equal(sampling({ ...sized(1, 1.5), blendMode: 'multiply' }), 'raster-bilinear-precise')
+  assert.equal(sampling(sized(0.5, 1.5)), 'raster-area') // 0,25 × 0,75
+  assert.equal(sampling(sized(0.6, 0.6, 90)), 'raster-area')
+  assert.equal(sampling(sized(0.6, 0.6, 180)), 'raster-area')
+  // Redução forte num eixo com ampliação no outro, e rotação arbitrária na redução.
+  assert.throws(() => planRustEditorialDocument(document, [sized(0.5, 8)], 8, 6, viewport), /source-transform-quality/)
+  assert.throws(() => planRustEditorialDocument(document, [sized(0.6, 0.6, 30)], 8, 6, viewport), /source-transform-quality/)
 })

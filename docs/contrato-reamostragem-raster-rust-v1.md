@@ -1,8 +1,8 @@
 # Reamostragem raster compatível com Canvas — C3, fatia 11
 
-Estado: **ampliação raster, translação fracionária e quartos de volta passam pelo
-Rust sob o flag documental experimental**. Minificação e rotação arbitrária
-continuam em fallback integral. Não habilita Rust por padrão nem altera o
+Estado: **ampliação, redução, translação fracionária e quartos de volta passam pelo
+Rust sob o flag documental experimental**; redução abaixo de 0,5 usa média de área
+(seção 6.1). Rotação arbitrária continua em fallback integral. Não habilita Rust por padrão nem altera o
 compositor legado, o `.axia` ou o preview.
 
 Relacionado à [aparência e mesclagem](contrato-aparencia-mesclagem-rust-v1.md)
@@ -28,7 +28,7 @@ mascararia o problema.
 
 ## 2. Modos de amostragem
 
-`DocumentSampling` acrescenta dois modos ao sampler existente; o padrão continua
+`DocumentSampling` acrescenta três modos ao sampler existente; o padrão continua
 sendo cobertura, de modo que DCP1–DCP3 e os consumidores anteriores não mudam.
 
 | Modo | Kernel | Quando o adapter escolhe |
@@ -36,6 +36,7 @@ sendo cobertura, de modo que DCP1–DCP3 e os consumidores anteriores não mudam
 | `CoverageBilinear` | cobertura geométrica + bilinear (DCP2) | fonte 1:1 alinhada à grade e formas |
 | `RasterBilinear` | bilinear no centro, clamp na borda, fração quantizada em 1/16, recorte retangular | modo Normal sem rotação |
 | `RasterBilinearPrecise` | igual, sem quantização da fração | demais modos ou com quarto de volta/espelhamento |
+| `RasterArea` | média de caixa exata sobre a pegada do pixel, em espaço premultiplicado | redução abaixo de 0,5 em algum eixo |
 
 O recorte retangular inclui o pixel `i` quando `i ≥ floor(borda + 0,5)` na
 borda inicial e `i < floor(borda + 0,5)` na final. A quantização em 1/16 e a
@@ -43,15 +44,17 @@ escolha por modo de mesclagem reproduzem o pipeline que o Skia usa em cada caso;
 ambas foram fixadas empiricamente pelo oráculo, não por documentação do Chrome.
 
 O sampler recusa os modos raster quando a grade de saída não é 1:1 com origem
-inteira (`UnsupportedScale`) ou quando a matriz não é alinhada a eixos com
-`|escala| ≥ 1` em cada eixo, admitindo quartos de volta (`InvalidTransform`).
+inteira (`UnsupportedScale`) ou quando a matriz não é alinhada a eixos, admitindo
+quartos de volta (`InvalidTransform`). Os bilineares exigem `|escala| ≥ 0,5` em cada
+eixo (`RASTER_BILINEAR_MIN_SCALE`); a área exige `0 < |escala| ≤ 1` nos dois.
 Componentes com módulo até `1e-12` são tratados como zero.
 
 ## 3. ABI — DCP4
 
 O pacote DCP4 (versão 4, cabeçalho de 80 bytes, registro de camada de 96 bytes)
 carrega o modo no byte 92 do registro: `0` cobertura, `1` `RasterBilinear`,
-`2` `RasterBilinearPrecise`. Qualquer outro valor rejeita o pacote inteiro.
+`2` `RasterBilinearPrecise`, `3` `RasterArea`. Qualquer outro valor rejeita o
+pacote inteiro.
 O TypeScript só emite DCP4 quando ao menos uma camada pede reamostragem; os
 demais pedidos continuam com a versão anterior, preservando compatibilidade com
 WASM que não exporte o DCP4.
@@ -62,9 +65,9 @@ Em ordem, para cada camada raster:
 
 | Condição | Resultado |
 | --- | --- |
-| largura ou altura de destino menor que a fonte | `source-minification` |
 | matriz alinhada à grade (fatia 10) | composição 1:1, sem modo raster |
-| ampliação alinhada a eixos ou quarto de volta, grade 1:1 inteira | modo raster |
+| alinhada a eixos ou quarto de volta, as duas escalas ≥ 0,5 | bilinear |
+| alinhada a eixos ou quarto de volta, escalas ≤ 1 e alguma < 0,5 | média de área |
 | qualquer outra transformação | `source-transform-quality` |
 | reamostragem combinada a `Mesclar se: camada abaixo` no documento | `source-transform-blend-if` |
 
@@ -115,8 +118,8 @@ direção nem é constante dentro do mesmo WebView2, então esse caminho não se
 
 ### 5.2 Mecanismo medido e ativação no WebView2 (2026-10-26)
 
-`scripts/recordWebView2Resampling.mjs` (`npm run record:webview2-resampling`)
-grava a saída real do Canvas do WebView2 do executável de produção nos mesmos
+`scripts/recordCanvasReferences.mjs` (`npm run record:canvas-references --
+--target webview2 --suite resampling`) grava a saída real do Canvas do WebView2 do executável de produção nos mesmos
 288 casos, em contexto CPU (`willReadFrequently`, 16×12) e padrão (512×512, que
 pode ser acelerado por GPU como o canvas de exportação): 576 referências em
 `frontend/tests/fixtures/webview2Resampling.v1.json`, gravadas no Chromium 155.
@@ -157,7 +160,7 @@ chamada DevTools e a janela de 30 s do status reprovaram execuções sem defeito
 Sete execuções seguidas fora dessa janela passaram. É fragilidade do harness,
 anterior a esta mudança.
 
-## 6. Minificação — medida e recusada (2026-10-26)
+## 6. Minificação — primeira medição (2026-10-26; decisão superada pela seção 6.1)
 
 Antes de relaxar `source-minification`, a hipótese de que o kernel raster casaria
 também na redução foi testada no Edge headless contra Canvas CPU (24×20,
@@ -180,7 +183,7 @@ quarto de volta, espelhamento e os seis modos: **3.744 casos**. Resultado:
 Os dois contextos deram resultados idênticos; o headless provavelmente não usa
 GPU, então isso **não** prova o comportamento do canvas acelerado no WebView2.
 
-Decisão: manter `source-minification`. O subconjunto provadamente seguro seria
+Decisão original, superada pela seção 6.1: manter `source-minification`. O subconjunto provadamente seguro seria
 estreito, dependente de empates de float32 e conteria um caso inexplicado.
 Suporte futuro exige, nesta ordem: emular a pirâmide de mipmap do Skia e seu
 critério de nível (limiar entre 0,51 e 0,55 neste ambiente), identificar o
@@ -188,6 +191,45 @@ pipeline do modo Normal na redução, reproduzir o arredondamento de borda e
 explicar o caso de 0,99 — **ou** decidir conscientemente trocar o oráculo byte a
 byte por paridade visual com tolerância e heatmap para minificação, decisão de
 produto que não cabe tomar implicitamente. O código experimental foi revertido.
+
+### 6.1 Redução implementada: bilinear até 0,5, área abaixo (2026-10-26)
+
+Com a semântica de paridade da seção 5.2, uma nova gravação
+(`recordCanvasReferences.mjs --suite minification`, 1.152 casos por ambiente, 16
+escalas entre 0,3 e 0,99) mostrou que a redução **também** não tem alvo único:
+
+| escala | WebView2 155, CPU | WebView2 155, GPU | Edge headless 156 |
+| --- | --- | --- | --- |
+| 0,54 – 0,99 | bilinear, 0 falhas | resíduos ≤ 6/10 | resíduos ≤ 6/10 |
+| 0,505 – 0,53 | bilinear, 0 falhas | mipmap | mipmap |
+| 0,4 – 0,5 | bilinear, 0 falhas | resíduos ≤ 6/10 | mipmap |
+
+O WebView2 distribuído usa bilinear puro em toda a faixa; o Chromium 156 passou a
+usar mipmap abaixo de ~0,53. Com isso a escolha fica no critério de qualidade:
+abaixo de 0,5 o bilinear amostra com passo maior que dois texels e há texels que
+nunca contribuem (aliasing); a partir de 0,5 todos contribuem. O Rust define:
+
+- **≥ 0,5 nos dois eixos:** os modos bilineares, que casam estritamente com o
+  WebView2 distribuído (regressão em `webview2Minification.v1.json`, 36 casos);
+- **< 0,5 em algum eixo:** `RasterArea`, a média exata da fonte sobre o quadrado do
+  pixel, com texels de fora contando como transparentes — bordas recebem cobertura
+  de área exata em vez do recorte duro.
+
+`RasterArea` não tem paridade com nenhum Canvas e não passa pela sonda. Ele é
+validado por uma **referência independente** em TypeScript, escrita a partir da
+definição, que casa **byte a byte** com o Rust em 192 casos (escalas de 0,1 a 1,
+quarto de volta, espelho, borda fora do documento, origem de grade não nula,
+opacidade parcial e tiles). Contra o Canvas, abaixo de 0,5, a diferença média de
+RGB premultiplicado fica entre 0,9 e 2,3 (de 255) e o máximo chega a 75–107 nas
+bordas da camada; sem 1,5 px junto às bordas, a média cai para 0,5–0,95, mas o
+máximo ainda chega a ~60 em conteúdo de alta frequência, que é exatamente onde o
+Canvas pula texels e a área não. Esses números são informativos, não critério.
+
+O custo da área por pixel é a pegada em texels; o orçamento de trabalho conta
+`(⌈pegada u⌉ + 1)(⌈pegada v⌉ + 1)` por pixel, igual no Rust e na pré-checagem TS.
+No total, um render inteiro lê cada texel da fonte poucas vezes, qualquer que seja
+a escala. O limite de 16 MiB de fontes por documento do consumidor experimental
+continua valendo: uma foto de 4000×3000 ainda cai em fallback por memória.
 
 ## 7. Provas
 
@@ -208,12 +250,13 @@ produto que não cabe tomar implicitamente. O código experimental foi revertido
   **288 casos**, todos dentro de 2/3; máximo observado 2 de alfa e 2,39 de RGB
   premultiplicado.
 - Planner (`rustDocumentEditorial.test.ts`): escolha de modo por mesclagem e
-  rotação, recusa de minificação nas políticas `document` e `appearance`,
+  rotação, escolha entre bilinear e área por escala, recusa de redução forte
+  combinada com ampliação e de rotação arbitrária,
   rotação arbitrária e combinação com `Mesclar se` abaixo.
 
 ## 8. Gates restantes
 
-Minificação (seção 6), rotação
+Fotos acima do orçamento de 16 MiB de fontes, rotação
 arbitrária, reamostragem com `Mesclar se` abaixo, escala de saída diferente de
 1:1, WebView2 com GPU em outras máquinas e QA com documentos do usuário. Texto
 entrou no consumidor na fatia 12 sem reamostragem (ver

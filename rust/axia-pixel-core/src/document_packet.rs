@@ -123,6 +123,7 @@ pub(crate) fn decode_document_packet(
                 (_, 0) => DocumentSampling::CoverageBilinear,
                 (b'4', 1) => DocumentSampling::RasterBilinear,
                 (b'4', 2) => DocumentSampling::RasterBilinearPrecise,
+                (b'4', 3) => DocumentSampling::RasterArea,
                 _ => return Err(2),
             }
         } else {

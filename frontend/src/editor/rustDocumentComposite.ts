@@ -1,7 +1,7 @@
 import type { LayerBlendMode } from '../types/editor.ts'
 import type { RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
-import { rustRasterBilinearSupported } from './rustDocumentSampling.ts'
+import { rustRasterSamplingSupported } from './rustDocumentSampling.ts'
 
 const HEADER = 48, RECORD = 40, MAX_BYTES = 64 * 1024 * 1024
 const MAX_WORKING_BYTES = 96 * 1024 * 1024, MAX_LAYERS = 1024, MAX_AXIS = 16384
@@ -10,6 +10,9 @@ const MODES: Readonly<Record<LayerBlendMode, number>> = {
 }
 const MODE_NAMES = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten'] as const
 const CHANNELS = ['gray', 'red', 'green', 'blue'] as const
+// Valor do campo de amostragem do registro DCP4; 0 é a cobertura geométrica.
+const SAMPLING_NAMES = ['raster-bilinear', 'raster-bilinear-precise', 'raster-area'] as const
+const SAMPLING_CODES = new Map<string, number>(SAMPLING_NAMES.map((name, index) => [name, index + 1]))
 
 export interface RustDocumentRasterLayer {
   rgba: Uint8Array
@@ -22,7 +25,7 @@ export interface RustDocumentRasterLayer {
   blendMode: LayerBlendMode
   sourceToDocument?: readonly [number, number, number, number, number, number]
   underlyingBlendIf?: RustPixelPocUnderlyingBlendIf
-  sampling?: 'raster-bilinear' | 'raster-bilinear-precise'
+  sampling?: 'raster-bilinear' | 'raster-bilinear-precise' | 'raster-area'
 }
 
 export interface RustDocumentOutputGrid {
@@ -71,7 +74,13 @@ function transformedWorkPixels(layer: RustDocumentRasterLayer, job: RustDocument
   const top = Math.max(Math.floor(Math.max(Math.min(...points.map(p => p[1]!)), -grid.originY * grid.scaleY)), job.region.y)
   const right = Math.min(Math.ceil(Math.min(Math.max(...points.map(p => p[0]!)), (job.documentWidth - grid.originX) * grid.scaleX)), job.region.x + job.region.width)
   const bottom = Math.min(Math.ceil(Math.min(Math.max(...points.map(p => p[1]!)), (job.documentHeight - grid.originY) * grid.scaleY)), job.region.y + job.region.height)
-  return Math.max(0, right - left) * Math.max(0, bottom - top)
+  const pixels = Math.max(0, right - left) * Math.max(0, bottom - top)
+  if (layer.sampling !== 'raster-area') return pixels
+  // Espelha work_per_sample do Rust: a área lê a pegada inteira de texels por pixel de saída.
+  const det = a * d - b * c
+  const footprintU = Math.ceil(Math.abs(d / det) / grid.scaleX + Math.abs(-c / det) / grid.scaleY)
+  const footprintV = Math.ceil(Math.abs(-b / det) / grid.scaleX + Math.abs(a / det) / grid.scaleY)
+  return pixels * (footprintU + 1) * (footprintV + 1)
 }
 
 export function documentCompositeJobLayout(job: RustDocumentCompositeJob) {
@@ -103,7 +112,7 @@ export function documentCompositeJobLayout(job: RustDocumentCompositeJob) {
     boundedInteger(layer.x, -0x80000000, 0x7fffffff)
     boundedInteger(layer.y, -0x80000000, 0x7fffffff)
     if (layer.underlyingBlendIf !== undefined) validateUnderlying(layer.underlyingBlendIf)
-    if (layer.sampling !== undefined && layer.sampling !== 'raster-bilinear' && layer.sampling !== 'raster-bilinear-precise') invalid()
+    if (layer.sampling !== undefined && !SAMPLING_CODES.has(layer.sampling)) invalid()
     if (transformed) {
       const matrix = layer.sourceToDocument
       if (!Array.isArray(matrix) || matrix.length !== 6 || layer.x !== 0 || layer.y !== 0) invalid()
@@ -113,7 +122,7 @@ export function documentCompositeJobLayout(job: RustDocumentCompositeJob) {
       const [a, b, c, d] = matrix, det = a * d - b * c
       if (!Number.isFinite(det) || Math.abs(det) < 1e-12 ||
           [d / det, -b / det, -c / det, a / det].some(v => !Number.isFinite(v) || Math.abs(v) > 1_000_000)) invalid()
-      if (layer.sampling && !rustRasterBilinearSupported(matrix, job.outputGrid!)) invalid()
+      if (layer.sampling && !rustRasterSamplingSupported(matrix, job.outputGrid!, layer.sampling)) invalid()
     } else if (layer.sourceToDocument !== undefined) invalid()
     if (layer.rgba.byteLength !== rasterBytes(layer.width, layer.height)) invalid()
     if (transformed) {
@@ -159,7 +168,7 @@ export function encodeDocumentComposite(job: RustDocumentCompositeJob): Uint8Arr
       view.setUint32(offset + 80, 1, true); view.setUint32(offset + 84, CHANNELS.indexOf(config.channel), true)
       bytes.set([...config.shadows, ...config.highlights], offset + 88)
     }
-    if (layer.sampling) view.setUint32(offset + 92, layer.sampling === 'raster-bilinear' ? 1 : 2, true)
+    if (layer.sampling) view.setUint32(offset + 92, SAMPLING_CODES.get(layer.sampling)!, true)
     bytes.set(layer.rgba, cursor)
     cursor += layer.rgba.byteLength
   })
@@ -191,9 +200,8 @@ function parseDocumentComposite(packet: Uint8Array): RustDocumentCompositeJob {
     if (version >= 3) {
       const enabled = view.getUint32(offset + 80, true), channel = CHANNELS[view.getUint32(offset + 84, true)]
       const sample = view.getUint32(offset + 92, true)
-      if (enabled > 1 || sample > (version === 4 ? 2 : 0)) invalid()
-      if (sample === 1) sampling = 'raster-bilinear'
-      if (sample === 2) sampling = 'raster-bilinear-precise'
+      if (enabled > 1 || sample > (version === 4 ? SAMPLING_NAMES.length : 0)) invalid()
+      if (sample > 0) sampling = SAMPLING_NAMES[sample - 1]
       if (enabled === 0) {
         if (view.getUint32(offset + 84, true) !== 0 || view.getUint32(offset + 88, true) !== 0) invalid()
       } else {
