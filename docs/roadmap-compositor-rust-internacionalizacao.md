@@ -833,6 +833,14 @@ números e o que seria preciso para suportá-la no
 [contrato de reamostragem](contrato-reamostragem-raster-rust-v1.md). Não muda
 preview/default, `.axia`, texto, stack ou versões; C3/C4 permanecem abertos.
 
+Correção da fatia 11 (2026-10-26): o smoke Wails revelou que o WebView2 desta
+máquina decide empates de borda para o lado oposto ao do Edge headless. A sonda
+reprova e a fatia fica **inativa** no app instalado — sem saída errada para o
+usuário, mas também sem benefício. O diagnóstico Wails, que reprovava o smoke por
+exigir paridade incondicional, agora a exige só onde a sonda aprovou; a sonda
+passou a cobrir empates nos dois eixos e bordas; o smoke informa o estado. Ativar
+aqui exige medir o WebView2 com a regra invertida antes de transmiti-la ao sampler.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

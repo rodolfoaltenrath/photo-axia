@@ -1,5 +1,27 @@
 let compatibility: Promise<boolean> | undefined
 
+/**
+ * O recorte raster do Rust inclui o pixel `i` quando `floor(início + 0,5) <= i < floor(fim + 0,5)`:
+ * centro exatamente na borda fica fora no início e dentro no fim. O Skia não decide esse empate
+ * igual em todo ambiente — o WebView2 medido em 2026-10-26 arredonda para o lado negativo, o Edge
+ * headless para o positivo. Verifica início e fim nos dois eixos, não só o início em y.
+ */
+function tiesRoundTowardPositive(output: HTMLCanvasElement, content: CanvasImageSource, size: number) {
+  for (const [tx, ty, outside, inside] of [
+    [3.5, 3.25, [2, 3], [4, 3]], // bordas em x = 2,5 e 4,5
+    [3.25, 3.5, [3, 2], [3, 4]] // bordas em y = 2,5 e 4,5
+  ] as const) {
+    output.width = size; output.height = size
+    const context = output.getContext('2d')
+    if (!context) return false
+    context.translate(tx, ty)
+    context.drawImage(content, -1, -1, 2, 2)
+    if (context.getImageData(outside[0], outside[1], 1, 1).data[3] !== 0 ||
+        context.getImageData(inside[0], inside[1], 1, 1).data[3] === 0) return false
+  }
+  return true
+}
+
 export function rustDocumentSamplingCompatible() {
   return compatibility ??= probeCompatibility()
 }
@@ -27,6 +49,7 @@ async function probeCompatibility() {
         const corner = context.getImageData(2, 2, 1, 1).data, middle = context.getImageData(3, 3, 1, 1).data
         const expected = scale === 1 ? [128, 191, 128, 255] : [164, 80, 32, 255]
         if (corner[3] !== 0 || expected.some((value, index) => Math.abs(value - middle[index]!) > 2)) return false
+        if (scale === 1 && !tiesRoundTowardPositive(output, content, size)) return false
       }
       return true
     } catch { return false }

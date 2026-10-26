@@ -16,7 +16,9 @@ import { encodeStyledDocument } from './rustStyledDocument.ts'
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
 /** Explicit diagnostic only; never an editor renderer. */
-export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; wasmBytes: number }> {
+export async function runRustPixelPocDiagnostic(): Promise<{
+  elapsedMs: number; wasmBytes: number; rasterResampling: 'rust' | 'platform-fallback'
+}> {
   const started = performance.now()
   const response = await fetch(wasmUrl)
   if (!response.ok) throw new Error(`WASM indisponível (HTTP ${response.status}).`)
@@ -594,6 +596,7 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     const originalUrl = location.href, mediaUrl = URL.createObjectURL(mediaBlob)
     const documentRenderer = await import('../services/rustDocumentRenderer.ts')
     const initialDocumentSession = documentRenderer.rustDocumentRendererStats()
+    let rasterResampling: 'rust' | 'platform-fallback' = 'platform-fallback'
     try {
       const diagnosticUrl = new URL(originalUrl); diagnosticUrl.searchParams.set('axiaRustDocument', '1')
       history.replaceState(null, '', diagnosticUrl)
@@ -653,6 +656,7 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
       try {
         const { rustDocumentSamplingCompatible } = await import('../services/rustDocumentSamplingCompatibility.ts')
         const compatible = await rustDocumentSamplingCompatible()
+        rasterResampling = compatible ? 'rust' : 'platform-fallback'
         const spec = { ...document, width: 12, height: 10 }
         const lower = { ...shapes[0]!, opacity: 43.7, styles: normalizeLayerStyleConfig({}),
           shape: { ...DEFAULT_SHAPE_CONFIG, color: '#2050a0', baseWidth: 12, baseHeight: 10 },
@@ -686,9 +690,13 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
       await documentRenderer.disposeRustDocumentRenderer()
       history.replaceState(null, '', originalUrl); URL.revokeObjectURL(mediaUrl)
     }
-    const { runRustDocumentResamplingDiagnostic } = await import('./rustDocumentResamplingDiagnostic.ts')
-    await runRustDocumentResamplingDiagnostic(await (await fetch(wasmUrl)).arrayBuffer())
-    return { elapsedMs: performance.now() - started, wasmBytes }
+    // A paridade de reamostragem só vale onde a sonda aprovou o Canvas da plataforma. Onde reprovou, o laço
+    // raster acima já exigiu o fallback source-transform-platform; exigir paridade aqui reprovaria o que é seguro.
+    if (rasterResampling === 'rust') {
+      const { runRustDocumentResamplingDiagnostic } = await import('./rustDocumentResamplingDiagnostic.ts')
+      await runRustDocumentResamplingDiagnostic(await (await fetch(wasmUrl)).arrayBuffer())
+    }
+    return { elapsedMs: performance.now() - started, wasmBytes, rasterResampling }
   } finally {
     worker.terminate()
   }

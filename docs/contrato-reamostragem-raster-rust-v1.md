@@ -77,8 +77,45 @@ versão do Skia). Antes do primeiro documento com camada reamostrada, o renderer
 executa uma sonda única por página: desenha uma fonte 2×2 conhecida em canvases
 de 16 e 512 px, a partir de `HTMLImageElement` e `ImageBitmap`, nas escalas 1 e
 1,5 com translação fracionária, e compara pixels de canto e de miolo com o
-esperado (tolerância 2). Falha, exceção ou estouro de 2 s resultam em
-`source-transform-platform` e fallback integral; o resultado fica em cache.
+esperado (tolerância 2). Desde 2026-10-26 a sonda também verifica o **empate de
+borda** nos dois eixos e nas duas bordas: centro de pixel exatamente na borda
+inicial fica fora, na final fica dentro — a regra do recorte do Rust. Falha,
+exceção ou estouro de 2 s resultam em `source-transform-platform` e fallback
+integral; o resultado fica em cache.
+
+### 5.1 WebView2 medido: sonda reprova, fatia inativa (2026-10-26)
+
+O smoke Wails (executável de produção, WebView2 real desta máquina) mostrou que
+**o Canvas do WebView2 decide empates de borda para o lado negativo**, ao
+contrário do Edge headless usado pelo oráculo. Na translação `(2,5; 2,25)`, a
+imagem inteira sai deslocada uma coluna: o Canvas pinta a coluna 2 (centro na
+borda inicial) e não pinta a 4 (centro na borda final). Alfa diverge em até 93.
+
+Consequências medidas:
+
+- **Usuários protegidos:** a sonda reprova neste WebView2, então toda camada
+  reamostrada cai no Canvas legado. Nenhuma saída errada chega ao usuário.
+- **Fatia inativa aqui:** neste ambiente a reamostragem Rust nunca é usada; os
+  288 casos verdes do oráculo headless **não se transferem** ao app instalado.
+- **Diagnóstico corrigido:** o diagnóstico Wails exigia paridade de reamostragem
+  incondicionalmente e reprovava o smoke inteiro, embora o comportamento fosse
+  seguro. Agora só a exige onde a sonda aprovou; onde reprovou, o laço raster
+  anterior já verifica o fallback `source-transform-platform`. O smoke imprime
+  em qual dos dois estados a plataforma está, para que um caminho inteiro em
+  fallback não volte a ficar invisível.
+- **Sonda reforçada:** antes ela testava só o empate da borda inicial em `y` e
+  acertou aqui porque o WebView2 erra nos dois eixos. Agora cobre os quatro.
+
+Caminho para ativar a fatia neste WebView2: detectar a direção do empate na
+sonda e transmiti-la ao sampler (um modo DCP4 adicional), **depois** de medir
+os 288 casos no WebView2 com a regra invertida — é preciso confirmar que o empate
+é a única diferença antes de assumir isso.
+
+O smoke Wails também se mostrou sensível a carga da máquina: em uma janela de
+lentidão (execuções de 72 s e 129 s contra ~15 s normais), o limite de 5 s por
+chamada DevTools e a janela de 30 s do status reprovaram execuções sem defeito.
+Sete execuções seguidas fora dessa janela passaram. É fragilidade do harness,
+anterior a esta mudança.
 
 ## 6. Minificação — medida e recusada (2026-10-26)
 
@@ -136,6 +173,7 @@ produto que não cabe tomar implicitamente. O código experimental foi revertido
 
 ## 8. Gates restantes
 
-Minificação (seção 6), rotação arbitrária, reamostragem com `Mesclar se` abaixo,
-escala de saída diferente de 1:1, sonda em WebView2 com GPU real e QA com
-documentos do usuário. Texto continua fora do consumidor experimental.
+Ativação no WebView2 desta máquina (seção 5.1), minificação (seção 6), rotação
+arbitrária, reamostragem com `Mesclar se` abaixo, escala de saída diferente de
+1:1, WebView2 com GPU em outras máquinas e QA com documentos do usuário. Texto
+continua fora do consumidor experimental.

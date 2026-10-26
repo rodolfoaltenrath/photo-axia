@@ -17,6 +17,7 @@ async function bootstrap() {
       .then(({ runRustPixelPocDiagnostic }) => runRustPixelPocDiagnostic())
       .then(async (result) => {
         document.documentElement.dataset.axiaRustPocWasmBytes = String(result.wasmBytes)
+        document.documentElement.dataset.axiaRustPocResampling = result.rasterResampling
         if (params.get('axiaRustMediaBenchmark') === '1') {
           const { runRustStyleMediaBenchmark } = await import('./editor/rustStyleMediaBenchmark.ts')
           document.documentElement.dataset.axiaRustMediaBenchmark = JSON.stringify(await runRustStyleMediaBenchmark())

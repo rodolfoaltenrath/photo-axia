@@ -115,7 +115,7 @@ try {
   const evaluate = evaluator(socket)
   let result
   for (let attempt = 0; attempt < (mediaBenchmark ? 1200 : 300); attempt++) {
-    result = await evaluate('({ status: document.documentElement.dataset.axiaRustPoc, error: document.documentElement.dataset.axiaRustPocError, wasmBytes: Number(document.documentElement.dataset.axiaRustPocWasmBytes) })')
+    result = await evaluate('({ status: document.documentElement.dataset.axiaRustPoc, error: document.documentElement.dataset.axiaRustPocError, wasmBytes: Number(document.documentElement.dataset.axiaRustPocWasmBytes), resampling: document.documentElement.dataset.axiaRustPocResampling })')
     if (result?.status) break
     await delay(100)
   }
@@ -123,6 +123,9 @@ try {
   assert.equal(result.wasmBytes, readFileSync(join(repoRoot, 'frontend', 'src', 'generated', 'axia_pixel_core.wasm')).length,
     'O diagnóstico deve reportar o tamanho do WASM carregado antes da transferência')
   process.stdout.write('Smoke Wails/WebView2: Worker/WASM incorporados ao executável passaram.\n')
+  // Torna visível um caminho que pode estar inteiro em fallback sem que nenhum teste reprove.
+  process.stdout.write(`Reamostragem raster neste WebView2: ${result.resampling === 'rust'
+    ? 'Rust (sonda aprovou)' : 'fallback legado (sonda reprovou o Canvas da plataforma)'}\n`)
   if (mediaBenchmark) {
     const measurement = await evaluate('JSON.parse(document.documentElement.dataset.axiaRustMediaBenchmark || "null")')
     assert.equal(measurement?.rows?.length, 8)
