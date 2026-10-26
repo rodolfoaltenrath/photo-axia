@@ -38,7 +38,7 @@ test('conta-gotas usa origem documental sem recentralizar ou recortar fontes/hal
   assert.equal(plan.layers[0]!.input.sourceWidth, 2); assert.equal(plan.layers[0]!.matrix[4], 3)
 })
 
-test('texto, redução de imagem e escala de saída ficam explicitamente no fallback', () => {
+test('camada de texto sem conteúdo, redução de imagem e escala de saída ficam no fallback', () => {
   assert.throws(() => planRustEditorialDocument(document, [layer({ kind: 'text', transform: transform() })], 8, 6, viewport), RustDocumentUnsupported)
   const smaller = picture(); smaller.transform!.width = 1
   assert.throws(() => planRustEditorialDocument(document, [smaller], 8, 6, viewport), /source-minification/)
@@ -151,7 +151,7 @@ test('fundo sintético preserva o retângulo original, sem preencher toda a view
   assert.equal(result.documentWidth, 12); assert.equal(result.documentHeight, 9)
 })
 
-test('aparência não libera redução raster/texto nem origens não inteiras ou extremas', () => {
+test('aparência não libera redução raster, texto sem conteúdo nem origens não inteiras ou extremas', () => {
   for (const x of [0.5, 0x1_0000_0000, Infinity]) {
     assert.throws(() => planRustEditorialDocument(document, [], 2, 2, { x, y: 0, width: 2, height: 2 }, 'appearance'), /invalid-input/)
   }

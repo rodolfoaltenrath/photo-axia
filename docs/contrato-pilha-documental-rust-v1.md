@@ -165,6 +165,8 @@ Inventário em `frontend/src/services/renderDocument.ts`:
 
 Aparência e mesclagem têm provas browser/Wails na fatia 10, sem concluir a
 cobertura de texto/reamostragem. A tabela segue como gate de substituição total.
+A [fatia 12](contrato-texto-documental-rust-v1.md) cobre texto Normal sem efeitos
+nesses mesmos consumidores; texto estilizado ou em outro modo segue no fallback.
 
 `renderDocument.test.ts`, `smartLayerRenderer.test.ts` e
 `exportSettings.test.ts` são bases existentes, não prova de integração Rust.

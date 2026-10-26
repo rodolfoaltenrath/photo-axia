@@ -59,6 +59,10 @@ de saída, saída acima de 64 MiB/eixos acima de 16384, limites excedidos e erro
 de plataforma/runtime permanecem no Canvas anterior. Camadas ocultas/fora dos
 bounds relevantes não exigem suporte de um adapter que não seria usado.
 Texto não é rasterizado destrutivamente nem perde a estratégia de nitidez atual.
+Na fatia 12, texto Normal sem efeitos, Fill 100 e `Mesclar se` padrão entra no
+consumidor, rasterizado transitoriamente pelo navegador na resolução documental
+como na exportação legada; os demais casos seguem no fallback. Ver o
+[contrato de texto](contrato-texto-documental-rust-v1.md).
 
 Miniaturas, conteúdo inteligente aninhado e preview
 interativo de Blend If ainda não são roteados para este consumidor. Não assumir

@@ -841,6 +841,22 @@ exigir paridade incondicional, agora a exige só onde a sonda aprovou; a sonda
 passou a cobrir empates nos dois eixos e bordas; o smoke informa o estado. Ativar
 aqui exige medir o WebView2 com a regra invertida antes de transmiti-la ao sampler.
 
+Décima segunda fatia de C3: **texto no consumidor experimental**. Até aqui,
+qualquer camada de texto levava o documento inteiro ao fallback. Texto Normal sem
+efeitos, Fill 100 e `Mesclar se` padrão agora entra como descritor no plano
+(identidade da sessão, sem pixels), é rasterizado na **thread principal** — onde
+vivem as fontes de `@font-face` — pela mesma `drawTextLayerContent` e sequência
+de transformações do legado, deslocada só por uma origem inteira, e chega ao
+Worker como `ArrayBuffer` para composição 1:1, sem reamostragem. O mesmo texto
+não é rasterizado de novo entre chamadas da sessão. Fonte ainda carregando,
+estilo e modo não Normal ficam no fallback com motivos explícitos; mesclar texto
+não Normal isolado (como o preview) ou por operação (como a exportação legada) é
+decisão de produto registrada como questão aberta. Oráculo: 18 casos em três
+fontes, máximo 1/2,81 para tolerância 2/3, cada caso obrigado a alterar a imagem;
+o smoke Wails confere Segoe UI e Arial no WebView2 real. Detalhes no
+[contrato de texto](contrato-texto-documental-rust-v1.md). Não muda preview,
+nitidez do editor, tipografia, `.axia`, stack ou versões; C3/C4 seguem abertos.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

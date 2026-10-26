@@ -686,6 +686,33 @@ export async function runRustPixelPocDiagnostic(): Promise<{
           }
         }
       } finally { URL.revokeObjectURL(pixelUrl) }
+      // Texto rasterizado pelo WebView2 do próprio aplicativo, com as fontes do sistema, contra o Canvas legado.
+      const textSpec = { ...document, width: 64, height: 32, physicalWidth: 64, physicalHeight: 32 }
+      const backdrop = { ...shapes[0]!, opacity: 43.7, styles: normalizeLayerStyleConfig({}),
+        shape: { ...DEFAULT_SHAPE_CONFIG, color: '#30c060', baseWidth: 64, baseHeight: 32 },
+        transform: { x: 0, y: 0, width: 64, height: 32, rotation: 0 } }
+      const legacyTextUrl = new URL(diagnosticUrl); legacyTextUrl.searchParams.delete('axiaRustDocument')
+      for (const [fontFamily, rotation, opacity] of [['Segoe UI, sans-serif', 0, 100], ['Arial, sans-serif', 23, 63.7]] as const) {
+        const caption = { ...layers[0]!, id: 'diagnostic-text', kind: 'text' as const, image: undefined, opacity,
+          styles: normalizeLayerStyleConfig({}),
+          text: { ...DEFAULT_TEXT_LAYER, content: 'Axia ç', fontFamily, fontSize: 16, color: '#e04090', baseWidth: 56, baseHeight: 22 },
+          transform: { x: 4.25, y: 5.5, width: 56, height: 22, rotation } }
+        history.replaceState(null, '', legacyTextUrl)
+        const withoutText = await readPng(await renderDocumentBlob(textSpec, [backdrop]), 64, 32)
+        const expected = await readPng(await renderDocumentBlob(textSpec, [caption, backdrop]), 64, 32)
+        history.replaceState(null, '', diagnosticUrl)
+        const actual = await readPng(await renderDocumentBlob(textSpec, [caption, backdrop]), 64, 32)
+        if (backend() !== 'rust') throw new Error(`Texto ${fontFamily} caiu no fallback no WebView2.`)
+        let inked = 0
+        for (let i = 0; i < actual.length; i += 4) {
+          if ([0, 1, 2, 3].some(c => Math.abs(expected[i + c]! - withoutText[i + c]!) > 8)) inked++
+          if (Math.abs(actual[i + 3]! - expected[i + 3]!) > 2) throw new Error(`Alfa de texto ${fontFamily}/${i / 4}: ${actual[i + 3]}/${expected[i + 3]}`)
+          for (let c = 0; c < 3; c++) if (Math.abs(actual[i + c]! * actual[i + 3]! / 255 - expected[i + c]! * expected[i + 3]! / 255) > 3) {
+            throw new Error(`Cor de texto ${fontFamily}/${i / 4}/${c}: ${actual[i + c]}/${expected[i + c]}`)
+          }
+        }
+        if (inked < 20) throw new Error(`Texto ${fontFamily} não alterou a imagem no WebView2: ${inked}`)
+      }
     } finally {
       await documentRenderer.disposeRustDocumentRenderer()
       history.replaceState(null, '', originalUrl); URL.revokeObjectURL(mediaUrl)

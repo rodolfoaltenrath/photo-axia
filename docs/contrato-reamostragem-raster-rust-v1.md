@@ -176,4 +176,5 @@ produto que não cabe tomar implicitamente. O código experimental foi revertido
 Ativação no WebView2 desta máquina (seção 5.1), minificação (seção 6), rotação
 arbitrária, reamostragem com `Mesclar se` abaixo, escala de saída diferente de
 1:1, WebView2 com GPU em outras máquinas e QA com documentos do usuário. Texto
-continua fora do consumidor experimental.
+entrou no consumidor na fatia 12 sem reamostragem (ver
+[texto documental](contrato-texto-documental-rust-v1.md)).

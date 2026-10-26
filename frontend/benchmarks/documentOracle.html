@@ -55,16 +55,16 @@ function imageLayer(id, rgba, options = {}) {
   }, { x: 3, y: 2, width: 2, height: 2, rotation: 0 }, options)
 }
 
-async function pixelsFromPng(dataUrl) {
+async function pixelsFromPng(dataUrl, readWidth = width, readHeight = height) {
   const image = new Image()
   image.src = dataUrl
   await image.decode()
   const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
+  canvas.width = readWidth
+  canvas.height = readHeight
   const context = canvas.getContext('2d', { willReadFrequently: true })
   context.drawImage(image, 0, 0)
-  return [...context.getImageData(0, 0, width, height).data]
+  return [...context.getImageData(0, 0, readWidth, readHeight).data]
 }
 
 async function renderCases() {
@@ -232,8 +232,8 @@ async function compareEditorialConsumer() {
         throw new Error(`Sessão não reutilizou preparação entre PNG/Blob/cor: ${JSON.stringify(session)}`)
       }
     }
-    await renderDocumentPNG(doc('fallback', 'transparent'), [layer('unsupported', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 })])
-    if (backend().backend !== 'legacy' || backend().reason !== 'non-image-layer') throw new Error('Fallback editorial ausente')
+    await renderDocumentPNG(doc('fallback', 'transparent'), [layer('unsupported', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { blendMode: 'multiply' })])
+    if (backend().backend !== 'legacy' || backend().reason !== 'text-blend-mode') throw new Error('Fallback editorial ausente')
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade editorial: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
     return { documents: fixtures.length, consumers: ['PNG', 'Blob', 'sample'], fallback: true,
       maxAlphaDifference, maxPremultipliedDifference, session: rustDocumentRendererStats() }
@@ -281,6 +281,75 @@ async function compareShapeConsumer() {
       throw new Error(`Formas recriaram Worker ou reutilizaram fonte incorreta: ${JSON.stringify(session)}`)
     }
     return { cases, maxAlphaDifference, maxPremultipliedDifference, alphaTolerance: 2, premultipliedTolerance: 3, session }
+  } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
+}
+
+async function compareTextConsumer() {
+  const { rustDocumentRendererStats, disposeRustDocumentRenderer } = await import('../src/services/rustDocumentRenderer.ts')
+  const original = location.href, enabled = new URL(original); enabled.searchParams.set('axiaRustDocument', '1')
+  const textWidth = 96, textHeight = 48
+  const spec = (id, background) => ({ ...doc(id, background), width: textWidth, height: textHeight,
+    physicalWidth: textWidth, physicalHeight: textHeight })
+  const fonts = ['Arial, sans-serif', 'Georgia, serif', 'Consolas, monospace']
+  const variants = [
+    { text: { content: 'Axia 12', fontSize: 18, color: '#e04090' }, base: [80, 24], center: [44, 16], scale: 1, rotation: 0, opacity: 100, back: false, background: 'transparent' },
+    { text: { content: 'Ab\nCd fg', fontSize: 14, alignment: 'center', fontStyle: 'italic', color: '#1a1a1a' }, base: [60, 36], center: [40.25, 22.5], scale: 1, rotation: 0, opacity: 63.7, back: false, background: 'white' },
+    { text: { content: 'Lorem ipsum dolor sit amet', fontSize: 12, layoutMode: 'paragraph', alignment: 'right', color: '#2050ff' }, base: [70, 40], center: [48.5, 24.75], scale: 1, rotation: 37, opacity: 100, back: true, background: 'transparent' },
+    { text: { content: 'texto sublinhado', fontSize: 13, fontWeight: 700, decoration: 'underline', textTransform: 'uppercase', letterSpacing: 1.5, color: '#e04090' }, base: [130, 18], center: [47.5, 23.25], scale: 1, rotation: -90, opacity: 100, back: false, background: 'white' },
+    { text: { content: 'riscado', fontSize: 16, decoration: 'line-through', letterSpacing: -0.5, color: '#1a1a1a' }, base: [70, 22], center: [48, 24], scale: 1.6, rotation: 180, opacity: 100, back: true, background: 'transparent' },
+    { text: { content: 'ao redor da elipse', fontSize: 9, pathMode: 'ellipse', color: '#2050ff' }, base: [80, 40], center: [48, 24], scale: 1, rotation: 12, opacity: 80, back: true, background: 'white' }
+  ]
+  let cases = 0, maxAlphaDifference = 0, maxPremultipliedDifference = 0, worst = '', minInkedPixels = Infinity
+  try {
+    for (const fontFamily of fonts) {
+      await document.fonts.load(`16px ${fontFamily}`)
+      for (const [index, variant] of variants.entries()) {
+        const [baseWidth, baseHeight] = variant.base, w = baseWidth * variant.scale, h = baseHeight * variant.scale
+        const text = layer(`text-${cases}`, 'text', { text: { ...DEFAULT_TEXT_LAYER, fontFamily, baseWidth, baseHeight, ...variant.text } },
+          { x: variant.center[0] - w / 2, y: variant.center[1] - h / 2, width: w, height: h, rotation: variant.rotation },
+          { opacity: variant.opacity })
+        const layers = [text, ...(variant.back ? [rectangle(`text-back-${cases}`, '#30c060',
+          { x: 0, y: 0, width: textWidth, height: textHeight, rotation: 0 }, { opacity: 43.7 })] : []),
+          layer('background', 'background', {}, undefined)]
+        const documentSpec = spec(`text-document-${cases}`, variant.background)
+        history.replaceState(null, '', original)
+        const withoutText = await pixelsFromPng(await renderDocumentPNG(documentSpec, layers.slice(1)), textWidth, textHeight)
+        const expected = await pixelsFromPng(await renderDocumentPNG(documentSpec, layers), textWidth, textHeight)
+        history.replaceState(null, '', enabled)
+        const actual = await pixelsFromPng(await renderDocumentPNG(documentSpec, layers), textWidth, textHeight)
+        const backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+        if (backend.backend !== 'rust') throw new Error(`Texto ${fontFamily}/${index} em fallback: ${JSON.stringify(backend)}`)
+        let alpha = 0, color = 0, inked = 0
+        for (let i = 0; i < actual.length; i += 4) {
+          if ([0, 1, 2, 3].some(c => Math.abs(expected[i + c] - withoutText[i + c]) > 8)) inked++
+          alpha = Math.max(alpha, Math.abs(actual[i + 3] - expected[i + 3]))
+          for (let c = 0; c < 3; c++) color = Math.max(color,
+            Math.abs(actual[i + c] * actual[i + 3] / 255 - expected[i + c] * expected[i + 3] / 255))
+        }
+        // O texto precisa alterar a imagem: dois renders vazios ou só de fundo coincidiriam sem provar nada.
+        if (inked < 20) throw new Error(`Texto ${fontFamily}/${index} sem tinta: ${inked}`)
+        minInkedPixels = Math.min(minInkedPixels, inked)
+        if (alpha + color > maxAlphaDifference + maxPremultipliedDifference) worst = `${fontFamily}/${index}`
+        maxAlphaDifference = Math.max(maxAlphaDifference, alpha); maxPremultipliedDifference = Math.max(maxPremultipliedDifference, color)
+        cases++
+      }
+    }
+    if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) {
+      throw new Error(`Paridade de texto: ${maxAlphaDifference}/${maxPremultipliedDifference} (pior: ${worst})`)
+    }
+    // Conta-gotas reaproveita a preparação da sessão; o texto não deve ser rasterizado a cada amostra.
+    const sampleSpec = spec('text-sample', 'white')
+    const sampleText = layer('text-sample-layer', 'text', { text: { ...DEFAULT_TEXT_LAYER, fontFamily: fonts[0], content: 'I',
+      fontSize: 40, color: '#e04090', baseWidth: 30, baseHeight: 46 } }, { x: 30, y: 0, width: 30, height: 46, rotation: 0 })
+    const before = rustDocumentRendererStats()
+    for (let i = 0; i < 3; i++) await sampleDocumentColor(sampleSpec, [sampleText, layer('background', 'background', {}, undefined)], 40, 24)
+    const after = rustDocumentRendererStats()
+    if (JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}').backend !== 'rust' ||
+        after.preparations - before.preparations !== 1 || after.reuses - before.reuses !== 2) {
+      throw new Error(`Conta-gotas de texto não reutilizou a sessão: ${JSON.stringify({ before, after })}`)
+    }
+    return { cases, fonts: fonts.length, minInkedPixels, maxAlphaDifference, maxPremultipliedDifference, worst,
+      alphaTolerance: 2, premultipliedTolerance: 3, sampleReuses: after.reuses - before.reuses }
   } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
 }
 
@@ -386,10 +455,10 @@ async function compareAppearanceConsumers() {
     await renderLayerAppearance(spec, reduced)
     const fallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
     if (fallback.backend !== 'legacy' || fallback.purpose !== 'layer' || fallback.reason !== 'source-minification') throw new Error('Fallback de minificação da aparência ausente')
-    const text = layer('merge-text-fallback', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 })
+    const text = layer('merge-text-fallback', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { blendMode: 'multiply' })
     await renderMergedLayers(spec, [text])
     const textFallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
-    if (textFallback.backend !== 'legacy' || textFallback.purpose !== 'merge' || textFallback.reason !== 'non-image-layer') throw new Error('Fallback textual de mesclagem ausente')
+    if (textFallback.backend !== 'legacy' || textFallback.purpose !== 'merge' || textFallback.reason !== 'text-blend-mode') throw new Error('Fallback textual de mesclagem ausente')
     const encode = HTMLCanvasElement.prototype.toBlob
     for (const rust of [false, true]) for (const purpose of ['layer', 'merge']) {
       history.replaceState(null, '', rust ? enabled : original)
@@ -415,6 +484,7 @@ try {
   const rustUnderlying = await compareRustUnderlying()
   const rustEditorial = await compareEditorialConsumer()
   const rustShapes = await compareShapeConsumer()
+  const rustText = await compareTextConsumer()
   const rustSessionEpoch = await verifyDocumentSessionEpoch()
   const rustAppearance = await compareAppearanceConsumers()
   if (new URLSearchParams(location.search).has('record')) {
@@ -455,7 +525,7 @@ try {
           errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)
         }
       }
-      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustSessionEpoch, rustAppearance })
+      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustText, rustSessionEpoch, rustAppearance })
     }
   }
 } catch (error) {
