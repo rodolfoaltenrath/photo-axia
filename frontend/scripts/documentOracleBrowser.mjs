@@ -13,13 +13,14 @@ const edge = process.env.AXIA_EDGE || (process.platform === 'win32'
 const record = process.argv.includes('--record')
 const pipeline = process.argv.includes('--pipeline')
 const handoff = process.argv.includes('--handoff')
-if (Number(record) + Number(pipeline) + Number(handoff) > 1) {
-  throw new Error('--record, --pipeline e --handoff são mutuamente exclusivos.')
+const resampling = process.argv.includes('--resampling')
+if (Number(record) + Number(pipeline) + Number(handoff) + Number(resampling) > 1) {
+  throw new Error('--record, --pipeline, --handoff e --resampling são mutuamente exclusivos.')
 }
 const benchmark = pipeline || handoff
 const benchmarkArgs = benchmark
-  ? process.argv.slice(process.argv.indexOf(pipeline ? '--pipeline' : '--handoff') + 1) : []
-const pageName = pipeline ? 'documentPipeline.html' : handoff ? 'layerHandoff.html' : 'documentOracle.html'
+  ? process.argv.slice(process.argv.indexOf(pipeline ? '--pipeline' : resampling ? '--resampling' : '--handoff') + 1) : []
+const pageName = pipeline ? 'documentPipeline.html' : handoff ? 'layerHandoff.html' : resampling ? 'documentResampling.html' : 'documentOracle.html'
 const pageQuery = benchmark
   ? `?width=${encodeURIComponent(benchmarkArgs[0] ?? '512')}&height=${encodeURIComponent(benchmarkArgs[1] ?? '512')}&samples=${encodeURIComponent(benchmarkArgs[2] ?? '5')}`
   : record ? '?record' : ''

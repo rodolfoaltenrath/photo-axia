@@ -5,7 +5,7 @@
 <script type="module">
 import { createDefaultLayerEffect, createLayerStyleConfig } from '../src/editor/layerStyles.ts'
 import { LayerStyleUnsupportedEffectError } from '../src/editor/layerStyleCompositor.ts'
-import { renderDocumentPNG, renderDocumentBlob, sampleDocumentColor } from '../src/services/renderDocument.ts'
+import { renderDocumentPNG, renderDocumentBlob, sampleDocumentColor, renderLayerAppearance, renderMergedLayers } from '../src/services/renderDocument.ts'
 import { createRustPixelPocRuntime } from '../src/editor/rustPixelPocRuntime.ts'
 import wasmUrl from '../src/generated/axia_pixel_core.wasm?url'
 import { DEFAULT_TEXT_LAYER } from '../src/editor/text.ts'
@@ -182,6 +182,8 @@ async function compareRustUnderlying() {
 }
 
 async function compareEditorialConsumer() {
+  const { rustDocumentRendererStats } = await import('../src/services/rustDocumentRenderer.ts')
+  const initialSession = rustDocumentRendererStats()
   const original = location.href
   const back = imageLayer('editorial-back', [100, 150, 200, 255, 64, 90, 150, 128, 192, 80, 40, 255, 255, 200, 100, 128])
   const styles = createLayerStyleConfig(); styles.fillOpacity = 65
@@ -224,15 +226,23 @@ async function compareEditorialConsumer() {
       if (backend().backend !== 'rust') throw new Error('Conta-gotas editorial em fallback')
       for (let c = 0; c < 3; c++) if (Math.abs(parseInt(sampled.slice(1 + c * 2, 3 + c * 2), 16) -
         parseInt(reference.color.slice(1 + c * 2, 3 + c * 2), 16)) > 2) throw new Error('Conta-gotas divergiu do Canvas')
+      const session = rustDocumentRendererStats()
+      if (session.preparations - initialSession.preparations !== index + 1 ||
+          session.reuses - initialSession.reuses !== (index + 1) * 2 || !session.workerAlive || session.preparedBytes <= 0) {
+        throw new Error(`Sessão não reutilizou preparação entre PNG/Blob/cor: ${JSON.stringify(session)}`)
+      }
     }
     await renderDocumentPNG(doc('fallback', 'transparent'), [layer('unsupported', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 })])
     if (backend().backend !== 'legacy' || backend().reason !== 'non-image-layer') throw new Error('Fallback editorial ausente')
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade editorial: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
-    return { documents: fixtures.length, consumers: ['PNG', 'Blob', 'sample'], fallback: true, maxAlphaDifference, maxPremultipliedDifference }
+    return { documents: fixtures.length, consumers: ['PNG', 'Blob', 'sample'], fallback: true,
+      maxAlphaDifference, maxPremultipliedDifference, session: rustDocumentRendererStats() }
   } finally { history.replaceState(null, '', original) }
 }
 
 async function compareShapeConsumer() {
+  const { rustDocumentRendererStats, disposeRustDocumentRenderer } = await import('../src/services/rustDocumentRenderer.ts')
+  const initialSession = rustDocumentRendererStats()
   const original = location.href, enabled = new URL(original); enabled.searchParams.set('axiaRustDocument', '1')
   let cases = 0, maxAlphaDifference = 0, maxPremultipliedDifference = 0
   try {
@@ -266,8 +276,137 @@ async function compareShapeConsumer() {
       }
     }
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade de formas: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
-    return { cases, maxAlphaDifference, maxPremultipliedDifference, alphaTolerance: 2, premultipliedTolerance: 3 }
-  } finally { history.replaceState(null, '', original) }
+    const session = rustDocumentRendererStats()
+    if (session.connections !== initialSession.connections || session.preparations - initialSession.preparations !== cases) {
+      throw new Error(`Formas recriaram Worker ou reutilizaram fonte incorreta: ${JSON.stringify(session)}`)
+    }
+    return { cases, maxAlphaDifference, maxPremultipliedDifference, alphaTolerance: 2, premultipliedTolerance: 3, session }
+  } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
+}
+
+async function verifyDocumentSessionEpoch() {
+  const { renderRustDocumentCanvas, disposeRustDocumentRenderer, rustDocumentRendererStats } = await import('../src/services/rustDocumentRenderer.ts')
+  const documentSpec = doc('session-epoch', 'transparent')
+  const layers = [rectangle('session-epoch-shape', '#ff0000', { x: 0, y: 0, width: 2, height: 2, rotation: 0 })]
+  const obsolete = renderRustDocumentCanvas(documentSpec, layers, width, height, { x: 0, y: 0, width, height })
+    .then(() => { throw new Error('Chamada obsoleta reabriu sessão após dispose') }, error => {
+      if (error.message !== 'wasm-unavailable') throw error
+    })
+  await Promise.all([obsolete, disposeRustDocumentRenderer()])
+  if (rustDocumentRendererStats().workerAlive) throw new Error('Sessão obsoleta conservou Worker')
+  const canvas = await renderRustDocumentCanvas(documentSpec, layers, width, height, { x: 0, y: 0, width, height })
+  try {
+    if (canvas.getContext('2d').getImageData(0, 0, 1, 1).data.join(',') !== '255,0,0,255' ||
+        rustDocumentRendererStats().connections !== 1) throw new Error('Sessão não reabriu limpa após descarte')
+  } finally { canvas.width = 1; canvas.height = 1; await disposeRustDocumentRenderer() }
+  return { obsoleteRejected: true, reopened: true, disposed: !rustDocumentRendererStats().workerAlive }
+}
+
+async function compareAppearanceConsumers() {
+  const { disposeRustDocumentRenderer } = await import('../src/services/rustDocumentRenderer.ts')
+  const original = location.href, enabled = new URL(original); enabled.searchParams.set('axiaRustDocument', '1')
+  const spec = doc('appearance-consumers', 'transparent'), fixtures = []
+  function addAppearance(item, documentSpec = spec, fallbackReason) {
+    for (const mode of ['local', 'isolated-export']) fixtures.push({
+      id: `${item.id}-${mode}`, purpose: 'layer', fallbackReason, render: () => renderLayerAppearance(documentSpec, item, mode)
+    })
+  }
+  const styled = createLayerStyleConfig(); styled.fillOpacity = 0
+  const shadow = createDefaultLayerEffect('drop-shadow', 'appearance-shadow')
+  Object.assign(shadow, { color: '#ff0000', size: 0, distance: 1, angle: 0, useGlobalLight: false, blendMode: 'normal' })
+  const overlay = createDefaultLayerEffect('color-overlay', 'appearance-overlay')
+  Object.assign(overlay, { color: '#0000ff', opacity: 37, blendMode: 'normal' }); styled.effects = [shadow, overlay]
+  for (const [index, position] of [[-2, -1], [8.5, 6.25], [0, 0]].entries()) {
+    const item = imageLayer(`appearance-image-${index}`, [
+      20, 80, 160, 255, 90, 150, 210, 109, 192, 80, 40, 255, 255, 200, 100, 128
+    ], { opacity: 63.7, blendMode: 'screen', styles: structuredClone(styled) })
+    Object.assign(item.transform, { x: position[0], y: position[1], rotation: index === 1 ? 90 : 0 })
+    addAppearance(item, spec)
+  }
+  const rotated = imageLayer('appearance-pixel-aligned-rotation', new Array(4).fill([255, 0, 0, 255]).flat(),
+    { opacity: 63.7, styles: structuredClone(styled) })
+  Object.assign(rotated.transform, { x: 9, y: 7, rotation: 90 }); addAppearance(rotated)
+  for (const kind of ['rectangle', 'ellipse', 'triangle', 'star']) {
+    const item = rectangle(`appearance-${kind}`, '#e04090',
+      { x: -3.5, y: -1.25, width: 4.25, height: 2.75, rotation: kind === 'star' ? 37 : 0 },
+      { visible: false, opacity: 63.7, blendMode: 'multiply' })
+    item.shape.kind = kind; item.styles.fillOpacity = 37; addAppearance(item)
+    const mergedShape = structuredClone(item); mergedShape.visible = true
+    const lower = rectangle('merge-shape-lower', '#2060ff', { x: 0, y: 0, width, height, rotation: 0 }, { opacity: 43.7 })
+    fixtures.push({ id: `merge-${kind}`, purpose: 'merge', render: () => renderMergedLayers(spec, [mergedShape, lower]) })
+  }
+  const background = layer('appearance-background', 'background', {}, undefined, { opacity: 50 })
+  background.styles.fillOpacity = 50; addAppearance(background, doc('appearance-background-document', 'white'))
+  for (const [index, blendMode] of ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten'].entries()) {
+    const style = createLayerStyleConfig(); style.fillOpacity = 65
+    style.blendIf.channel = ['gray', 'red', 'green', 'blue'][index % 4]
+    style.blendIf.underlyingLayer.shadows = [0, 128]
+    const upper = imageLayer(`merge-top-${index}`, [240, 50, 130, 101, 20, 210, 70, 203, 120, 100, 230, 255, 240, 50, 130, 3],
+      { opacity: 63.7, blendMode, styles: style })
+    const lower = imageLayer(`merge-back-${index}`, [100, 150, 200, 255, 64, 90, 150, 128, 192, 80, 40, 255, 255, 200, 100, 128])
+    const documentSpec = doc(`merge-document-${index}`, index % 2 ? 'white' : 'transparent')
+    fixtures.push({ id: `merge-${blendMode}`, purpose: 'merge',
+      render: () => renderMergedLayers(documentSpec, [upper, lower, layer('background', 'background', {}, undefined)]) })
+  }
+  async function pixels(blob) {
+    const bitmap = await createImageBitmap(blob), canvas = document.createElement('canvas')
+    try {
+      canvas.width = bitmap.width; canvas.height = bitmap.height
+      const context = canvas.getContext('2d', { willReadFrequently: true }); context.drawImage(bitmap, 0, 0)
+      return context.getImageData(0, 0, canvas.width, canvas.height).data
+    } finally { bitmap.close(); canvas.width = 1; canvas.height = 1 }
+  }
+  let maxAlphaDifference = 0, maxPremultipliedDifference = 0
+  try {
+    for (const fixture of fixtures) {
+      const expected = await fixture.render(), expectedPixels = await pixels(expected.blob)
+      history.replaceState(null, '', enabled)
+      const actual = await fixture.render(), backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+      if (backend.backend !== (fixture.fallbackReason ? 'legacy' : 'rust') || backend.purpose !== fixture.purpose ||
+          fixture.fallbackReason && backend.reason !== fixture.fallbackReason) throw new Error(`${fixture.id}: backend inesperado ${JSON.stringify(backend)}`)
+      history.replaceState(null, '', original)
+      for (const key of ['x', 'y', 'width', 'height']) if (actual[key] !== expected[key]) throw new Error(`${fixture.id}: bounds ${key} divergentes`)
+      const actualPixels = await pixels(actual.blob)
+      if (actualPixels.length !== expectedPixels.length) throw new Error(`${fixture.id}: PNG tem dimensões divergentes`)
+      let alphaDifference = 0, colorDifference = 0
+      for (let i = 0; i < actualPixels.length; i += 4) {
+        alphaDifference = Math.max(alphaDifference, Math.abs(actualPixels[i + 3] - expectedPixels[i + 3]))
+        maxAlphaDifference = Math.max(maxAlphaDifference, Math.abs(actualPixels[i + 3] - expectedPixels[i + 3]))
+        for (let c = 0; c < 3; c++) {
+          const difference = Math.abs(actualPixels[i + c] * actualPixels[i + 3] / 255 - expectedPixels[i + c] * expectedPixels[i + 3] / 255)
+          colorDifference = Math.max(colorDifference, difference); maxPremultipliedDifference = Math.max(maxPremultipliedDifference, difference)
+        }
+      }
+      if (alphaDifference > 2 || colorDifference > 3) throw new Error(`${fixture.id}: paridade ${alphaDifference}/${colorDifference}`)
+    }
+    if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade aparência/mesclagem: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
+    history.replaceState(null, '', enabled)
+    const reduced = imageLayer('appearance-reduced', new Array(4).fill([255, 0, 0, 255]).flat())
+    Object.assign(reduced.transform, { width: 1, height: 1 })
+    await renderLayerAppearance(spec, reduced)
+    const fallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+    if (fallback.backend !== 'legacy' || fallback.purpose !== 'layer' || fallback.reason !== 'source-minification') throw new Error('Fallback de minificação da aparência ausente')
+    const text = layer('merge-text-fallback', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 })
+    await renderMergedLayers(spec, [text])
+    const textFallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+    if (textFallback.backend !== 'legacy' || textFallback.purpose !== 'merge' || textFallback.reason !== 'non-image-layer') throw new Error('Fallback textual de mesclagem ausente')
+    const encode = HTMLCanvasElement.prototype.toBlob
+    for (const rust of [false, true]) for (const purpose of ['layer', 'merge']) {
+      history.replaceState(null, '', rust ? enabled : original)
+      let captured, rejected = false
+      HTMLCanvasElement.prototype.toBlob = function(callback) { captured = this; callback(null) }
+      try {
+        const shape = rectangle('failed-encoding', '#ff0000', { x: 0, y: 0, width: 2, height: 2, rotation: 0 })
+        await (purpose === 'layer' ? renderLayerAppearance(spec, shape) : renderMergedLayers(spec, [shape]))
+      } catch (error) { rejected = error.message.includes(purpose === 'layer' ? 'aparência' : 'mesclagem') }
+      finally { HTMLCanvasElement.prototype.toBlob = encode }
+      if (!rejected || !captured || captured.width !== 1 || captured.height !== 1) throw new Error(`${purpose}: falha de encode reteve canvas de saída`)
+    }
+    return { cases: fixtures.length, rustCases: fixtures.filter(item => !item.fallbackReason).length,
+      transformFallbackCases: fixtures.filter(item => item.fallbackReason).length, appearanceCases: fixtures.filter(item => item.purpose === 'layer').length,
+      mergeCases: fixtures.filter(item => item.purpose === 'merge').length, maxAlphaDifference, maxPremultipliedDifference,
+      alphaTolerance: 2, premultipliedTolerance: 3, fallback: true, encodeFailureCleanup: true }
+  } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
 }
 
 try {
@@ -276,6 +415,8 @@ try {
   const rustUnderlying = await compareRustUnderlying()
   const rustEditorial = await compareEditorialConsumer()
   const rustShapes = await compareShapeConsumer()
+  const rustSessionEpoch = await verifyDocumentSessionEpoch()
+  const rustAppearance = await compareAppearanceConsumers()
   if (new URLSearchParams(location.search).has('record')) {
     result.textContent = JSON.stringify({ status: 'record', width, height, cases })
   } else {
@@ -314,7 +455,7 @@ try {
           errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)
         }
       }
-      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes })
+      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustSessionEpoch, rustAppearance })
     }
   }
 } catch (error) {

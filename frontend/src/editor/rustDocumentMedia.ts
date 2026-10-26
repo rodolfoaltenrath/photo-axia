@@ -10,6 +10,7 @@ import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import { drawRustDocumentShape, validateRustDocumentShape } from './rustDocumentShape.ts'
 import { activeLayerStyleEffects } from './layerStyleCompositor.ts'
 import { layerStyleBlendIfIsDefault } from './layerStyles.ts'
+import { rustRasterBilinearSupported } from './rustDocumentSampling.ts'
 
 export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, check: () => void) {
   check()
@@ -17,6 +18,8 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
   if (rustPixelPocStyleMetadataBytes(input) > 1024 * 1024) throw new RustPixelPocError('memory-limit')
   let encoded = 0, padded = 0
   const layouts = input.layers.map(layer => {
+    if (layer.sampling !== undefined && (layer.source.type !== 'raster' || !['raster-bilinear', 'raster-bilinear-precise'].includes(layer.sampling) ||
+        !Array.isArray(layer.matrix) || !rustRasterBilinearSupported(layer.matrix, input.grid))) throw new RustPixelPocError('invalid-input')
     const layout = prepareRustStyleSourceLayout(layer.input)
     if (layout.width > 16384 || layout.height > 16384) throw new RustPixelPocError('memory-limit')
     padded += layout.width * layout.height * 4
@@ -59,6 +62,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
     const rgba = padRustStyleSource(source, job), [a, b, c, d, tx, ty] = layer.matrix
     layers.push({ rgba, width: job.width, height: job.height, x: 0, y: 0, visible: true,
       opacity: layer.opacity, blendMode: layer.blendMode,
+      ...(layer.sampling ? { sampling: layer.sampling } : {}),
       sourceToDocument: [a, b, c, d, tx + a * job.offsetX + c * job.offsetY, ty + b * job.offsetX + d * job.offsetY],
       underlyingBlendIf: rustEditorialUnderlying(layer.input) })
     plans.push(layer.source.type === 'shape' ? null : job.plan)

@@ -53,6 +53,9 @@ fracionárias ao subtrair essa origem do centro. Isso mantém cobertura nas bord
 e evita ampliar uma fonte suavizada ou aplicar a rotação uma segunda vez.
 Esse clipping só atende os consumidores já ligados de documento/conta-gotas;
 não autoriza reutilizar o adapter em exportação isolada fora do documento.
+Essa restrição da fatia 8 é ampliada pela
+[fatia 10](contrato-aparencia-mesclagem-rust-v1.md): a aparência isolada recebe
+um domínio próprio normalizado e só então reaproveita o traçado/validação.
 
 O Canvas anterior calcula `globalAlpha = layer.opacity/100` e depois multiplica
 por Fill. A fonte guarda **esse alfa normalizado**, com a mesma ordem de

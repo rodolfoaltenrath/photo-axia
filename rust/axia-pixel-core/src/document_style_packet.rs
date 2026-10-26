@@ -85,7 +85,7 @@ pub fn prepare_document_style_packet(
     // Publish only after every nested style has completed successfully.
     output.copy_from_slice(document);
     let header = integer(document, 8);
-    let record_bytes = if &document[..4] == b"DCP3" {
+    let record_bytes = if matches!(&document[..4], b"DCP3" | b"DCP4") {
         96
     } else if header == 80 {
         80

@@ -11,6 +11,14 @@ também são elegíveis, traçadas no Worker em pixels documentais, sem perder a
 editabilidade. As provas da seção 6 abaixo registram a entrega original da
 fatia 7; o novo contrato registra a cobertura/provas adicionais.
 
+A [fatia 9](contrato-sessao-documental-rust-v1.md) substitui o término por chamada
+pela sessão persistente limitada descrita abaixo. Evidências da seção 6 continuam
+sendo o registro histórico da fatia 7.
+
+A [fatia 10](contrato-aparencia-mesclagem-rust-v1.md) integra aparência isolada e
+mesclagem, com domínio explícito de clipping, e restringe transformações raster
+editoriais aos casos alinhados à grade com paridade validada.
+
 Relacionado a [DCP3](contrato-blend-if-documental-rust-v1.md),
 [SDP1/cache documental](contrato-cache-documental-wasm-v1.md),
 [inventário dos consumidores](contrato-pilha-documental-rust-v1.md) e
@@ -33,11 +41,13 @@ Chamadas que chegam ao novo caminho:
 - `renderDocumentExportBlob`, apenas quando a resolução de saída é elegível;
   formato, matte, DPI e metadata continuam no código existente após compor;
 - `sampleDocumentColor`, com viewport documental 1×1 e retorno hexadecimal
-  existente, sem aplicar uma composição diferente para o conta-gotas.
+  existente, sem aplicar uma composição diferente para o conta-gotas;
+- `renderLayerAppearance`, nos modos local/isolated-export, inclusive fora do documento;
+- `renderMergedLayers`, preservando recorte documental e dependências inferiores.
 
 Cobertura inicial deliberadamente restrita:
 
-- Imagens com fonte original e transformação afim, ordem, opacidade, seis modos,
+- Imagens com fonte original e transformação alinhada à grade de pixels, ordem, opacidade, seis modos,
   Fill, efeitos STG1, padrões/texturas e ambos os filtros `Mesclar se`;
 - fundo sintético preto/branco, incluindo Fill e opacidade existentes;
 - fonte completa com padding, não um recorte sem halo da região pedida;
@@ -50,7 +60,7 @@ de plataforma/runtime permanecem no Canvas anterior. Camadas ocultas/fora dos
 bounds relevantes não exigem suporte de um adapter que não seria usado.
 Texto não é rasterizado destrutivamente nem perde a estratégia de nitidez atual.
 
-Miniaturas, camada isolada, conteúdo inteligente aninhado, mesclagem e preview
+Miniaturas, conteúdo inteligente aninhado e preview
 interativo de Blend If ainda não são roteados para este consumidor. Não assumir
 que todas as exportações de um documento já usam Rust: cobertura depende das
 camadas, escala e limites daquela chamada.
@@ -92,6 +102,10 @@ Na primeira integração, uma transformação que reduz qualquer eixo da imagem
 recusa o caminho novo. Isso não finge resolver o gate de minificação com uma
 fonte reduzida ou bilinear ampliado. A matriz afim em si já suporta rotação;
 a paridade browser ampla/antialiasing ainda exige expansão de fixtures.
+Na fatia 10, novos casos demonstraram discrepância fora da tolerância para
+reamostragem afim. O adapter agora recusa também ampliação/translação fracionária
+e rotação que não preserve a grade (`source-transform-quality`). Matrizes de
+fonte 1:1 pixel-aligned permanecem elegíveis; a ABI afim em si não mudou.
 
 ## 3. Trabalho no Worker
 
@@ -117,10 +131,14 @@ aceita prepare/compose/release documentais até init/dispose. Enquanto prepara
 mídia, não admite outra transação. Init/dispose invalidam a geração; decoders
 tardios não publicam. Erro de mídia preserva um documento anterior preparado.
 
-O serviço encerra o Worker ao final de cada chamada, após release. A próxima
-transação só abre outro depois de terminar a anterior. É uma política inicial
-de ownership, **não** cache documental entre exportações nem scheduler definitivo
-do canvas ao vivo. A preparação é reutilizada entre os tiles da mesma chamada.
+Na fatia 9, o serviço conserva um Worker e uma preparação entre chamadas
+compatíveis, com igualdade exata do snapshot e mídias imutáveis. Envia a grade
+atual a cada tile, sem repetir decode/estilos em cache hit. Mudança libera o
+documento anterior antes de carregar a nova mídia; fontes externas mutáveis não
+mantêm pixels em cache. Cinco segundos sem trabalho encerram o Worker. Término
+é drenado antes de abrir outro contexto; falhas/dispose descartam o residente.
+Isso ainda não é scheduler incremental/definitivo do canvas ao vivo. Detalhes,
+invalidação e provas no [contrato da sessão](contrato-sessao-documental-rust-v1.md).
 
 ## 4. Limites e ciclo de vida
 
@@ -177,8 +195,9 @@ Próximos gates, na ordem de remoção segura:
 
 1. Ampliar adapters de texto/formas sem regressão de nitidez, provar minificação
    e escalas/resoluções de saída; ampliar matriz Canvas e formatos/metadata.
-2. Consolidar sessão persistente, agendamento/revisões/admission e cancelamento
-   por consumidor; migrar miniatura, camadas isoladas, smart content e mesclagem.
+2. Ampliar a sessão persistente limitada da fatia 9 com agendamento/revisões/admission e cancelamento
+   por consumidor; ampliar miniatura e smart content. Aparência/mesclagem já
+   estão ligadas sob flag na cobertura delimitada da fatia 10.
 3. Integrar superfície única C4 com tiles visíveis/dirty regions e overlays de
    interação; medir pan/zoom, memória e qualidade com documentos reais.
 4. Promover por gates/QA e retirar cada fallback após inspeção de referências e

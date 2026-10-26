@@ -2,7 +2,9 @@
 
 use crate::blend_if::UnderlyingBlendIf;
 use crate::composite::{composite_pixel_values, BlendMode};
-use crate::document_transform::{DocumentAffine, DocumentOutputGrid, DocumentSampler};
+use crate::document_transform::{
+    DocumentAffine, DocumentOutputGrid, DocumentSampler, DocumentSampling,
+};
 use crate::{RasterRegion, MAX_POC_BYTES};
 
 const MAX_AXIS: usize = 16_384;
@@ -23,6 +25,7 @@ pub struct DocumentRasterLayer<'a> {
     pub blend_mode: BlendMode,
     pub transform: Option<DocumentAffine>,
     pub underlying_blend_if: Option<UnderlyingBlendIf>,
+    pub sampling: DocumentSampling,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -100,6 +103,9 @@ pub(crate) fn validate_job(
     let mut total = output_bytes + job.layers_bottom_to_top.len() * LAYER_METADATA_BYTES;
     let mut samples = 0usize;
     for layer in job.layers_bottom_to_top {
+        if layer.sampling != DocumentSampling::CoverageBilinear && job.output_grid.is_none() {
+            return Err(DocumentCompositeError::InvalidTransform);
+        }
         let bytes = raster_bytes(layer.width, layer.height)?;
         if layer.rgba.len() != bytes {
             return Err(DocumentCompositeError::InvalidRaster);
@@ -131,6 +137,7 @@ pub(crate) fn validate_job(
                 layer.height,
                 job.document_width,
                 job.document_height,
+                layer.sampling,
             )?;
             if layer.visible && layer.opacity > 0.0 {
                 if let Some(bounds) = sampler.bounds(region) {
@@ -226,6 +233,7 @@ pub fn compose_document_region(
                 layer.height,
                 job.document_width,
                 job.document_height,
+                layer.sampling,
             )
             .expect("validated sampler");
             if let Some(bounds) = sampler.bounds(region) {
@@ -302,6 +310,7 @@ mod tests {
             blend_mode: BlendMode::Normal,
             transform: None,
             underlying_blend_if: None,
+            sampling: DocumentSampling::CoverageBilinear,
         }
     }
 

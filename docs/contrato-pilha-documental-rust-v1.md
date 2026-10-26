@@ -137,7 +137,15 @@ com preparação editorial e tiles finais. Demais tipos/escalas usam fallback.
 A tabela continua sendo o gate de cobertura integral, não uma migração concluída.
 Na [fatia 8](contrato-formas-documentais-rust-v1.md), esses consumidores também
 aceitam formas sem efeitos/Blend If, mantendo texto e escalas não cobertas no
-fallback. Camada isolada/mesclagem fora do documento ainda não usa esse adapter.
+fallback. Até essa fatia, camada isolada/mesclagem ainda não usava esse adapter.
+Na [fatia 9](contrato-sessao-documental-rust-v1.md), os consumidores experimentais
+compartilham um Worker e uma preparação entre chamadas compatíveis, com
+invalidação exata, fontes imutáveis e descarte após inatividade. Não conclui
+scheduler incremental, cancelamento público ou admissão global.
+A [fatia 10](contrato-aparencia-mesclagem-rust-v1.md) liga aparência isolada e
+mesclagem às APIs públicas sob flag. Aparência normaliza bounds externos em
+frame próprio; mesclagem mantém clipping documental. O gate raster editorial
+agora exige alinhamento 1:1 à grade até fechar paridade de reamostragem afim.
 
 Inventário em `frontend/src/services/renderDocument.ts`:
 
@@ -151,6 +159,9 @@ Inventário em `frontend/src/services/renderDocument.ts`:
 | `renderDocumentThumbnail` | `useProjectLifecycle.ts` | escala reduzida, ordem e fallback de formato sem degradar exportação |
 | `renderDocumentInteractiveBlendIfPreview` | `useDocumentBlendIfPreview.ts` | backdrop real, escala reduzida e quadro atual |
 | `renderMergedLayers` | cópia/mesclagem em `App.vue` | bounds, fundo sintético, ordem, transparência e aparência preservada |
+
+Aparência e mesclagem têm provas browser/Wails na fatia 10, sem concluir a
+cobertura de texto/reamostragem. A tabela segue como gate de substituição total.
 
 `renderDocument.test.ts`, `smartLayerRenderer.test.ts` e
 `exportSettings.test.ts` são bases existentes, não prova de integração Rust.
@@ -179,7 +190,8 @@ testes de cada adapter antes de substituir essas chamadas.
    tabela, compartilhando kernel, scheduler e orçamento. Não manter um
    compositor alternativo de aparência como otimização de preview.
    Primeiro adapter/consumidor implementado na fatia 7; ainda ampliar fontes,
-   escalas, sessão persistente/admission e demais entradas antes do rollout.
+   escalas, sessão incremental/admission e demais entradas antes do rollout.
+   A sessão persistente limitada entre chamadas foi implementada na fatia 9.
 5. Só então superfície única C4, rollout/QA e retirada condicionada do legado.
 
 C3 continua aberto. Essa sequência não impede ajustes guiados por teste/medição.

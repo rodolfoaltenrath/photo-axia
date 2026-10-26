@@ -29,6 +29,14 @@ impl DocumentOutputGrid {
 #[derive(Clone, Copy, Debug)]
 pub struct DocumentAffine(pub [f64; 6]);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DocumentSampling {
+    #[default]
+    CoverageBilinear,
+    RasterBilinear,
+    RasterBilinearPrecise,
+}
+
 impl DocumentAffine {
     pub fn validate(self) -> Result<(), DocumentCompositeError> {
         self.inverse_basis().map(|_| ())
@@ -76,18 +84,41 @@ pub(crate) struct DocumentSampler {
     height: usize,
     margin_x: f64,
     margin_y: f64,
+    sampling: DocumentSampling,
+    raster_clip: [f64; 4],
 }
 
 impl DocumentSampler {
     pub fn new(
-        transform: DocumentAffine,
+        mut transform: DocumentAffine,
         grid: DocumentOutputGrid,
         width: usize,
         height: usize,
         document_width: u32,
         document_height: u32,
+        sampling: DocumentSampling,
     ) -> Result<Self, DocumentCompositeError> {
         grid.validate()?;
+        if sampling != DocumentSampling::CoverageBilinear {
+            if grid.scale_x != 1.0
+                || grid.scale_y != 1.0
+                || grid.origin_x.fract() != 0.0
+                || grid.origin_y.fract() != 0.0
+            {
+                return Err(DocumentCompositeError::UnsupportedScale);
+            }
+            for value in &mut transform.0[..4] {
+                if value.abs() <= 1e-12 {
+                    *value = 0.0;
+                }
+            }
+            let [a, b, c, d, _, _] = transform.0;
+            if !((b == 0.0 && c == 0.0 && a.abs() >= 1.0 && d.abs() >= 1.0)
+                || (a == 0.0 && d == 0.0 && b.abs() >= 1.0 && c.abs() >= 1.0))
+            {
+                return Err(DocumentCompositeError::InvalidTransform);
+            }
+        }
         let inverse = transform.inverse_basis()?;
         let [a, b, c, d, tx, ty] = transform.0;
         let quad = [
@@ -103,6 +134,31 @@ impl DocumentSampler {
         if quad.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
             return Err(DocumentCompositeError::InvalidTransform);
         }
+        let document = [
+            -grid.origin_x * grid.scale_x,
+            -grid.origin_y * grid.scale_y,
+            (f64::from(document_width) - grid.origin_x) * grid.scale_x,
+            (f64::from(document_height) - grid.origin_y) * grid.scale_y,
+        ];
+        let raster_clip = [
+            quad.iter()
+                .map(|p| p.x)
+                .fold(f64::INFINITY, f64::min)
+                .max(document[0]),
+            quad.iter()
+                .map(|p| p.y)
+                .fold(f64::INFINITY, f64::min)
+                .max(document[1]),
+            quad.iter()
+                .map(|p| p.x)
+                .fold(f64::NEG_INFINITY, f64::max)
+                .min(document[2]),
+            quad.iter()
+                .map(|p| p.y)
+                .fold(f64::NEG_INFINITY, f64::max)
+                .min(document[3]),
+        ]
+        .map(|edge| (edge + 0.5 + 1e-9).floor());
         Ok(Self {
             grid,
             inverse,
@@ -110,14 +166,11 @@ impl DocumentSampler {
             quad,
             width,
             height,
-            document: [
-                -grid.origin_x * grid.scale_x,
-                -grid.origin_y * grid.scale_y,
-                (f64::from(document_width) - grid.origin_x) * grid.scale_x,
-                (f64::from(document_height) - grid.origin_y) * grid.scale_y,
-            ],
+            document,
             margin_x: 0.5 * (inverse[0].abs() / grid.scale_x + inverse[2].abs() / grid.scale_y),
             margin_y: 0.5 * (inverse[1].abs() / grid.scale_x + inverse[3].abs() / grid.scale_y),
+            sampling,
+            raster_clip,
         })
     }
 
@@ -175,7 +228,17 @@ impl DocumentSampler {
             && y as f64 >= self.document[1]
             && x as f64 + 1.0 <= self.document[2]
             && y as f64 + 1.0 <= self.document[3];
-        let coverage = if full_document
+        let coverage = if self.sampling != DocumentSampling::CoverageBilinear {
+            if x as f64 >= self.raster_clip[0]
+                && y as f64 >= self.raster_clip[1]
+                && (x as f64) < self.raster_clip[2]
+                && (y as f64) < self.raster_clip[3]
+            {
+                1.0
+            } else {
+                0.0
+            }
+        } else if full_document
             && sx - self.margin_x >= 0.0
             && sy - self.margin_y >= 0.0
             && sx + self.margin_x <= self.width as f64
@@ -202,8 +265,15 @@ impl DocumentSampler {
         let py = (sy - 0.5).clamp(0.0, (self.height - 1) as f64);
         let ix = px.floor() as usize;
         let iy = py.floor() as usize;
-        let fx = px - ix as f64;
-        let fy = py - iy as f64;
+        let quantize = |fraction: f64| {
+            if self.sampling == DocumentSampling::RasterBilinear {
+                (fraction * 16.0).floor() / 16.0
+            } else {
+                fraction
+            }
+        };
+        let fx = quantize(px - ix as f64);
+        let fy = quantize(py - iy as f64);
         let mut color = [0.0; 3];
         let mut alpha = 0.0;
         for (cx, cy, weight) in [

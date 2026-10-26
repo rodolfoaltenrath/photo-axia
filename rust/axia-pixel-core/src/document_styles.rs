@@ -278,6 +278,7 @@ mod tests {
             blend_mode: BlendMode::Normal,
             transform: None,
             underlying_blend_if: None,
+            sampling: crate::document_transform::DocumentSampling::CoverageBilinear,
         }
     }
     fn job<'a>(

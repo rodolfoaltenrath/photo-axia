@@ -345,11 +345,12 @@ async function renderDocumentCanvas(
   purpose: 'export' | 'layer' | 'merge' | 'sample' | 'smart' | 'thumbnail',
   viewport: DocumentBounds = { x: 0, y: 0, width: document.width, height: document.height }
 ) {
-  if ((purpose === 'export' || purpose === 'sample') &&
+  if ((purpose === 'export' || purpose === 'sample' || purpose === 'layer' || purpose === 'merge') &&
       new URLSearchParams(window.location.search).get('axiaRustDocument') === '1') {
     try {
       const { renderRustDocumentCanvas } = await import('./rustDocumentRenderer.ts')
-      const canvas = await renderRustDocumentCanvas(document, layers, width, height, viewport)
+      const canvas = await renderRustDocumentCanvas(document, layers, width, height, viewport,
+        purpose === 'layer' ? 'appearance' : 'document')
       window.document.documentElement.dataset.axiaRustDocument = JSON.stringify({ backend: 'rust', purpose })
       return canvas
     } catch (error) {
@@ -546,9 +547,11 @@ export async function renderLayerAppearance(
     'layer',
     viewport
   )
-  const blob = await canvasBlob(canvas, 'image/png')
-  if (!blob) throw new Error('Não foi possível gerar a aparência da camada.')
-  return { blob, ...viewport }
+  try {
+    const blob = await canvasBlob(canvas, 'image/png')
+    if (!blob) throw new Error('Não foi possível gerar a aparência da camada.')
+    return { blob, ...viewport }
+  } finally { canvas.width = 1; canvas.height = 1 }
 }
 
 export async function renderDocumentThumbnail(
@@ -623,7 +626,9 @@ export async function renderMergedLayers(document: DocumentSpec, layers: LayerIt
 
   const viewport = { x: left, y: top, width: right - left, height: bottom - top }
   const canvas = await renderDocumentCanvas(document, layers, viewport.width, viewport.height, false, 'merge', viewport)
-  const blob = await canvasBlob(canvas, 'image/png')
-  if (!blob) throw new Error('Não foi possível gerar os pixels da mesclagem.')
-  return { blob, ...viewport }
+  try {
+    const blob = await canvasBlob(canvas, 'image/png')
+    if (!blob) throw new Error('Não foi possível gerar os pixels da mesclagem.')
+    return { blob, ...viewport }
+  } finally { canvas.width = 1; canvas.height = 1 }
 }

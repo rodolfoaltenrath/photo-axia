@@ -140,7 +140,7 @@ test('Worker não inicia mídia documental num contexto usado pelo protocolo ger
   } finally { await worker.close() }
 })
 
-test('serviço offscreen serializa consumidores, usa tiles e termina cada Worker antes de resolver', async () => {
+test('sessão offscreen serializa consumidores e reutiliza preparação num único Worker', async () => {
   let alive = 0, peak = 0, created = 0, prepared = 0
   const service = new RustDocumentOffscreen(async () => {
     const harness = createRustPixelWorkerHarness({ mediaFixtures: true })
@@ -153,9 +153,10 @@ test('serviço offscreen serializa consumidores, usa tiles e termina cada Worker
   const values: number[][] = []
   try {
     await Promise.all([service.render(plan(), rgba => values.push([...rgba])), service.render(plan(), rgba => values.push([...rgba]))])
-    assert.equal(prepared, 2); assert.equal(created, 2); assert.equal(peak, 1); assert.equal(alive, 0)
+    assert.equal(prepared, 1); assert.equal(created, 1); assert.equal(peak, 1); assert.equal(alive, 1)
+    assert.equal(service.stats.preparations, 1); assert.equal(service.stats.reuses, 1)
     assert.deepEqual(values, [[40, 60, 80, 255, 0, 0, 0, 0], [40, 60, 80, 255, 0, 0, 0, 0]])
-  } finally { await service.dispose() }
+  } finally { await service.dispose(); assert.equal(alive, 0); assert.equal(service.stats.preparedBytes, 0) }
 })
 
 test('serviço libera a sessão mesmo quando consumidor falha ao pintar', async () => {
@@ -168,7 +169,7 @@ test('serviço libera a sessão mesmo quando consumidor falha ao pintar', async 
   try {
     await assert.rejects(service.render(plan(), () => { throw new Error('paint-failed') }), /paint-failed/)
     assert.equal(alive, 0)
-    await service.render(plan(), () => {}); assert.equal(alive, 0)
+    await service.render(plan(), () => {}); assert.equal(alive, 1)
   } finally { await service.dispose() }
 })
 

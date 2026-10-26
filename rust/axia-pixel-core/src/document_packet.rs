@@ -6,7 +6,7 @@ use crate::document_composite::{
     compose_document_region, DocumentCompositeError, DocumentCompositeJob, DocumentRasterLayer,
     LAYER_METADATA_BYTES, MAX_JOB_BYTES, MAX_LAYERS,
 };
-use crate::document_transform::{DocumentAffine, DocumentOutputGrid};
+use crate::document_transform::{DocumentAffine, DocumentOutputGrid, DocumentSampling};
 use crate::{RasterRegion, MAX_POC_BYTES};
 
 const HEADER: usize = 48;
@@ -64,6 +64,9 @@ pub(crate) fn decode_document_packet(
             (b"DCP3", 3, 80) if packet.len() >= 80 && packet[72..80].iter().all(|v| *v == 0) => {
                 (80, 96, true)
             }
+            (b"DCP4", 4, 80) if packet.len() >= 80 && packet[72..80].iter().all(|v| *v == 0) => {
+                (80, 96, true)
+            }
             _ => return Err(2),
         };
     let count = integer(packet, 12) as usize;
@@ -100,8 +103,8 @@ pub(crate) fn decode_document_packet(
         let underlying_blend_if = if record_bytes == 96 {
             let extra = &packet[record + 80..record + 96];
             match integer(extra, 0) {
-                0 if extra.iter().all(|v| *v == 0) => None,
-                1 if extra[12..16].iter().all(|v| *v == 0) => {
+                0 if extra[..12].iter().all(|v| *v == 0) => None,
+                1 => {
                     let config = UnderlyingBlendIf {
                         channel: BlendIfChannel::try_from(integer(extra, 4)).map_err(|_| 2u32)?,
                         shadows: [extra[8], extra[9]],
@@ -114,6 +117,16 @@ pub(crate) fn decode_document_packet(
             }
         } else {
             None
+        };
+        let sampling = if record_bytes == 96 {
+            match (packet[3], integer(packet, record + 92)) {
+                (_, 0) => DocumentSampling::CoverageBilinear,
+                (b'4', 1) => DocumentSampling::RasterBilinear,
+                (b'4', 2) => DocumentSampling::RasterBilinearPrecise,
+                _ => return Err(2),
+            }
+        } else {
+            DocumentSampling::CoverageBilinear
         };
         layers.push(DocumentRasterLayer {
             rgba: &packet[offset..end],
@@ -142,6 +155,7 @@ pub(crate) fn decode_document_packet(
                 }))
             }),
             underlying_blend_if,
+            sampling,
         });
         cursor = end;
     }
@@ -179,7 +193,7 @@ pub fn compose_document_packet(packet: &[u8], output: &mut [u8]) -> Result<(), u
 
 #[no_mangle]
 pub extern "C" fn axia_poc_document_packet_version() -> u32 {
-    3
+    4
 }
 
 /// # Safety
@@ -370,7 +384,7 @@ mod tests {
         let mut output = [99; 8];
         compose_document_packet(&affine_packet(), &mut output).unwrap();
         assert_eq!(output, [40, 80, 120, 191, 40, 80, 120, 64]);
-        assert_eq!(axia_poc_document_packet_version(), 3);
+        assert_eq!(axia_poc_document_packet_version(), 4);
     }
 
     #[test]

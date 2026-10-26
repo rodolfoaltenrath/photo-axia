@@ -23,6 +23,7 @@ fn layer(rgba: &[u8]) -> DocumentRasterLayer<'_> {
         blend_mode: BlendMode::Normal,
         transform: None,
         underlying_blend_if: None,
+        sampling: crate::document_transform::DocumentSampling::CoverageBilinear,
     }
 }
 fn job<'a>(layers: &'a [DocumentRasterLayer<'a>], width: usize) -> DocumentCompositeJob<'a> {

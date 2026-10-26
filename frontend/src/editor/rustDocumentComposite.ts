@@ -1,6 +1,7 @@
 import type { LayerBlendMode } from '../types/editor.ts'
 import type { RustPixelPocRegion, RustPixelPocUnderlyingBlendIf } from './rustPixelPocRuntime.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
+import { rustRasterBilinearSupported } from './rustDocumentSampling.ts'
 
 const HEADER = 48, RECORD = 40, MAX_BYTES = 64 * 1024 * 1024
 const MAX_WORKING_BYTES = 96 * 1024 * 1024, MAX_LAYERS = 1024, MAX_AXIS = 16384
@@ -21,6 +22,7 @@ export interface RustDocumentRasterLayer {
   blendMode: LayerBlendMode
   sourceToDocument?: readonly [number, number, number, number, number, number]
   underlyingBlendIf?: RustPixelPocUnderlyingBlendIf
+  sampling?: 'raster-bilinear' | 'raster-bilinear-precise'
 }
 
 export interface RustDocumentOutputGrid {
@@ -83,13 +85,15 @@ export function documentCompositeJobLayout(job: RustDocumentCompositeJob) {
   if (region.x + region.width > 0xffffffff || region.y + region.height > 0xffffffff) invalid()
   const transformed = job.outputGrid !== undefined
   const underlying = job.layersBottomToTop.some(layer => layer?.underlyingBlendIf !== undefined)
+  const sampled = job.layersBottomToTop.some(layer => layer?.sampling !== undefined)
   if (underlying && !transformed) invalid()
+  if (sampled && !transformed) invalid()
   if (transformed) {
     const grid = job.outputGrid
     if (!grid || [grid.scaleX, grid.scaleY].some(v => !Number.isFinite(v) || v < 1 / 1024 || v > 128) ||
         [grid.originX, grid.originY].some(v => !Number.isFinite(v) || Math.abs(v) > 0xffffffff)) invalid()
   }
-  const header = transformed ? 80 : HEADER, recordBytes = underlying ? 96 : transformed ? 80 : RECORD
+  const header = transformed ? 80 : HEADER, recordBytes = underlying || sampled ? 96 : transformed ? 80 : RECORD
   let packetBytes = header + job.layersBottomToTop.length * recordBytes
   let workPixels = 0
   for (const layer of job.layersBottomToTop) {
@@ -99,6 +103,7 @@ export function documentCompositeJobLayout(job: RustDocumentCompositeJob) {
     boundedInteger(layer.x, -0x80000000, 0x7fffffff)
     boundedInteger(layer.y, -0x80000000, 0x7fffffff)
     if (layer.underlyingBlendIf !== undefined) validateUnderlying(layer.underlyingBlendIf)
+    if (layer.sampling !== undefined && layer.sampling !== 'raster-bilinear' && layer.sampling !== 'raster-bilinear-precise') invalid()
     if (transformed) {
       const matrix = layer.sourceToDocument
       if (!Array.isArray(matrix) || matrix.length !== 6 || layer.x !== 0 || layer.y !== 0) invalid()
@@ -108,6 +113,7 @@ export function documentCompositeJobLayout(job: RustDocumentCompositeJob) {
       const [a, b, c, d] = matrix, det = a * d - b * c
       if (!Number.isFinite(det) || Math.abs(det) < 1e-12 ||
           [d / det, -b / det, -c / det, a / det].some(v => !Number.isFinite(v) || Math.abs(v) > 1_000_000)) invalid()
+      if (layer.sampling && !rustRasterBilinearSupported(matrix, job.outputGrid!)) invalid()
     } else if (layer.sourceToDocument !== undefined) invalid()
     if (layer.rgba.byteLength !== rasterBytes(layer.width, layer.height)) invalid()
     if (transformed) {
@@ -125,8 +131,9 @@ export function encodeDocumentComposite(job: RustDocumentCompositeJob): Uint8Arr
   const { packetBytes } = documentCompositeJobLayout(job)
   const transformed = job.outputGrid !== undefined
   const underlying = job.layersBottomToTop.some(layer => layer.underlyingBlendIf !== undefined)
-  const version = underlying ? 3 : transformed ? 2 : 1
-  const header = transformed ? 80 : HEADER, recordBytes = underlying ? 96 : transformed ? 80 : RECORD
+  const sampled = job.layersBottomToTop.some(layer => layer.sampling !== undefined)
+  const version = sampled ? 4 : underlying ? 3 : transformed ? 2 : 1
+  const header = transformed ? 80 : HEADER, recordBytes = underlying || sampled ? 96 : transformed ? 80 : RECORD
   const bytes = new Uint8Array(packetBytes), view = new DataView(bytes.buffer)
   bytes.set([68, 67, 80, 48 + version])
   for (const [offset, value] of [
@@ -152,6 +159,7 @@ export function encodeDocumentComposite(job: RustDocumentCompositeJob): Uint8Arr
       view.setUint32(offset + 80, 1, true); view.setUint32(offset + 84, CHANNELS.indexOf(config.channel), true)
       bytes.set([...config.shadows, ...config.highlights], offset + 88)
     }
+    if (layer.sampling) view.setUint32(offset + 92, layer.sampling === 'raster-bilinear' ? 1 : 2, true)
     bytes.set(layer.rgba, cursor)
     cursor += layer.rgba.byteLength
   })
@@ -163,8 +171,8 @@ function parseDocumentComposite(packet: Uint8Array): RustDocumentCompositeJob {
       packet.byteLength < HEADER || packet.byteLength > MAX_BYTES || packet.byteLength % 4 !== 0) invalid()
   const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength)
   const version = view.getUint32(4, true), transformed = version !== 1
-  const header = transformed ? 80 : HEADER, recordBytes = version === 3 ? 96 : transformed ? 80 : RECORD
-  if (![1, 2, 3].includes(version) || view.getUint32(0, true) !== 0x30504344 + version * 0x1000000 ||
+  const header = transformed ? 80 : HEADER, recordBytes = version >= 3 ? 96 : transformed ? 80 : RECORD
+  if (![1, 2, 3, 4].includes(version) || view.getUint32(0, true) !== 0x30504344 + version * 0x1000000 ||
       view.getUint32(8, true) !== header || packet.length < header) invalid()
   if (transformed && (view.getUint32(72, true) !== 0 || view.getUint32(76, true) !== 0)) invalid()
   const count = view.getUint32(12, true)
@@ -179,9 +187,13 @@ function parseDocumentComposite(packet: Uint8Array): RustDocumentCompositeJob {
     if (start !== cursor || length === 0 || length % 4 !== 0 || end > packet.byteLength ||
         visible > 1 || !blendMode) invalid()
     let underlyingBlendIf: RustPixelPocUnderlyingBlendIf | undefined
-    if (version === 3) {
+    let sampling: RustDocumentRasterLayer['sampling']
+    if (version >= 3) {
       const enabled = view.getUint32(offset + 80, true), channel = CHANNELS[view.getUint32(offset + 84, true)]
-      if (enabled > 1 || view.getUint32(offset + 92, true) !== 0) invalid()
+      const sample = view.getUint32(offset + 92, true)
+      if (enabled > 1 || sample > (version === 4 ? 2 : 0)) invalid()
+      if (sample === 1) sampling = 'raster-bilinear'
+      if (sample === 2) sampling = 'raster-bilinear-precise'
       if (enabled === 0) {
         if (view.getUint32(offset + 84, true) !== 0 || view.getUint32(offset + 88, true) !== 0) invalid()
       } else {
@@ -197,7 +209,7 @@ function parseDocumentComposite(packet: Uint8Array): RustDocumentCompositeJob {
       y: transformed ? 0 : view.getInt32(offset + 20, true), visible: visible === 1,
       opacity: view.getFloat64(offset + (transformed ? 24 : 32), true), blendMode,
       ...(transformed ? { sourceToDocument: [0, 1, 2, 3, 4, 5].map(field => view.getFloat64(offset + 32 + field * 8, true)) as [number, number, number, number, number, number] } : {}),
-      ...(underlyingBlendIf ? { underlyingBlendIf } : {})
+      ...(underlyingBlendIf ? { underlyingBlendIf } : {}), ...(sampling ? { sampling } : {})
     })
     cursor = end
   }

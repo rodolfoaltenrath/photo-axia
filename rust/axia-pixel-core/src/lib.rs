@@ -8,6 +8,8 @@ pub mod color_overlay;
 pub mod composite;
 pub mod document_composite;
 pub mod document_packet;
+#[cfg(test)]
+mod document_sampling_tests;
 pub mod document_style_packet;
 pub mod document_styles;
 pub mod document_transform;

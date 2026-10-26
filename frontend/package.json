@@ -19,6 +19,8 @@
     "smoke:rust-poc": "node scripts/smokeRustPixelBrowser.mjs",
     "presmoke:document-oracle": "node scripts/buildRustPixelPoc.mjs",
     "smoke:document-oracle": "node scripts/documentOracleBrowser.mjs",
+    "presmoke:document-resampling": "node scripts/buildRustPixelPoc.mjs",
+    "smoke:document-resampling": "node scripts/documentOracleBrowser.mjs --resampling",
     "prerecord:document-oracle": "node scripts/buildRustPixelPoc.mjs",
     "record:document-oracle": "node scripts/documentOracleBrowser.mjs --record",
     "benchmark:document-pipeline": "node scripts/documentOracleBrowser.mjs --pipeline",

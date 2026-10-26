@@ -793,6 +793,30 @@ texto, escala/minificação de imagem, sessão persistente e demais consumidores
 ainda exigem trabalho. Sem mudança
 do preview padrão, rollout ou remoção do legado. C3/C4 permanecem abertos.
 
+Nona fatia de C3: **sessão offscreen persistente limitada**. PNG/Blob e
+conta-gotas compartilham um Worker e um documento preparado entre snapshots
+compatíveis, sem repetir carga/decode/efeitos. Identidade exata inclui fontes,
+ordem, estilos, luz, matrizes e geometria; a região de saída muda por tile.
+Mídias mutáveis não conservam pixels. Troca libera o residente antes da nova
+carga; inatividade de 5 s, falha e pagehide descartam o contexto, com término
+drenado antes de abrir outro. Testes de lifecycle/respostas tardias e oráculo
+real verificam reuso/invalidação sem alterar tolerâncias. [Contrato e limites](contrato-sessao-documental-rust-v1.md).
+Texto, minificação/escalas, sessão incremental/cancelamento público/admission,
+demais consumidores e C4 continuam gates. Não muda preview/default, ABI,
+algoritmos Rust, stack ou versões; não remove legado nem fecha C3/C4.
+
+Décima fatia de C3: **aparência isolada e mesclagem no consumidor experimental**.
+O mesmo kernel/sessão atende rasterização/export de camada (modos local/export)
+e mesclagem. Um domínio de clipping explícito normaliza a origem da aparência,
+preservando conteúdo/sombras fora do documento; a mesclagem mantém recorte e
+backdrop documentais. Canvas de saída é liberado após encode, inclusive em erro.
+Novos casos browser encontraram divergência de amostragem afim raster; em vez de
+afrouxar tolerâncias, o adapter de todos os consumidores passa a exigir fonte
+1:1 alinhada à grade, usando fallback explícito nos demais casos. Formas mantêm
+traçado direto e transformações vetoriais. [Contrato e limites](contrato-aparencia-mesclagem-rust-v1.md).
+Não altera ABI/kernels Rust, texto, preview/default, stack/versões ou `.axia`;
+texto, reamostragem/escalas, demais consumidores e C4 continuam gates.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

@@ -9,14 +9,17 @@ import type { RustDocumentRasterLayer, RustDocumentOutputGrid } from './rustDocu
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import { planRustDocumentShape, type RustDocumentShapeSource } from './rustDocumentShape.ts'
+import { rustRasterBilinearSupported, rustRasterBilinearMode } from './rustDocumentSampling.ts'
 
 type Matrix = NonNullable<RustDocumentRasterLayer['sourceToDocument']>
+export type RustDocumentBoundsPolicy = 'document' | 'appearance'
 export interface RustEditorialLayer {
   source: { type: 'raster'; url: string } | { type: 'solid'; color: [number, number, number, number] } | RustDocumentShapeSource
   input: RustPixelPocStyleSourceInput
   matrix: Matrix
   opacity: number
   blendMode: RustDocumentRasterLayer['blendMode']
+  sampling?: RustDocumentRasterLayer['sampling']
 }
 export interface RustEditorialPlan {
   documentWidth: number; documentHeight: number; width: number; height: number
@@ -48,16 +51,28 @@ export function rustDocumentSourceMatrix(transform: LayerTransform, sourceWidth:
     transform.x + transform.width / 2 - cos * transform.width / 2 + sin * transform.height / 2 + a * offsetX + c * offsetY,
     transform.y + transform.height / 2 - sin * transform.width / 2 - cos * transform.height / 2 + b * offsetX + d * offsetY]
 }
+function pixelAlignedSource(matrix: Matrix) {
+  const rounded = matrix.map(Math.round), [a, b, c, d] = rounded as [number, number, number, number, number, number]
+  return matrix.every((value, index) => Math.abs(value - rounded[index]!) <= 1e-9) &&
+    a * a + b * b === 1 && c * c + d * d === 1 && a * c + b * d === 0
+}
 export function planRustEditorialDocument(document: DocumentSpec, layers: LayerItem[], width: number, height: number,
-  viewport: DocumentBounds): RustEditorialPlan {
+  viewport: DocumentBounds, boundsPolicy: RustDocumentBoundsPolicy = 'document'): RustEditorialPlan {
   if (![width, height, document.width, document.height].every(value => Number.isSafeInteger(value) && value > 0) ||
       ![viewport.x, viewport.y, viewport.width, viewport.height].every(Number.isFinite) ||
       viewport.width <= 0 || viewport.height <= 0) throw new RustPixelPocError('invalid-input')
+  if (!['document', 'appearance'].includes(boundsPolicy) || boundsPolicy === 'appearance' &&
+      ![viewport.x, viewport.y].every(value => Number.isSafeInteger(value) && Math.abs(value) <= 0xffffffff)) {
+    throw new RustPixelPocError('invalid-input')
+  }
   if (width !== viewport.width || height !== viewport.height || width > 16384 || height > 16384 ||
       width * height * 4 > 64 * 1024 * 1024) throw new RustDocumentUnsupported('output-scale-or-size')
+  if (![viewport.x, viewport.y].every(Number.isSafeInteger)) throw new RustDocumentUnsupported('output-grid-quality')
   const light = normalizeLayerStyleGlobalLight(document.layerStyleGlobalLight)
-  const result: RustEditorialPlan = { documentWidth: document.width, documentHeight: document.height,
-    width, height, grid: { scaleX: 1, scaleY: 1, originX: viewport.x, originY: viewport.y }, layers: [] }
+  const shiftX = boundsPolicy === 'appearance' ? viewport.x : 0, shiftY = boundsPolicy === 'appearance' ? viewport.y : 0
+  const result: RustEditorialPlan = { documentWidth: boundsPolicy === 'appearance' ? width : document.width,
+    documentHeight: boundsPolicy === 'appearance' ? height : document.height,
+    width, height, grid: { scaleX: 1, scaleY: 1, originX: viewport.x - shiftX, originY: viewport.y - shiftY }, layers: [] }
   const background = layers.find(layer => layer.kind === 'background')
   if (background?.visible && !background.image && document.background !== 'transparent') {
     if (activeLayerStyleEffects(background.styles).length || !layerStyleBlendIfIsDefault(background.styles.blendIf)) {
@@ -67,7 +82,7 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     result.layers.push({ source: { type: 'solid', color: [color, color, color, 255] },
       input: { sourceIdentity: 'document-background', sourceWidth: 1, sourceHeight: 1,
         styles: normalizeLayerStyleConfig({}), globalLight: light },
-      matrix: [document.width, 0, 0, document.height, 0, 0],
+      matrix: [document.width, 0, 0, document.height, 0 - shiftX, 0 - shiftY],
       opacity: background.opacity * layerStyleFillOpacity(background.styles), blendMode: 'normal' })
   }
   let sourceBytes = 0, metadata = 0
@@ -78,7 +93,8 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       if (activeLayerStyleEffects(layer.styles).length || !layerStyleBlendIfIsDefault(layer.styles.blendIf)) {
         throw new RustDocumentUnsupported('shape-style')
       }
-      const source = planRustDocumentShape(layer.shape, layer.transform, document.width, document.height,
+      const transform = { ...layer.transform, x: layer.transform.x - shiftX, y: layer.transform.y - shiftY }
+      const source = planRustDocumentShape(layer.shape, transform, result.documentWidth, result.documentHeight,
         (layer.opacity / 100) * layerStyleFillOpacity(layer.styles))
       if (!source) continue
       sourceBytes += source.width * source.height * 4
@@ -94,6 +110,9 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     if (!layer.image) throw new RustDocumentUnsupported('non-image-layer')
     const image = layer.image, transform = layer.transform
     if (transform.width < image.width || transform.height < image.height) throw new RustDocumentUnsupported('source-minification')
+    const matrix = rustDocumentSourceMatrix(transform, image.width, image.height)
+    const resampled = !pixelAlignedSource(matrix)
+    if (resampled && !rustRasterBilinearSupported(matrix, result.grid)) throw new RustDocumentUnsupported('source-transform-quality')
     const styles = normalizeLayerStyleConfig(layer.styles)
     metadata += rustPixelPocStyleMetadataBytes({ id: layer.id, url: image.sourceUrl, styles })
     if (metadata > 512 * 1024) throw new RustPixelPocError('memory-limit')
@@ -103,8 +122,13 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     const layout = prepareRustStyleSourceLayout(input)
     sourceBytes += layout.width * layout.height * 4
     if (sourceBytes > 16 * 1024 * 1024 || result.layers.length >= 32) throw new RustPixelPocError('memory-limit')
+    const [a, b, c, d, tx, ty] = matrix
     result.layers.push({ source: { type: 'raster', url: image.sourceUrl }, input,
-      matrix: rustDocumentSourceMatrix(transform, image.width, image.height), opacity: layer.opacity, blendMode: layer.blendMode })
+      matrix: [a, b, c, d, tx - shiftX, ty - shiftY], opacity: layer.opacity, blendMode: layer.blendMode,
+      ...(resampled ? { sampling: rustRasterBilinearMode(matrix, layer.blendMode) } : {}) })
+  }
+  if (result.layers.some(layer => layer.sampling) && result.layers.some(layer => layerStyleBlendIfUsesUnderlying(layer.input.styles.blendIf))) {
+    throw new RustDocumentUnsupported('source-transform-blend-if')
   }
   if (rustPixelPocStyleMetadataBytes(result) > 1024 * 1024) throw new RustPixelPocError('memory-limit')
   return structuredClone(result)

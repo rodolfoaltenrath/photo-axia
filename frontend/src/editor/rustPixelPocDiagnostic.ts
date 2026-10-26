@@ -445,12 +445,12 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
     }
     await session.dispose()
     const mediaSession = new RustPixelPocStyleSession(send, gate)
-    async function pngFixture(rgba: number[]) {
-      const canvas = new OffscreenCanvas(1, 1)
+    async function pngFixture(rgba: number[], width = 1, height = 1) {
+      const canvas = new OffscreenCanvas(width, height)
       try {
         const context = canvas.getContext('2d')
         if (!context) throw new Error('Canvas indisponível no diagnóstico de mídia.')
-        context.putImageData(new ImageData(new Uint8ClampedArray(rgba), 1, 1), 0, 0)
+        context.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0)
         return await canvas.convertToBlob({ type: 'image/png' })
       } finally { canvas.width = 1; canvas.height = 1 }
     }
@@ -592,10 +592,12 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
       if (service.stats.retainedResultBytes !== 0) throw new Error('Serviço não liberou leases.')
     } finally { await service.dispose() }
     const originalUrl = location.href, mediaUrl = URL.createObjectURL(mediaBlob)
+    const documentRenderer = await import('../services/rustDocumentRenderer.ts')
+    const initialDocumentSession = documentRenderer.rustDocumentRendererStats()
     try {
       const diagnosticUrl = new URL(originalUrl); diagnosticUrl.searchParams.set('axiaRustDocument', '1')
       history.replaceState(null, '', diagnosticUrl)
-      const { renderDocumentBlob, sampleDocumentColor } = await import('../services/renderDocument.ts')
+      const { renderDocumentBlob, sampleDocumentColor, renderLayerAppearance, renderMergedLayers } = await import('../services/renderDocument.ts')
       const document = { id: 'editorial-diagnostic', name: 'editorial-diagnostic', width: 2, height: 1,
         unit: 'px' as const, physicalWidth: 2, physicalHeight: 1, resolutionDpi: 72, colorSpace: 'srgb' as const,
         background: 'transparent' as const, createdAt: '', layerStyleGlobalLight: preparedRequest.globalLight }
@@ -620,7 +622,72 @@ export async function runRustPixelPocDiagnostic(): Promise<{ elapsedMs: number; 
           await sampleDocumentColor(document, shapes, 1, 0) !== '#ff0000' || backend() !== 'rust') {
         throw new Error('Forma vetorial não preservou Fill/opacidade no compositor Rust.')
       }
-    } finally { history.replaceState(null, '', originalUrl); URL.revokeObjectURL(mediaUrl) }
+      const session = documentRenderer.rustDocumentRendererStats()
+      if (session.connections - initialDocumentSession.connections !== 1 ||
+          session.preparations - initialDocumentSession.preparations !== 2 ||
+          session.reuses - initialDocumentSession.reuses !== 2 || !session.workerAlive || session.preparedBytes <= 0) {
+        throw new Error('Sessão documental não reutilizou fonte/Worker entre Blob e conta-gotas.')
+      }
+      const outside = { ...layers[0]!, visible: false, opacity: 50, blendMode: 'multiply' as const,
+        transform: { x: -2, y: -1, width: 1, height: 1, rotation: 0 } }
+      for (const mode of ['local', 'isolated-export'] as const) {
+        const appearance = await renderLayerAppearance(document, outside, mode)
+        const expected = mode === 'local' ? '255,0,0,255,0,0,255,128' : '255,0,0,128,0,0,255,64'
+        if (backend() !== 'rust' || appearance.x !== -3 || appearance.y !== -1 ||
+            appearance.width !== 2 || appearance.height !== 1 || (await readPng(appearance.blob, 2, 1)).join(',') !== expected) {
+          throw new Error(`Aparência ${mode} perdeu halo/origem ou duplicou opacidade.`)
+        }
+      }
+      const merged = await renderMergedLayers(document, layers)
+      if (backend() !== 'rust' || merged.x !== 0 || merged.y !== 0 || merged.width !== 2 || merged.height !== 1 ||
+          (await readPng(merged.blob, 2, 1)).join(',') !== '255,0,0,255,0,0,255,128') {
+        throw new Error('Mesclagem documental Rust perdeu pixels/bounds.')
+      }
+      const outsideShape = await renderLayerAppearance(document,
+        { ...shapes[0]!, transform: { x: 4, y: -2, width: 2, height: 1, rotation: 0 } }, 'isolated-export')
+      if (backend() !== 'rust' || outsideShape.x !== 4 || outsideShape.y !== -2 ||
+          (await readPng(outsideShape.blob, 2, 1)).join(',') !== '255,0,0,64,255,0,0,64') {
+        throw new Error('Forma isolada externa foi cortada pelo documento original.')
+      }
+      const pixelUrl = URL.createObjectURL(await pngFixture([255, 0, 0, 255, 0, 255, 0, 109, 0, 0, 255, 0, 255, 255, 255, 128], 2, 2))
+      try {
+        const { rustDocumentSamplingCompatible } = await import('../services/rustDocumentSamplingCompatibility.ts')
+        const compatible = await rustDocumentSamplingCompatible()
+        const spec = { ...document, width: 12, height: 10 }
+        const lower = { ...shapes[0]!, opacity: 43.7, styles: normalizeLayerStyleConfig({}),
+          shape: { ...DEFAULT_SHAPE_CONFIG, color: '#2050a0', baseWidth: 12, baseHeight: 10 },
+          transform: { x: 0, y: 0, width: 12, height: 10, rotation: 0 } }
+        const legacyUrl = new URL(diagnosticUrl); legacyUrl.searchParams.delete('axiaRustDocument')
+        for (const transform of [
+          { x: 2.25, y: 2.5, width: 2, height: 2, rotation: 0 },
+          { x: 2.25, y: 2.5, width: 3, height: 3, rotation: 0 },
+          { x: 2.25, y: 2.5, width: 3, height: 4, rotation: 90 },
+          { x: -0.5, y: -0.25, width: 6.5, height: 3, rotation: 180 }
+        ]) for (const blendMode of ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten'] as const) {
+          const top = { ...layers[0]!, opacity: 63.7, blendMode, styles: normalizeLayerStyleConfig({}),
+            image: { width: 2, height: 2, mimeType: 'image/png', sourceUrl: pixelUrl }, transform }
+          history.replaceState(null, '', legacyUrl)
+          const expected = await readPng(await renderDocumentBlob(spec, [top, lower]), 12, 10)
+          history.replaceState(null, '', diagnosticUrl)
+          const actual = await readPng(await renderDocumentBlob(spec, [top, lower]), 12, 10)
+          const diagnostic = JSON.parse(window.document.documentElement.dataset.axiaRustDocument ?? '{}')
+          if (diagnostic.backend !== (compatible ? 'rust' : 'legacy') || !compatible && diagnostic.reason !== 'source-transform-platform') {
+            throw new Error('Raster fracionário ignorou a compatibilidade da plataforma.')
+          }
+          for (let i = 0; i < actual.length; i += 4) {
+            if (Math.abs(actual[i + 3]! - expected[i + 3]!) > 2) throw new Error(`Alfa raster ${JSON.stringify(transform)}/${blendMode}/${i / 4}: ${actual[i + 3]}/${expected[i + 3]}`)
+            for (let c = 0; c < 3; c++) if (Math.abs(actual[i + c]! * actual[i + 3]! / 255 - expected[i + c]! * expected[i + 3]! / 255) > 3) {
+              throw new Error(`Cor raster ${JSON.stringify(transform)}/${blendMode}/${i / 4}/${c}: ${actual[i + c]}/${expected[i + c]}`)
+            }
+          }
+        }
+      } finally { URL.revokeObjectURL(pixelUrl) }
+    } finally {
+      await documentRenderer.disposeRustDocumentRenderer()
+      history.replaceState(null, '', originalUrl); URL.revokeObjectURL(mediaUrl)
+    }
+    const { runRustDocumentResamplingDiagnostic } = await import('./rustDocumentResamplingDiagnostic.ts')
+    await runRustDocumentResamplingDiagnostic(await (await fetch(wasmUrl)).arrayBuffer())
     return { elapsedMs: performance.now() - started, wasmBytes }
   } finally {
     worker.terminate()
