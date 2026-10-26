@@ -145,7 +145,10 @@ scheduler incremental, cancelamento público ou admissão global.
 A [fatia 10](contrato-aparencia-mesclagem-rust-v1.md) liga aparência isolada e
 mesclagem às APIs públicas sob flag. Aparência normaliza bounds externos em
 frame próprio; mesclagem mantém clipping documental. O gate raster editorial
-agora exige alinhamento 1:1 à grade até fechar paridade de reamostragem afim.
+passou a exigir alinhamento 1:1 à grade na fatia 10. A fatia 11 aceita também
+ampliação raster, translação fracionária e quartos de volta com amostragem
+compatível com Canvas (DCP4); minificação e rotação arbitrária seguem em
+fallback. Ver [reamostragem raster](contrato-reamostragem-raster-rust-v1.md).
 
 Inventário em `frontend/src/services/renderDocument.ts`:
 

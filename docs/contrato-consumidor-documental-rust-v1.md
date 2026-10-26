@@ -106,6 +106,10 @@ Na fatia 10, novos casos demonstraram discrepância fora da tolerância para
 reamostragem afim. O adapter agora recusa também ampliação/translação fracionária
 e rotação que não preserve a grade (`source-transform-quality`). Matrizes de
 fonte 1:1 pixel-aligned permanecem elegíveis; a ABI afim em si não mudou.
+Na fatia 11, ampliação, translação fracionária e quartos de volta voltaram a ser
+elegíveis com modos de amostragem raster compatíveis com Canvas (DCP4) e uma
+sonda de plataforma; minificação foi medida e mantida em fallback. Detalhes no
+[contrato de reamostragem raster](contrato-reamostragem-raster-rust-v1.md).
 
 ## 3. Trabalho no Worker
 

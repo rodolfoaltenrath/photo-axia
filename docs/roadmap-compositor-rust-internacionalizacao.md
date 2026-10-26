@@ -1,7 +1,7 @@
 # Roadmap: compositor único em Rust e Axia multilíngue
 
 Estado: **C0/I0 iniciados; C1/C2 com passes Rust e preview opt-in; compositor Rust não ativado por padrão**.
-Atualizado em 2026-10-07.
+Atualizado em 2026-10-26.
 
 Este plano tem duas trilhas independentes, com contratos compartilhados: (A) unificar
 preview e exportação em um compositor de documento, introduzindo Rust/WASM onde
@@ -816,6 +816,22 @@ afrouxar tolerâncias, o adapter de todos os consumidores passa a exigir fonte
 traçado direto e transformações vetoriais. [Contrato e limites](contrato-aparencia-mesclagem-rust-v1.md).
 Não altera ABI/kernels Rust, texto, preview/default, stack/versões ou `.axia`;
 texto, reamostragem/escalas, demais consumidores e C4 continuam gates.
+
+Décima primeira fatia de C3: **reamostragem raster compatível com Canvas**.
+A divergência da fatia 10 é consistente com semânticas distintas: o sampler DCP2
+calcula cobertura geométrica; o `drawImage` alinhado a eixos faz bilinear no
+centro do pixel com recorte retangular. `DocumentSampling` acrescenta
+`RasterBilinear` (fração quantizada em 1/16, modo Normal sem rotação) e
+`RasterBilinearPrecise` (demais casos), transportados pelo DCP4 apenas quando há
+camada reamostrada. Ampliação, translação fracionária e quartos de volta voltam
+a ser elegíveis; uma sonda de plataforma por página protege contra Canvas que
+não reproduza o kernel. Oráculo browser: 288 casos nos seis modos, máximo 2/2,39.
+A minificação foi **medida e recusada**: 3.744 casos mostraram mipmap a partir
+de ~0,5, pipeline não identificado no modo Normal e empates de borda em float32;
+o subconjunto seguro seria estreito e conteria um caso inexplicado. Decisão,
+números e o que seria preciso para suportá-la no
+[contrato de reamostragem](contrato-reamostragem-raster-rust-v1.md). Não muda
+preview/default, `.axia`, texto, stack ou versões; C3/C4 permanecem abertos.
 
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar

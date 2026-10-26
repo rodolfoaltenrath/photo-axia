@@ -96,6 +96,14 @@ fixtures, custo e cobertura de bordas continua obrigatório antes do rollout.
 Formas não sofrem essa restrição raster: são traçadas na resolução documental
 antes de receber uma matriz identidade + origem inteira.
 
+Atualização (fatia 11): a divergência é consistente com uma diferença de
+semântica — o sampler de cobertura aplica antialiasing geométrico na borda, o
+`drawImage` alinhado a eixos recorta por retângulo de pixels; uma borda em meio
+pixel dá ~50% de cobertura contra 0 ou 100%, compatível com os 119. Novos modos raster
+reabrem ampliação, translação fracionária e quartos de volta; minificação e
+rotação arbitrária continuam recusadas. Ver o
+[contrato de reamostragem raster](contrato-reamostragem-raster-rust-v1.md).
+
 ## 4. Provas
 
 - Testes editoriais verificam origem negativa, conteúdo externo, translação
