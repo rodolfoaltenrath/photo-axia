@@ -841,6 +841,17 @@ exigir paridade incondicional, agora a exige só onde a sonda aprovou; a sonda
 passou a cobrir empates nos dois eixos e bordas; o smoke informa o estado. Ativar
 aqui exige medir o WebView2 com a regra invertida antes de transmiti-la ao sampler.
 
+Ativação da fatia 11 no WebView2 (2026-10-26): uma ferramenta grava a saída real
+do Canvas do executável em 576 casos (CPU e contexto padrão). O Chromium varia
+em exatamente dois pontos — direção de empate de borda e precisão dos pesos
+bilineares —, e isso muda até dentro do mesmo WebView2 conforme contexto e alfa
+da imagem. Excluídos só os pixels de empate, todos os casos casam estritamente
+com uma das duas variantes que o Rust já tinha. O Rust passa a definir a
+convenção, a paridade aplica só essas duas exceções (`rustRasterParity.ts`) e a
+sonda deixa de exigir direção de empate. A reamostragem Rust fica **ativa** no
+app instalado, com smoke Wails verde. Detalhes na seção 5.2 do
+[contrato de reamostragem](contrato-reamostragem-raster-rust-v1.md).
+
 Décima segunda fatia de C3: **texto no consumidor experimental**. Até aqui,
 qualquer camada de texto levava o documento inteiro ao fallback. Texto Normal sem
 efeitos, Fill 100 e `Mesclar se` padrão agora entra como descritor no plano

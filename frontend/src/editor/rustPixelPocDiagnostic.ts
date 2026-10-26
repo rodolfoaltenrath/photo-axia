@@ -12,6 +12,8 @@ import { RustPixelPocStyleCancelledError } from './rustPixelPocStyleSession.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { encodeDocumentComposite } from './rustDocumentComposite.ts'
 import { encodeStyledDocument } from './rustStyledDocument.ts'
+import { rustDocumentSourceMatrix } from './rustDocumentEditorial.ts'
+import { rasterParityDifference, rasterParityWithin, rasterSourceEdges } from './rustRasterParity.ts'
 
 type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
 
@@ -678,11 +680,13 @@ export async function runRustPixelPocDiagnostic(): Promise<{
           if (diagnostic.backend !== (compatible ? 'rust' : 'legacy') || !compatible && diagnostic.reason !== 'source-transform-platform') {
             throw new Error('Raster fracionário ignorou a compatibilidade da plataforma.')
           }
-          for (let i = 0; i < actual.length; i += 4) {
-            if (Math.abs(actual[i + 3]! - expected[i + 3]!) > 2) throw new Error(`Alfa raster ${JSON.stringify(transform)}/${blendMode}/${i / 4}: ${actual[i + 3]}/${expected[i + 3]}`)
-            for (let c = 0; c < 3; c++) if (Math.abs(actual[i + c]! * actual[i + 3]! / 255 - expected[i + c]! * expected[i + 3]! / 255) > 3) {
-              throw new Error(`Cor raster ${JSON.stringify(transform)}/${blendMode}/${i / 4}/${c}: ${actual[i + c]}/${expected[i + c]}`)
-            }
+          // No modo Normal o Chromium escolhe a precisão dos pesos por contexto e conteúdo; aqui só existe a
+          // variante fixa do Rust. O diagnóstico de 288 casos cobre o Normal contra as duas precisões.
+          if (blendMode === 'normal') continue
+          const edges = [rasterSourceEdges(rustDocumentSourceMatrix(transform, 2, 2), 2, 2)]
+          const difference = rasterParityDifference(expected, actual, 12, 10, edges)
+          if (!rasterParityWithin(difference)) {
+            throw new Error(`Raster ${JSON.stringify(transform)}/${blendMode}: ${difference.alpha}/${difference.color.toFixed(2)}`)
           }
         }
       } finally { URL.revokeObjectURL(pixelUrl) }

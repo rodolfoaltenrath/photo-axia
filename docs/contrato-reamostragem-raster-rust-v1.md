@@ -77,11 +77,14 @@ versão do Skia). Antes do primeiro documento com camada reamostrada, o renderer
 executa uma sonda única por página: desenha uma fonte 2×2 conhecida em canvases
 de 16 e 512 px, a partir de `HTMLImageElement` e `ImageBitmap`, nas escalas 1 e
 1,5 com translação fracionária, e compara pixels de canto e de miolo com o
-esperado (tolerância 2). Desde 2026-10-26 a sonda também verifica o **empate de
-borda** nos dois eixos e nas duas bordas: centro de pixel exatamente na borda
-inicial fica fora, na final fica dentro — a regra do recorte do Rust. Falha,
-exceção ou estouro de 2 s resultam em `source-transform-platform` e fallback
-integral; o resultado fica em cache.
+esperado (tolerância 2). Falha, exceção ou estouro de 2 s resultam em
+`source-transform-platform` e fallback integral; o resultado fica em cache.
+
+Desde a seção 5.2, a sonda **não** exige direção de empate nem precisão de peso,
+que o próprio Chromium varia. Ela usa escalas 1 e 2 em posições sem empate e com
+frações múltiplas de 1/16 — onde pesos quantizados e exatos coincidem — e exige
+que nada vaze para fora da fonte. Reprova plataformas que filtrem de outro modo
+(vizinho mais próximo, mipmap, blur).
 
 ### 5.1 WebView2 medido: sonda reprova, fatia inativa (2026-10-26)
 
@@ -106,10 +109,47 @@ Consequências medidas:
 - **Sonda reforçada:** antes ela testava só o empate da borda inicial em `y` e
   acertou aqui porque o WebView2 erra nos dois eixos. Agora cobre os quatro.
 
-Caminho para ativar a fatia neste WebView2: detectar a direção do empate na
-sonda e transmiti-la ao sampler (um modo DCP4 adicional), **depois** de medir
-os 288 casos no WebView2 com a regra invertida — é preciso confirmar que o empate
-é a única diferença antes de assumir isso.
+Caminho para ativar a fatia neste WebView2 (superado pela seção 5.2): detectar a
+direção do empate na sonda e transmiti-la ao sampler. A medição mostrou que a
+direção nem é constante dentro do mesmo WebView2, então esse caminho não serve.
+
+### 5.2 Mecanismo medido e ativação no WebView2 (2026-10-26)
+
+`scripts/recordWebView2Resampling.mjs` (`npm run record:webview2-resampling`)
+grava a saída real do Canvas do WebView2 do executável de produção nos mesmos
+288 casos, em contexto CPU (`willReadFrequently`, 16×12) e padrão (512×512, que
+pode ser acelerado por GPU como o canvas de exportação): 576 referências em
+`frontend/tests/fixtures/webview2Resampling.v1.json`, gravadas no Chromium 155.
+O Edge headless do oráculo é o 156.
+
+A análise contra o WASM mostrou que o Chromium varia em **exatamente dois
+pontos**, e que eles mudam com versão, contexto e conteúdo:
+
+| | contexto CPU | contexto padrão, fonte opaca | contexto padrão, fonte com alfa | Edge headless 156 |
+| --- | --- | --- | --- | --- |
+| empate de borda | negativo | negativo | positivo | positivo |
+| precisão dos pesos | exata | varia | varia | quantizada no Normal |
+
+Excluídos apenas os pixels cujo centro cai exatamente numa borda, **os 576 casos
+casam estritamente (2/3) com uma das duas variantes que o Rust já tinha**:
+máximo 2 de alfa e 2,39 de RGB premultiplicado. Nenhuma tolerância foi ampliada.
+
+Decisão: não há uma regra única a emular, então o Rust **define** a convenção — a
+atual, empate positivo e precisão por modo — e ela fica dentro da variação que o
+próprio Chromium produz. A paridade com Canvas passa a significar: estrita fora
+dos pixels de empate, contra a precisão de peso que a plataforma escolheu.
+`rustRasterParity.ts` implementa só essas duas exceções e é usado pelo
+diagnóstico de 288 casos (headless e Wails) e pelo laço documental do Wails.
+Nesse laço o modo Normal é delegado aos 288 casos, porque o pipeline completo só
+expõe a variante fixa do Rust; os outros cinco modos seguem estritos.
+
+Consequência: a sonda aprova este WebView2 e **a fatia 11 fica ativa no app
+instalado**, confirmado pelo smoke Wails ("Rust (sonda aprovou)") com o
+diagnóstico completo verde. Em pixels de empate a saída Rust pode diferir em uma
+coluna ou linha da exportação legada — que, por sua vez, já difere entre CPU e
+GPU no mesmo WebView2. O teste `scripts/tests/rustRasterParity.test.ts` fixa as
+576 gravações como regressão e prova que, sem a máscara de empate, o caso
+medido diverge. Regravar a fixture quando o WebView2 distribuído mudar de versão.
 
 O smoke Wails também se mostrou sensível a carga da máquina: em uma janela de
 lentidão (execuções de 72 s e 129 s contra ~15 s normais), o limite de 5 s por
@@ -173,7 +213,7 @@ produto que não cabe tomar implicitamente. O código experimental foi revertido
 
 ## 8. Gates restantes
 
-Ativação no WebView2 desta máquina (seção 5.1), minificação (seção 6), rotação
+Minificação (seção 6), rotação
 arbitrária, reamostragem com `Mesclar se` abaixo, escala de saída diferente de
 1:1, WebView2 com GPU em outras máquinas e QA com documentos do usuário. Texto
 entrou no consumidor na fatia 12 sem reamostragem (ver
