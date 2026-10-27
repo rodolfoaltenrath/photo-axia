@@ -64,7 +64,7 @@ function pixelAlignedSource(matrix: Matrix) {
     a * a + b * b === 1 && c * c + d * d === 1 && a * c + b * d === 0
 }
 export function planRustEditorialDocument(document: DocumentSpec, layers: LayerItem[], width: number, height: number,
-  viewport: DocumentBounds, boundsPolicy: RustDocumentBoundsPolicy = 'document'): RustEditorialPlan {
+  viewport: DocumentBounds, boundsPolicy: RustDocumentBoundsPolicy = 'document', usePreviewSources = false): RustEditorialPlan {
   if (![width, height, document.width, document.height].every(value => Number.isSafeInteger(value) && value > 0) ||
       ![viewport.x, viewport.y, viewport.width, viewport.height].every(Number.isFinite) ||
       viewport.width <= 0 || viewport.height <= 0) throw new RustPixelPocError('invalid-input')
@@ -72,19 +72,28 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       ![viewport.x, viewport.y].every(value => Number.isSafeInteger(value) && Math.abs(value) <= 0xffffffff)) {
     throw new RustPixelPocError('invalid-input')
   }
-  if (width !== viewport.width || height !== viewport.height || width > 16384 || height > 16384 ||
-      width * height * 4 > 64 * 1024 * 1024) throw new RustDocumentUnsupported('output-scale-or-size')
-  if (![viewport.x, viewport.y].every(Number.isSafeInteger)) throw new RustDocumentUnsupported('output-grid-quality')
+  if (width > 16384 || height > 16384 || width * height * 4 > 64 * 1024 * 1024) throw new RustDocumentUnsupported('output-scale-or-size')
+  const scaleX = width / viewport.width, scaleY = height / viewport.height, scaled = scaleX !== 1 || scaleY !== 1
+  if (![scaleX, scaleY].every(value => Number.isFinite(value) && value > 0)) throw new RustPixelPocError('invalid-input')
+  // Saída com escala (exportação em outro DPI, miniatura) ou origem fracionária: o plano inteiro passa ao
+  // espaço da saída, como a aparência isolada. As matrizes recebem escala e origem, a grade fica identidade
+  // e os modos de amostragem decidem sobre a matriz efetiva; vetores e texto rasterizam na resolução da saída.
+  const outputSpace = boundsPolicy === 'appearance' || scaled || ![viewport.x, viewport.y].every(Number.isSafeInteger)
   const light = normalizeLayerStyleGlobalLight(document.layerStyleGlobalLight)
-  const shiftX = boundsPolicy === 'appearance' ? viewport.x : 0, shiftY = boundsPolicy === 'appearance' ? viewport.y : 0
-  const result: RustEditorialPlan = { documentWidth: boundsPolicy === 'appearance' ? width : document.width,
-    documentHeight: boundsPolicy === 'appearance' ? height : document.height,
+  const shiftX = outputSpace ? viewport.x : 0, shiftY = outputSpace ? viewport.y : 0
+  const result: RustEditorialPlan = { documentWidth: outputSpace ? width : document.width,
+    documentHeight: outputSpace ? height : document.height,
     width, height, grid: { scaleX: 1, scaleY: 1, originX: viewport.x - shiftX, originY: viewport.y - shiftY }, layers: [] }
+  const place = ([a, b, c, d, tx, ty]: Matrix): Matrix => scaled
+    ? [a * scaleX, b * scaleY, c * scaleX, d * scaleY, (tx - shiftX) * scaleX, (ty - shiftY) * scaleY]
+    : [a, b, c, d, tx - shiftX, ty - shiftY]
+  // Rasters de texto/forma com estilo na resolução da saída, para não ampliar pixels na exportação.
+  const rasterScale = Math.sqrt(scaleX * scaleY)
   let sourceBytes = 0, metadata = 0
   /** Fonte raster com estilos e matriz da camada: imagem ou texto com estilo. */
   function pushRaster(layer: LayerItem, transform: LayerTransform, source: RustEditorialLayer['source'],
     sourceWidth: number, sourceHeight: number, sourceIdentity: string, resolutionScale: number, identity: object) {
-    const matrix = rustDocumentSourceMatrix(transform, sourceWidth, sourceHeight)
+    const matrix = place(rustDocumentSourceMatrix(transform, sourceWidth, sourceHeight))
     const resampled = !pixelAlignedSource(matrix)
     // Ampliação e redução até 0,5 usam o bilinear compatível com Canvas; abaixo, a média de área.
     const sampling = resampled ? rustRasterSamplingMode(matrix, result.grid, layer.blendMode) : undefined
@@ -100,8 +109,7 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     const layout = prepareRustStyleSourceLayout(input, 'document')
     sourceBytes += layout.width * layout.height * 4
     if (sourceBytes > RUST_DOCUMENT_SOURCE_BYTES || result.layers.length >= 32) throw new RustPixelPocError('memory-limit')
-    const [a, b, c, d, tx, ty] = matrix
-    result.layers.push({ source, input, matrix: [a, b, c, d, tx - shiftX, ty - shiftY], opacity: layer.opacity,
+    result.layers.push({ source, input, matrix, opacity: layer.opacity,
       blendMode: layer.blendMode, ...(sampling ? { sampling } : {}) })
   }
   const background = layers.find(layer => layer.kind === 'background')
@@ -111,13 +119,13 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     if (activeLayerStyleEffects(background.styles).length || !layerStyleBlendIfIsDefault(background.styles.blendIf)) {
       const transform = { x: 0, y: 0, width: document.width, height: document.height, rotation: 0 }
       const styled = planRustDocumentStyledShape({ ...DEFAULT_SHAPE_CONFIG, kind: 'rectangle', cornerRadius: 0,
-        color: color ? '#ffffff' : '#000000', baseWidth: document.width, baseHeight: document.height }, transform)
+        color: color ? '#ffffff' : '#000000', baseWidth: document.width, baseHeight: document.height }, transform, rasterScale)
       pushRaster({ ...background, blendMode: 'normal' }, transform, styled.source, styled.source.width, styled.source.height,
         'document-background', styled.effectScale, { id: background.id, shape: styled.source.shape })
     } else result.layers.push({ source: { type: 'solid', color: [color, color, color, 255] },
       input: { sourceIdentity: 'document-background', sourceWidth: 1, sourceHeight: 1,
         styles: normalizeLayerStyleConfig({}), globalLight: light },
-      matrix: [document.width, 0, 0, document.height, 0 - shiftX, 0 - shiftY],
+      matrix: place([document.width, 0, 0, document.height, 0, 0]),
       opacity: background.opacity * layerStyleFillOpacity(background.styles), blendMode: 'normal' })
   }
   for (const layer of [...layers].reverse()) {
@@ -126,14 +134,14 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       if (!Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 100) throw new RustPixelPocError('invalid-input')
       // Com efeitos ou Mesclar se a forma vira raster da camada com estilos, como texto com estilo.
       if (activeLayerStyleEffects(layer.styles).length || !layerStyleBlendIfIsDefault(layer.styles.blendIf)) {
-        const styled = planRustDocumentStyledShape(layer.shape, layer.transform)
+        const styled = planRustDocumentStyledShape(layer.shape, layer.transform, rasterScale)
         pushRaster(layer, layer.transform, styled.source, styled.source.width, styled.source.height, `shape:${layer.id}`,
           styled.effectScale, { id: layer.id, shape: styled.source.shape })
         continue
       }
       const transform = { ...layer.transform, x: layer.transform.x - shiftX, y: layer.transform.y - shiftY }
       const source = planRustDocumentShape(layer.shape, transform, result.documentWidth, result.documentHeight,
-        (layer.opacity / 100) * layerStyleFillOpacity(layer.styles))
+        (layer.opacity / 100) * layerStyleFillOpacity(layer.styles), scaleX, scaleY)
       if (!source) continue
       sourceBytes += source.width * source.height * 4
       metadata += rustPixelPocStyleMetadataBytes(source)
@@ -151,13 +159,14 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       if (!rustDocumentTextFontsReady(layer.text)) throw new RustDocumentUnsupported('text-font-pending')
       // Com composição de estilo o legado desenha o texto num raster da camada e o trata como imagem.
       if (layerStyleNeedsCompositing(layer.styles) || !layerStyleBlendIfIsDefault(layer.styles.blendIf)) {
-        const styled = planRustDocumentStyledText(layer.text, layer.transform)
+        const styled = planRustDocumentStyledText(layer.text, layer.transform, rasterScale)
         pushRaster(layer, layer.transform, styled.source, styled.source.width, styled.source.height, `text:${layer.id}`, styled.effectScale,
           { id: layer.id, text: styled.source.text })
         continue
       }
       const transform = { ...layer.transform, x: layer.transform.x - shiftX, y: layer.transform.y - shiftY }
-      const source = planRustDocumentText(layer.text, transform, result.documentWidth, result.documentHeight, layer.opacity / 100)
+      const source = planRustDocumentText(layer.text, transform, result.documentWidth, result.documentHeight, layer.opacity / 100,
+        scaleX, scaleY)
       if (!source) continue
       sourceBytes += source.width * source.height * 4
       metadata += rustPixelPocStyleMetadataBytes(source)
@@ -170,13 +179,17 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       continue
     }
     if (!layer.image) throw new RustDocumentUnsupported('non-image-layer')
-    const image = layer.image, transform = layer.transform
+    const transform = layer.transform
+    // Miniaturas e prévias interativas usam a versão reduzida da imagem, como o legado.
+    const preview = usePreviewSources && layer.image.previewUrl ? layer.image : undefined
+    const image = preview ? { ...preview, sourceUrl: preview.previewUrl!, width: preview.previewWidth ?? preview.width,
+      height: preview.previewHeight ?? preview.height } : layer.image
     // Rotação com redução abaixo de 0,5: o decodificador já entrega a fonte reduzida (resize de
     // createImageBitmap), no menor tamanho que devolve as duas escalas a ≥ 0,5 e ao modo de cobertura.
     const rotated = !rustRasterAxisScales(rustDocumentSourceMatrix(transform, image.width, image.height))
     const reduce = (size: number, display: number) =>
       rotated && display / size < 0.5 ? Math.max(1, Math.floor(display * 2)) : size
-    const sourceWidth = reduce(image.width, transform.width), sourceHeight = reduce(image.height, transform.height)
+    const sourceWidth = reduce(image.width, transform.width * scaleX), sourceHeight = reduce(image.height, transform.height * scaleY)
     pushRaster(layer, transform, { type: 'raster', url: image.sourceUrl }, sourceWidth, sourceHeight,
       `${layer.id}:${image.editToken ?? ''}:${image.sourceUrl}`,
       1 / Math.sqrt(transform.width / sourceWidth * (transform.height / sourceHeight)), { id: layer.id, url: image.sourceUrl })

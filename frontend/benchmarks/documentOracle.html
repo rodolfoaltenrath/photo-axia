@@ -139,6 +139,59 @@ async function compareStyledShapeConsumer() {
   } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
 }
 
+async function compareScaledExport() {
+  const { disposeRustDocumentRenderer } = await import('../src/services/rustDocumentRenderer.ts')
+  const { renderDocumentExportBlob } = await import('../src/services/renderDocument.ts')
+  const original = location.href, enabled = new URL(original); enabled.searchParams.set('axiaRustDocument', '1')
+  const spec = { ...doc('scaled-export', 'white'), width: 40, height: 30, physicalWidth: 40, physicalHeight: 30 }
+  const gradient = document.createElement('canvas'); gradient.width = 8; gradient.height = 6
+  const gradientContext = gradient.getContext('2d'), fill = gradientContext.createLinearGradient(0, 0, 8, 6)
+  fill.addColorStop(0, '#c02040'); fill.addColorStop(1, '#2040d0'); gradientContext.fillStyle = fill; gradientContext.fillRect(0, 0, 8, 6)
+  await document.fonts.load('12px Arial')
+  const star = rectangle('scaled-star', '#f0c020', { x: 22, y: 14, width: 14, height: 12, rotation: 25 }, { opacity: 80 })
+  star.shape.kind = 'star'
+  const ellipse = rectangle('scaled-ellipse', '#30c060', { x: 20, y: 3, width: 15, height: 10, rotation: 0 }, { blendMode: 'multiply' })
+  ellipse.shape.kind = 'ellipse'
+  const layers = [
+    layer('scaled-text', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Ax', fontFamily: 'Arial, sans-serif', fontSize: 12,
+      color: '#1a1a1a', baseWidth: 30, baseHeight: 14 } }, { x: 3, y: 15, width: 30, height: 14, rotation: 0 }),
+    star, ellipse,
+    layer('scaled-image', 'pixel', { image: { width: 8, height: 6, mimeType: 'image/png', sourceUrl: gradient.toDataURL('image/png') } },
+      { x: 3, y: 2, width: 16, height: 12, rotation: 0 }, { opacity: 90 }),
+    layer('background', 'background', {}, undefined)
+  ]
+  const blobPixels = async blob => {
+    const bitmap = await createImageBitmap(blob), canvas = document.createElement('canvas')
+    canvas.width = bitmap.width; canvas.height = bitmap.height
+    const context = canvas.getContext('2d', { willReadFrequently: true }); context.drawImage(bitmap, 0, 0); bitmap.close()
+    return { width: canvas.width, height: canvas.height, data: context.getImageData(0, 0, canvas.width, canvas.height).data }
+  }
+  const results = []
+  try {
+    for (const factor of [2, 0.5]) {
+      const settings = { format: 'png', resolutionDpi: spec.resolutionDpi * factor, quality: 1, preserveMetadata: false }
+      history.replaceState(null, '', original)
+      const expected = await blobPixels(await renderDocumentExportBlob(spec, layers, settings))
+      history.replaceState(null, '', enabled)
+      const actual = await blobPixels(await renderDocumentExportBlob(spec, layers, settings))
+      const backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+      if (backend.backend !== 'rust') throw new Error(`Exportação ${factor}× em fallback: ${JSON.stringify(backend)}`)
+      if (actual.width !== expected.width || actual.height !== expected.height) throw new Error(`Exportação ${factor}×: tamanho divergente`)
+      let alpha = 0, color = 0
+      for (let i = 0; i < actual.data.length; i += 4) {
+        alpha = Math.max(alpha, Math.abs(actual.data[i + 3] - expected.data[i + 3]))
+        for (let c = 0; c < 3; c++) color = Math.max(color,
+          Math.abs(actual.data[i + c] * actual.data[i + 3] / 255 - expected.data[i + c] * expected.data[i + 3] / 255))
+      }
+      results.push({ factor, width: actual.width, height: actual.height, maxAlphaDifference: alpha, maxPremultipliedDifference: color })
+    }
+    if (results.some(item => item.maxAlphaDifference > 2 || item.maxPremultipliedDifference > 3)) {
+      throw new Error(`Exportação escalada: ${JSON.stringify(results)}`)
+    }
+    return { cases: results }
+  } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
+}
+
 async function renderCases() {
   const background = layer('background', 'background', {}, undefined)
   const shapeLayers = [
@@ -660,6 +713,7 @@ try {
   const rustSessionEpoch = await verifyDocumentSessionEpoch()
   const rustAppearance = await compareAppearanceConsumers()
   const rustStyledShapes = await compareStyledShapeConsumer()
+  const rustScaledExport = await compareScaledExport()
   if (new URLSearchParams(location.search).has('record')) {
     result.textContent = JSON.stringify({ status: 'record', width, height, cases })
   } else {
@@ -698,7 +752,7 @@ try {
           errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)
         }
       }
-      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustText, rustSessionEpoch, rustAppearance, rustStyledShapes })
+      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustText, rustSessionEpoch, rustAppearance, rustStyledShapes, rustScaledExport })
     }
   }
 } catch (error) {

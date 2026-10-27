@@ -14,6 +14,8 @@ export interface RustDocumentTextSource {
   text: TextLayerContent
   transform: Required<LayerTransform>
   width: number; height: number; originX: number; originY: number; alpha: number
+  /** Escala da saída (exportação em outro DPI); ausente quando 1:1. */
+  scaleX?: number; scaleY?: number
 }
 
 /**
@@ -43,7 +45,7 @@ function validText(text: TextLayerContent) {
 }
 
 export function planRustDocumentText(text: TextLayerContent, transform: LayerTransform,
-  documentWidth: number, documentHeight: number, alpha: number): RustDocumentTextSource | null {
+  documentWidth: number, documentHeight: number, alpha: number, scaleX = 1, scaleY = 1): RustDocumentTextSource | null {
   if (!validText(text) || !transform ||
       ![transform.width, transform.height].every(value => Number.isFinite(value) && value > 0) ||
       ![transform.x, transform.y, transform.rotation ?? 0].every(Number.isFinite) ||
@@ -52,16 +54,19 @@ export function planRustDocumentText(text: TextLayerContent, transform: LayerTra
   if ([transform.width / text.baseWidth, transform.height / text.baseHeight].some(value => !Number.isFinite(value) || value > 1_000_000)) {
     throw new RustPixelPocError('invalid-input')
   }
+  if (![scaleX, scaleY].every(value => Number.isFinite(value) && value > 0)) throw new RustPixelPocError('invalid-input')
   const bounds = layerDocumentBounds({ transform })!
   if (![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) throw new RustPixelPocError('invalid-input')
-  const left = Math.max(0, Math.floor(bounds.x)), top = Math.max(0, Math.floor(bounds.y))
-  const right = Math.min(documentWidth, Math.ceil(bounds.x + bounds.width)), bottom = Math.min(documentHeight, Math.ceil(bounds.y + bounds.height))
+  // Com escala de saída, os bounds e o raster ficam no espaço da saída (pixels já escalados).
+  const left = Math.max(0, Math.floor(bounds.x * scaleX)), top = Math.max(0, Math.floor(bounds.y * scaleY))
+  const right = Math.min(documentWidth, Math.ceil((bounds.x + bounds.width) * scaleX))
+  const bottom = Math.min(documentHeight, Math.ceil((bounds.y + bounds.height) * scaleY))
   if (right <= left || bottom <= top) return null
   const width = right - left, height = bottom - top
   if (width > 16384 || height > 16384 || width * height * 4 > RUST_DOCUMENT_SOURCE_BYTES) throw new RustPixelPocError('memory-limit')
   return { type: 'text', text: { ...text },
     transform: { x: transform.x, y: transform.y, width: transform.width, height: transform.height, rotation: transform.rotation ?? 0 },
-    width, height, originX: left, originY: top, alpha }
+    width, height, originX: left, originY: top, alpha, ...(scaleX !== 1 || scaleY !== 1 ? { scaleX, scaleY } : {}) }
 }
 
 /**
@@ -96,7 +101,14 @@ export function drawRustDocumentText(source: RustDocumentTextSource,
   try {
     const { text, transform } = source
     context.globalAlpha = source.alpha
-    context.translate(transform.x + transform.width / 2 - source.originX, transform.y + transform.height / 2 - source.originY)
+    if (source.scaleX === undefined && source.scaleY === undefined) {
+      context.translate(transform.x + transform.width / 2 - source.originX, transform.y + transform.height / 2 - source.originY)
+    } else {
+      // Como a exportação legada: escala da saída antes da sequência da camada.
+      context.translate(-source.originX, -source.originY)
+      context.scale(source.scaleX ?? 1, source.scaleY ?? 1)
+      context.translate(transform.x + transform.width / 2, transform.y + transform.height / 2)
+    }
     context.rotate(transform.rotation * Math.PI / 180)
     context.scale(transform.width / text.baseWidth, transform.height / text.baseHeight)
     context.translate(-text.baseWidth / 2, -text.baseHeight / 2)
@@ -140,12 +152,12 @@ export interface RustDocumentStyledTextPixels {
   rgba: ArrayBuffer
 }
 
-export function planRustDocumentStyledText(text: TextLayerContent, transform: LayerTransform) {
+export function planRustDocumentStyledText(text: TextLayerContent, transform: LayerTransform, preferredScale = 1) {
   if (!validText(text) || !transform ||
       ![transform.width, transform.height].every(value => Number.isFinite(value) && value > 0)) {
     throw new RustPixelPocError('invalid-input')
   }
-  const plan = textStyleRasterPlan(text, transform)
+  const plan = textStyleRasterPlan(text, transform, preferredScale)
   if (plan.width * plan.height * 4 > RUST_DOCUMENT_SOURCE_BYTES) throw new RustPixelPocError('memory-limit')
   const source: RustDocumentStyledTextSource = { type: 'styled-text', text: { ...text },
     width: plan.width, height: plan.height, drawScaleX: plan.drawScaleX, drawScaleY: plan.drawScaleY }

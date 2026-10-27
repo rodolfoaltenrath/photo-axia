@@ -22,9 +22,9 @@ export function rustDocumentRendererStats() {
     active: false, queued: 0, workerAlive: false, preparedBytes: 0 }
 }
 export async function renderRustDocumentCanvas(document: DocumentSpec, layers: LayerItem[], width: number, height: number,
-  viewport: DocumentBounds, boundsPolicy: RustDocumentBoundsPolicy = 'document') {
+  viewport: DocumentBounds, boundsPolicy: RustDocumentBoundsPolicy = 'document', usePreviewSources = false) {
   const current = epoch
-  const plan = planRustEditorialDocument(document, layers, width, height, viewport, boundsPolicy)
+  const plan = planRustEditorialDocument(document, layers, width, height, viewport, boundsPolicy, usePreviewSources)
   // A média de área é convenção do Rust; só os modos bilineares dependem do Canvas da plataforma.
   if (plan.layers.some(layer => rustRasterSamplingNeedsPlatformProbe(layer.sampling)) && !await rustDocumentSamplingCompatible()) {
     throw new RustDocumentUnsupported('source-transform-platform')

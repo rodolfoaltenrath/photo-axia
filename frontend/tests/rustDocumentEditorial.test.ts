@@ -39,9 +39,22 @@ test('conta-gotas usa origem documental sem recentralizar ou recortar fontes/hal
   assert.equal(plan.layers[0]!.input.sourceWidth, 2); assert.equal(plan.layers[0]!.matrix[4], 3)
 })
 
-test('camada de texto sem conteúdo e escala de saída ficam no fallback', () => {
+test('camada de texto sem conteúdo fica no fallback; escala de saída planeja no espaço da saída', () => {
   assert.throws(() => planRustEditorialDocument(document, [layer({ kind: 'text', transform: transform() })], 8, 6, viewport), RustDocumentUnsupported)
-  assert.throws(() => planRustEditorialDocument(document, [picture()], 4, 3, viewport), /output-scale-or-size/)
+  // Exportação em meia resolução: matriz escalada, grade identidade, documento do tamanho da saída.
+  const half = planRustEditorialDocument(document, [picture()], 4, 3, viewport)
+  assert.deepEqual([half.documentWidth, half.documentHeight, half.grid], [4, 3, { scaleX: 1, scaleY: 1, originX: 0, originY: 0 }])
+  assert.deepEqual(half.layers[0]!.matrix.map(value => value + 0), [0.5, 0, 0, 0.5, 0, 0])
+  assert.equal(half.layers[0]!.sampling, 'raster-bilinear')
+  // Forma vetorial rasteriza na resolução da saída (sem reamostrar): bounds escalados e escala registrada.
+  const shape = layer({ kind: 'shape', shape: { ...DEFAULT_SHAPE_CONFIG, baseWidth: 4, baseHeight: 2 },
+    transform: transform({ x: 1, y: 1, width: 4, height: 2 }) })
+  const double = planRustEditorialDocument(document, [shape], 16, 12, viewport).layers[0]!
+  if (double.source.type !== 'shape') throw new Error('forma ausente')
+  assert.deepEqual([double.source.originX, double.source.width, double.source.scaleX], [2, 8, 2])
+  assert.deepEqual(double.matrix, [1, 0, 0, 1, 2, 2])
+  assert.equal(planRustEditorialDocument(document, [shape], 8, 6, viewport).layers[0]!.source.type === 'shape' &&
+    'scaleX' in planRustEditorialDocument(document, [shape], 8, 6, viewport).layers[0]!.source, false)
   assert.equal(planRustEditorialDocument(document, [layer({ kind: 'text', visible: false, transform: transform() })], 8, 6, viewport).layers.length, 0)
 })
 
@@ -174,9 +187,11 @@ test('aparência não libera texto sem conteúdo nem origens não inteiras ou ex
     2, 2, { x: 0, y: 0, width: 2, height: 2 }, 'appearance'), /non-image-layer/)
 })
 
-test('adapter editorial: bilinear axial, cobertura na rotação arbitrária, recusa grade fracionária e rotação reduzida', () => {
-  assert.throws(() => planRustEditorialDocument(document, [picture()], 1, 1,
-    { x: 0.25, y: 0, width: 1, height: 1 }), /output-grid-quality/)
+test('adapter editorial: bilinear axial, cobertura na rotação arbitrária, origem fracionária e rotação reduzida', () => {
+  // Origem fracionária vai à matriz (espaço da saída); a grade continua identidade.
+  const fractional = planRustEditorialDocument(document, [picture()], 1, 1, { x: 0.25, y: 0, width: 1, height: 1 })
+  assert.deepEqual(fractional.grid, { scaleX: 1, scaleY: 1, originX: 0, originY: 0 })
+  assert.deepEqual(fractional.layers[0]!.matrix.map(value => value + 0), [1, 0, 0, 1, -0.25, 0])
   for (const boundsPolicy of ['document', 'appearance'] as const) {
     for (const patch of [{ rotation: 37 }, { rotation: 0.001 }, { rotation: -123, width: 1, height: 3 }]) {
       const item = picture(); Object.assign(item.transform!, patch)

@@ -148,6 +148,22 @@ mantêm pixels em cache. Cinco segundos sem trabalho encerram o Worker. Término
 Isso ainda não é scheduler incremental/definitivo do canvas ao vivo. Detalhes,
 invalidação e provas no [contrato da sessão](contrato-sessao-documental-rust-v1.md).
 
+## 3.1 Escala de saída e origem fracionária (2026-10-27)
+
+Exportação em outro DPI, miniaturas, conteúdo inteligente e prévia de `Mesclar
+se` pedem saída com escala. O planejador passa então ao **espaço da saída**,
+como a aparência isolada já fazia: o documento tem o tamanho da saída, a grade é
+identidade e cada matriz recebe escala e origem, de modo que os modos de
+amostragem (área, bilinear, cobertura) decidem sobre a matriz efetiva, sem
+mudança no Rust. Formas e texto simples rasterizam na resolução da saída com a
+sequência da exportação legada (`scale` antes da camada), sem reamostrar
+vetores; texto e formas com estilo usam raster na escala da saída, mais nítido
+que o legado, que ampliava o raster 1:1. Miniaturas e prévias usam a versão
+reduzida da imagem (`previewUrl`), como o legado. Os propósitos `thumbnail` e
+`smart` passam a ir ao Rust. Oráculo: exportação a 2× e 0,5× do DPI com imagem
+ampliada, elipse em Multiplicação, estrela rotacionada, texto e fundo — 0/2.
+Nenhum consumidor pede origem fracionária hoje; ela também vai à matriz.
+
 ## 4. Limites e ciclo de vida
 
 - Uma transação ativa e até **três pendentes**, FIFO. Cada snapshot seletivo

@@ -24,8 +24,8 @@ do legado. A ordem combinada:
    haverá fallback). Feito: texto em modos de mesclagem (semântica do preview,
    `19311e9`), texto com efeitos (`135f654`), forma e fundo com efeitos
    (`0d54ef4`), rotação arbitrária (`d1f3d26`) inclusive com redução (fonte
-   decodificada reduzida). Faltam, nesta ordem: saída em escala diferente de 1:1 e origem
-   fracionária (`output-scale-or-size`, `output-grid-quality`), reamostragem com
+   decodificada reduzida), saída com escala e origem fracionária (miniaturas e
+   exportação em outro DPI vão ao Rust). Faltam, nesta ordem: reamostragem com
    `Mesclar se` de baixo (`source-transform-blend-if`), objetos inteligentes/PDF
    e miniaturas (`non-image-layer`, propósitos `smart`/`thumbnail`), fotos de
    24 MP e camadas grandes com efeitos.
