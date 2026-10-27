@@ -146,12 +146,12 @@ try {
   socket = await pageSocket(debugPort)
   const evaluate = evaluator(socket)
   let content = 'running'
-  for (let attempt = 0; attempt < (benchmark ? 1200 : 200); attempt++) {
+  for (let attempt = 0; attempt < (benchmark ? 1200 : 600); attempt++) {
     content = await evaluate('document.querySelector("#result")?.textContent')
     if (content && content !== 'running') break
     await delay(100)
   }
-  assert.notEqual(content, 'running', `A sonda não concluiu em ${benchmark ? 120 : 20} segundos.`)
+  assert.notEqual(content, 'running', `A sonda não concluiu em ${benchmark ? 120 : 60} segundos.`)
   const result = JSON.parse(content)
   assert.equal(result.status, benchmark ? 'benchmark' : record ? 'record' : 'pass', JSON.stringify(result))
   const version = await (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json()

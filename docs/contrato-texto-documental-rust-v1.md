@@ -52,13 +52,13 @@ opacidade 100, sem reamostrar — portanto sem depender da sonda da fatia 11.
 | --- | --- | --- |
 | efeitos ou Fill < 100 | `text-style` | o legado manda esse texto por um raster de estilo reamostrado, não pelo desenho direto |
 | `Mesclar se` diferente do padrão | `text-style` | caminho separado no legado |
-| modo de mesclagem diferente de Normal | `text-blend-mode` | ver seção 4 |
+| modo de mesclagem diferente de Normal | Rust (desde 2026-10-27) | mesclado uma vez, como o preview; ver seção 4 |
 | fonte de `@font-face` ainda carregando | `text-font-pending` | ver seção 5 |
 | camada `text` sem conteúdo | `non-image-layer` | inalterado |
 
 Toda recusa refaz a chamada inteira no Canvas anterior.
 
-## 4. Questão aberta: mesclagem de texto não Normal
+## 4. Mesclagem de texto não Normal (decidida em 2026-10-27)
 
 `drawTextLayerContent` faz várias operações (`fillText` por linha, `fillRect`
 de sublinhado/riscado). O legado aplica o modo de mesclagem a cada operação, em
@@ -71,8 +71,15 @@ sobreposição.
 
 O preview ao vivo aplica `mix-blend-mode` ao elemento da camada, isto é, mescla
 a camada isolada, como o Photoshop. Nesse caso a exportação legada é que diverge
-do preview, não o Rust. Escolher a semântica oficial é decisão de produto; até
-lá, texto não Normal fica no legado e a divergência existente não muda.
+do preview, não o Rust.
+
+**Decisão do produto (2026-10-27): vale a semântica do preview.** O texto é
+desenhado isolado, com a opacidade incorporada, e mesclado uma vez com o modo da
+camada; o que aparece na tela é o que se exporta. A exportação legada continua
+divergindo nas sobreposições até ser removida. O oráculo browser confere 45
+casos (três fontes, três variantes com sublinhado, rotação e parágrafo, cinco
+modos) contra o documento sem o texto mais o texto isolado mesclado pelo Canvas,
+dentro da tolerância 2/3; o pior caso segue sendo de Normal (1/2,81).
 
 ## 5. Fontes ainda carregando
 

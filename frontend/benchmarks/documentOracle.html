@@ -232,8 +232,8 @@ async function compareEditorialConsumer() {
         throw new Error(`Sessão não reutilizou preparação entre PNG/Blob/cor: ${JSON.stringify(session)}`)
       }
     }
-    await renderDocumentPNG(doc('fallback', 'transparent'), [layer('unsupported', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { blendMode: 'multiply' })])
-    if (backend().backend !== 'legacy' || backend().reason !== 'text-blend-mode') throw new Error('Fallback editorial ausente')
+    await renderDocumentPNG(doc('fallback', 'transparent'), [layer('unsupported', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { styles: { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('drop-shadow')] } })])
+    if (backend().backend !== 'legacy' || backend().reason !== 'text-style') throw new Error('Fallback editorial ausente')
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade editorial: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
     return { documents: fixtures.length, consumers: ['PNG', 'Blob', 'sample'], fallback: true,
       maxAlphaDifference, maxPremultipliedDifference, session: rustDocumentRendererStats() }
@@ -334,6 +334,54 @@ async function compareTextConsumer() {
         cases++
       }
     }
+    // Modos de mesclagem: semântica do preview (contrato de texto, seção 4). O texto isolado é a mesma
+    // rasterização já conferida acima em Normal; aqui o Canvas o mescla uma vez sobre o resto do documento.
+    const { planRustDocumentText, drawRustDocumentText } = await import('../src/editor/rustDocumentText.ts')
+    // O Chromium ignora replaceState acima de ~200 chamadas em 10 s: as referências legadas (o documento
+    // sem o texto depende só do fundo) são feitas antes, e a URL muda uma vez só.
+    const rest = [rectangle('text-blend-back', '#30c060', { x: 0, y: 0, width: textWidth, height: textHeight, rotation: 0 },
+      { opacity: 63.7 }), layer('background', 'background', {}, undefined)]
+    history.replaceState(null, '', original)
+    const withoutTextBy = {}
+    for (const background of ['white', 'transparent']) {
+      withoutTextBy[background] = await pixelsFromPng(await renderDocumentPNG(spec(`text-blend-${background}`, background), rest), textWidth, textHeight)
+    }
+    history.replaceState(null, '', enabled)
+    let blendCases = 0
+    for (const fontFamily of fonts) for (const index of [1, 2, 3]) {
+      const variant = variants[index]
+      for (const blendMode of ['multiply', 'screen', 'overlay', 'darken', 'lighten']) {
+        const [baseWidth, baseHeight] = variant.base, w = baseWidth * variant.scale, h = baseHeight * variant.scale
+        const transform = { x: variant.center[0] - w / 2, y: variant.center[1] - h / 2, width: w, height: h, rotation: variant.rotation }
+        // Rosa sobre o verde do fundo: todos os modos alteram a imagem (texto escuro em Clarear não alteraria).
+        const content = { ...DEFAULT_TEXT_LAYER, fontFamily, baseWidth, baseHeight, ...variant.text, color: '#e04090' }
+        const text = layer(`text-blend-${blendCases}`, 'text', { text: content }, transform, { opacity: variant.opacity, blendMode })
+        const documentSpec = spec(`text-blend-document-${blendCases}`, variant.background)
+        const withoutText = withoutTextBy[variant.background]
+        const isolated = drawRustDocumentText(planRustDocumentText(content, transform, textWidth, textHeight, variant.opacity / 100))
+        const reference = new OffscreenCanvas(textWidth, textHeight), context = reference.getContext('2d')
+        context.putImageData(new ImageData(new Uint8ClampedArray(withoutText), textWidth, textHeight), 0, 0)
+        const ink = new OffscreenCanvas(isolated.width, isolated.height)
+        ink.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(isolated.rgba), isolated.width, isolated.height), 0, 0)
+        context.globalCompositeOperation = blendMode
+        context.drawImage(ink, isolated.originX, isolated.originY)
+        const expected = context.getImageData(0, 0, textWidth, textHeight).data
+        const actual = await pixelsFromPng(await renderDocumentPNG(documentSpec, [text, ...rest]), textWidth, textHeight)
+        const backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+        if (backend.backend !== 'rust') throw new Error(`Texto ${blendMode} ${fontFamily}/${index} em fallback: ${JSON.stringify(backend)}`)
+        let alpha = 0, color = 0, inked = 0
+        for (let i = 0; i < actual.length; i += 4) {
+          if ([0, 1, 2, 3].some(c => Math.abs(actual[i + c] - withoutText[i + c]) > 8)) inked++
+          alpha = Math.max(alpha, Math.abs(actual[i + 3] - expected[i + 3]))
+          for (let c = 0; c < 3; c++) color = Math.max(color,
+            Math.abs(actual[i + c] * actual[i + 3] / 255 - expected[i + c] * expected[i + 3] / 255))
+        }
+        if (inked < 20) throw new Error(`Texto ${blendMode} ${fontFamily}/${index} sem efeito: ${inked}`)
+        if (alpha + color > maxAlphaDifference + maxPremultipliedDifference) worst = `${blendMode} ${fontFamily}/${index}`
+        maxAlphaDifference = Math.max(maxAlphaDifference, alpha); maxPremultipliedDifference = Math.max(maxPremultipliedDifference, color)
+        blendCases++
+      }
+    }
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) {
       throw new Error(`Paridade de texto: ${maxAlphaDifference}/${maxPremultipliedDifference} (pior: ${worst})`)
     }
@@ -348,7 +396,7 @@ async function compareTextConsumer() {
         after.preparations - before.preparations !== 1 || after.reuses - before.reuses !== 2) {
       throw new Error(`Conta-gotas de texto não reutilizou a sessão: ${JSON.stringify({ before, after })}`)
     }
-    return { cases, fonts: fonts.length, minInkedPixels, maxAlphaDifference, maxPremultipliedDifference, worst,
+    return { cases, blendCases, fonts: fonts.length, minInkedPixels, maxAlphaDifference, maxPremultipliedDifference, worst,
       alphaTolerance: 2, premultipliedTolerance: 3, sampleReuses: after.reuses - before.reuses }
   } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
 }
@@ -432,7 +480,7 @@ async function compareAppearanceConsumers() {
       history.replaceState(null, '', enabled)
       const actual = await fixture.render(), backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
       if (backend.backend !== (fixture.fallbackReason ? 'legacy' : 'rust') || backend.purpose !== fixture.purpose ||
-          fixture.fallbackReason && backend.reason !== fixture.fallbackReason) throw new Error(`${fixture.id}: backend inesperado ${JSON.stringify(backend)}`)
+          fixture.fallbackReason && backend.reason !== fixture.fallbackReason) throw new Error(`${fixture.id}: backend inesperado ${JSON.stringify(backend)} em ${location.search}`)
       history.replaceState(null, '', original)
       for (const key of ['x', 'y', 'width', 'height']) if (actual[key] !== expected[key]) throw new Error(`${fixture.id}: bounds ${key} divergentes`)
       const actualPixels = await pixels(actual.blob)
@@ -464,10 +512,10 @@ async function compareAppearanceConsumers() {
     await renderLayerAppearance(spec, rotated)
     const fallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
     if (fallback.backend !== 'legacy' || fallback.purpose !== 'layer' || fallback.reason !== 'source-transform-quality') throw new Error('Fallback de transformação da aparência ausente')
-    const text = layer('merge-text-fallback', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { blendMode: 'multiply' })
+    const text = layer('merge-text-fallback', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { styles: { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('drop-shadow')] } })
     await renderMergedLayers(spec, [text])
     const textFallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
-    if (textFallback.backend !== 'legacy' || textFallback.purpose !== 'merge' || textFallback.reason !== 'text-blend-mode') throw new Error('Fallback textual de mesclagem ausente')
+    if (textFallback.backend !== 'legacy' || textFallback.purpose !== 'merge' || textFallback.reason !== 'text-style') throw new Error('Fallback textual de mesclagem ausente')
     const encode = HTMLCanvasElement.prototype.toBlob
     for (const rust of [false, true]) for (const purpose of ['layer', 'merge']) {
       history.replaceState(null, '', rust ? enabled : original)

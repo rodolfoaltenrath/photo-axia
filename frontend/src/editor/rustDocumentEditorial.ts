@@ -118,9 +118,7 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       if (layerStyleNeedsCompositing(layer.styles) || !layerStyleBlendIfIsDefault(layer.styles.blendIf)) {
         throw new RustDocumentUnsupported('text-style')
       }
-      // O legado mescla cada fillText/fillRect em sequência sobre o fundo; só source-over é associativo
-      // e garante a mesma imagem que mesclar o texto isolado. Ver contrato de texto.
-      if (layer.blendMode !== 'normal') throw new RustDocumentUnsupported('text-blend-mode')
+      // Texto é desenhado isolado e mesclado uma vez, como no preview (decisão do contrato de texto, seção 4).
       if (!rustDocumentTextFontsReady(layer.text)) throw new RustDocumentUnsupported('text-font-pending')
       const transform = { ...layer.transform, x: layer.transform.x - shiftX, y: layer.transform.y - shiftY }
       const source = planRustDocumentText(layer.text, transform, result.documentWidth, result.documentHeight, layer.opacity / 100)
@@ -132,7 +130,7 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       }
       result.layers.push({ source, input: { sourceIdentity: `text:${layer.id}`, sourceWidth: source.width,
         sourceHeight: source.height, styles: normalizeLayerStyleConfig({}), globalLight: light, quality: 'final' },
-        matrix: [1, 0, 0, 1, source.originX, source.originY], opacity: 100, blendMode: 'normal' })
+        matrix: [1, 0, 0, 1, source.originX, source.originY], opacity: 100, blendMode: layer.blendMode })
       continue
     }
     if (!layer.image) throw new RustDocumentUnsupported('non-image-layer')

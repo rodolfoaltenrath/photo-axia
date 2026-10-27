@@ -33,19 +33,22 @@ test('texto Normal sem estilos entra no plano como descritor 1:1 com opacidade i
   assert.equal(entry.source.text.content, 'Ab'); assert.equal(entry.source.transform.x, 1.25)
 })
 
-test('estilo, Fill, Blend If e modo não Normal mantêm o texto no fallback explícito', () => {
+test('estilo, Fill e Blend If mantêm o texto no fallback explícito; modos de mesclagem entram', () => {
   const effect = createDefaultLayerEffect('drop-shadow')
   for (const [overrides, reason] of [
     [{ styles: styles({ fillOpacity: 50 }) }, 'text-style'],
-    [{ styles: styles({ effects: [effect] }) }, 'text-style'],
-    [{ blendMode: 'multiply' }, 'text-blend-mode'],
-    [{ blendMode: 'screen' }, 'text-blend-mode']
+    [{ styles: styles({ effects: [effect] }) }, 'text-style']
   ] as const) {
     assert.throws(() => planRustEditorialDocument(document, [textLayer(overrides)], 8, 6, viewport),
       (error: unknown) => error instanceof RustDocumentUnsupported && error.reason === reason)
   }
   const blendIf = styles(); blendIf.blendIf.thisLayer.shadows = [10, 10]
   assert.throws(() => planRustEditorialDocument(document, [textLayer({ styles: blendIf })], 8, 6, viewport), /text-style/)
+  // Mesclado uma vez sobre o fundo, como o preview: o modo vai no registro, a opacidade no raster.
+  for (const blendMode of ['multiply', 'screen', 'overlay', 'darken', 'lighten'] as const) {
+    const entry = planRustEditorialDocument(document, [textLayer({ blendMode, opacity: 40 })], 8, 6, viewport).layers[0]!
+    assert.equal(entry.blendMode, blendMode); assert.equal(entry.opacity, 100)
+  }
 })
 
 test('fonte declarada ainda carregando bloqueia o plano em vez de congelar um fallback na sessão', () => {

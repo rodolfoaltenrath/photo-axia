@@ -43,10 +43,9 @@ test('pixels de texto compõem 1:1 no WASM sem decoder, Canvas nem STG1', async 
   } finally { fixtures.restore(); runtime.dispose() }
 })
 
-test('Worker rejeita texto adulterado: opacidade/Fill/modo duplicados, matriz e buffer inconsistentes', async () => {
+test('Worker rejeita texto adulterado: opacidade/Fill duplicados, matriz e buffer inconsistentes', async () => {
   for (const mutate of [
     (request: RustDocumentMediaInput) => { request.layers[0]!.opacity = 50 },
-    (request: RustDocumentMediaInput) => { request.layers[0]!.blendMode = 'multiply' },
     (request: RustDocumentMediaInput) => { request.layers[0]!.input.styles.fillOpacity = 50 },
     (request: RustDocumentMediaInput) => { request.layers[0]!.matrix = [1, 0, 0, 1, 0, 1] },
     (request: RustDocumentMediaInput) => { request.layers[0]!.input.sourceWidth = 3 },

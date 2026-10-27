@@ -44,11 +44,11 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
         throw new RustPixelPocError('invalid-input')
       }
     } else if (layer.source.type === 'text-pixels') {
-      // Texto chega pronto da thread principal: 1:1, opacidade incorporada, sem estilos e só Normal.
+      // Texto chega pronto da thread principal: 1:1, opacidade incorporada e sem estilos.
       const source = layer.source, matrix = [1, 0, 0, 1, source.originX, source.originY]
       validateRustDocumentTextPixels(source, input.documentWidth, input.documentHeight)
       if (layer.input.sourceWidth !== source.width || layer.input.sourceHeight !== source.height ||
-          layer.opacity !== 100 || layer.blendMode !== 'normal' || layer.input.styles.fillOpacity !== 100 ||
+          layer.opacity !== 100 || layer.input.styles.fillOpacity !== 100 ||
           activeLayerStyleEffects(layer.input.styles).length || !layerStyleBlendIfIsDefault(layer.input.styles.blendIf) ||
           !Array.isArray(layer.matrix) || layer.matrix.length !== 6 || matrix.some((value, index) => value !== layer.matrix[index])) {
         throw new RustPixelPocError('invalid-input')
