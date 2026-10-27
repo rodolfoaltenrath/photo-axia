@@ -254,8 +254,16 @@ cisalhamento, com as duas escalas ≥ 0,5, usa o modo de cobertura, sem sonda de
 plataforma (`rustRotationCoverageSupported`). O portão exige 2/3 no interior e
 12/16 na borda e no anel. De ponta a ponta pelo app (imagem 37°, imagem −112°
 com sombra em Multiplicação, texto 23° com contorno), o pior foi 0/2 no interior
-e 0/8 na borda. Rotação com redução abaixo de 0,5 continua em fallback: o
-bilinear pularia texels e ainda não há pré-filtro de área para esse caso.
+e 0/8 na borda.
+
+Rotação com redução abaixo de 0,5: o bilinear pularia texels. A imagem passa a
+ser decodificada já reduzida (`resizeWidth`/`resizeHeight` de
+`createImageBitmap`, qualidade alta, como as fontes de preview do pipeline de
+estilos), no menor tamanho que devolve as duas escalas a ≥ 0,5, e então segue
+pelo modo de cobertura. Numa fonte 120×80 a 0,25 e 20°, o interior difere do
+`drawImage` legado em 0/4 — filtros de redução diferentes, como na seção 6.1 —
+com teto informativo de 2/8; a borda fica em 0/8. Só uma camada com menos de
+meio pixel de lado continua sem modo.
 `Mesclar se` de baixo com fonte rotacionada também segue em fallback
 (`source-transform-blend-if`), como com as demais reamostragens.
 
@@ -284,8 +292,7 @@ bilinear pularia texels e ainda não há pré-filtro de área para esse caso.
 
 ## 8. Gates restantes
 
-Fotos acima do orçamento de 47 MiB de fontes (24 MP ou mais), rotação
-com redução abaixo de 0,5, reamostragem com `Mesclar se` abaixo, escala de saída diferente de
+Fotos acima do orçamento de 47 MiB de fontes (24 MP ou mais), reamostragem com `Mesclar se` abaixo, escala de saída diferente de
 1:1, WebView2 com GPU em outras máquinas e QA com documentos do usuário. Texto
 entrou no consumidor na fatia 12 sem reamostragem (ver
 [texto documental](contrato-texto-documental-rust-v1.md)).

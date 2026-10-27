@@ -305,7 +305,7 @@ async function compareEditorialConsumer() {
       }
     }
     const unsupported = imageLayer('unsupported', new Array(4).fill([255, 0, 0, 255]).flat())
-    Object.assign(unsupported.transform, { width: 0.5, height: 0.5, rotation: 30 })
+    Object.assign(unsupported.transform, { width: 0.2, height: 0.2, rotation: 30 })
     await renderDocumentPNG(doc('fallback', 'transparent'), [unsupported])
     if (backend().backend !== 'legacy' || backend().reason !== 'source-transform-quality') throw new Error('Fallback editorial ausente')
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade editorial: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
@@ -621,13 +621,13 @@ async function compareAppearanceConsumers() {
     }
     // Rotação arbitrária continua sem modo raster e mantém o fallback da aparência.
     const rotated = imageLayer('appearance-rotated', new Array(4).fill([255, 0, 0, 255]).flat())
-    Object.assign(rotated.transform, { width: 0.5, height: 0.5, rotation: 30 })
+    Object.assign(rotated.transform, { width: 0.2, height: 0.2, rotation: 30 })
     await renderLayerAppearance(spec, rotated)
     const fallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
     if (fallback.backend !== 'legacy' || fallback.purpose !== 'layer' || fallback.reason !== 'source-transform-quality') throw new Error('Fallback de transformação da aparência ausente')
-    // Rotação com redução abaixo de 0,5 ainda não tem modo de amostragem.
+    // Camada rotacionada com menos de meio pixel ainda não tem modo de amostragem.
     const text = imageLayer('merge-text-fallback', new Array(4).fill([255, 0, 0, 255]).flat())
-    Object.assign(text.transform, { width: 0.5, height: 0.5, rotation: 30 })
+    Object.assign(text.transform, { width: 0.2, height: 0.2, rotation: 30 })
     await renderMergedLayers(spec, [text])
     const textFallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
     if (textFallback.backend !== 'legacy' || textFallback.purpose !== 'merge' || textFallback.reason !== 'source-transform-quality') throw new Error('Fallback textual de mesclagem ausente')

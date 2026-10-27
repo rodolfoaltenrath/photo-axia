@@ -26,8 +26,17 @@ async function compareEditorialRotation() {
   const gradient = context.createLinearGradient(0, 0, 12, 8)
   gradient.addColorStop(0, '#c02040'); gradient.addColorStop(1, '#2040d0')
   context.fillStyle = gradient; context.fillRect(0, 0, 12, 8)
-  const reader = new FileReader(), blob = await source.convertToBlob({ type: 'image/png' })
-  const sourceUrl = await new Promise<string>(resolve => { reader.onload = () => resolve(String(reader.result)); reader.readAsDataURL(blob) })
+  const dataUrl = async (canvas: OffscreenCanvas) => {
+    const reader = new FileReader(), blob = await canvas.convertToBlob({ type: 'image/png' })
+    return new Promise<string>(resolve => { reader.onload = () => resolve(String(reader.result)); reader.readAsDataURL(blob) })
+  }
+  const sourceUrl = await dataUrl(source)
+  // Fonte grande e suave para a rotação com redução a 0,25: decodificada reduzida no Worker.
+  const large = new OffscreenCanvas(120, 80), largeContext = large.getContext('2d')!
+  const largeGradient = largeContext.createRadialGradient(40, 30, 4, 60, 40, 80)
+  largeGradient.addColorStop(0, '#f0d020'); largeGradient.addColorStop(0.5, '#20a060'); largeGradient.addColorStop(1, '#3040d0')
+  largeContext.fillStyle = largeGradient; largeContext.fillRect(0, 0, 120, 80)
+  const largeUrl = await dataUrl(large)
   const base = (id: string, kind: LayerItem['kind'], content: Partial<LayerItem>, rotation: number, blendMode: LayerItem['blendMode'],
     effects: string[]): LayerItem => ({ id, name: id, kind, visible: true, opacity: 80, blendMode,
     styles: { ...createLayerStyleConfig(), effects: effects.map(type => createDefaultLayerEffect(type as never)) },
@@ -35,6 +44,8 @@ async function compareEditorialRotation() {
   const cases = [
     { id: 'imagem 37°', layer: base('image', 'pixel', { image: { width: 12, height: 8, mimeType: 'image/png', sourceUrl } }, 37, 'normal', []), sourceSize: [12, 8] },
     { id: 'imagem -112° com sombra', layer: base('image-shadow', 'pixel', { image: { width: 12, height: 8, mimeType: 'image/png', sourceUrl } }, -112, 'multiply', ['drop-shadow']), sourceSize: [12, 8] },
+    { id: 'imagem 20° reduzida a 0,25', layer: { ...base('image-reduced', 'pixel', { image: { width: 120, height: 80, mimeType: 'image/png',
+      sourceUrl: largeUrl } }, 20, 'normal', []) }, sourceSize: [120, 80], interiorColor: 8 },
     { id: 'texto 23° com contorno', layer: base('text', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia', fontFamily: 'Arial, sans-serif',
       fontSize: 16, color: '#e04090', baseWidth: 30, baseHeight: 20 } }, 23, 'normal', ['stroke']), sourceSize: [30, 20] }
   ]
@@ -54,12 +65,13 @@ async function compareEditorialRotation() {
         sourceWidth, sourceHeight, width, height)
       const difference = rustRotationDifference(expected, actual, classes)
       for (const key of Object.keys(worst) as (keyof typeof worst)[]) worst[key] = Math.max(worst[key], difference[key])
-      if (difference.interiorAlpha > 2 || difference.interiorColor > 3 ||
+      // Com redução os filtros diferem (resize do decodificador × mipmap do Canvas): teto próprio, informativo.
+      if (difference.interiorAlpha > 2 || difference.interiorColor > (item.interiorColor ?? 3) ||
           Math.max(difference.edgeAlpha, difference.outsideAlpha) > 12 || Math.max(difference.edgeColor, difference.outsideColor) > 16) {
         throw new Error(`${item.id}: ${JSON.stringify(difference)}`)
       }
     }
-    return { cases: cases.length, worst }
+    return { cases: cases.length, worst, reducedInteriorTolerance: [2, 8] }
   } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
 }
 

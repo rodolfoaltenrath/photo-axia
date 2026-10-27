@@ -183,9 +183,14 @@ test('adapter editorial: bilinear axial, cobertura na rotação arbitrária, rec
       const entry = planRustEditorialDocument(document, [item], 8, 6, viewport, boundsPolicy).layers[0]!
       assert.equal(entry.sampling, undefined)
     }
-    // Rotação com redução abaixo de 0,5 ainda não tem modo de amostragem.
-    const reduced = picture(); Object.assign(reduced.transform!, { rotation: 30, width: 0.5, height: 2 })
-    assert.throws(() => planRustEditorialDocument(document, [reduced], 8, 6, viewport, boundsPolicy), /source-transform-quality/)
+    // Rotação com redução abaixo de 0,5: a fonte é decodificada reduzida até a escala voltar a 0,5.
+    const big = picture(); Object.assign(big.image!, { width: 400, height: 300 })
+    Object.assign(big.transform!, { rotation: 30, width: 20, height: 150 })
+    const entry = planRustEditorialDocument(document, [big], 8, 6, viewport, boundsPolicy).layers[0]!
+    assert.deepEqual([entry.input.sourceWidth, entry.input.sourceHeight, entry.sampling], [40, 300, undefined])
+    // Camada com menos de meio pixel de largura não tem como voltar a 0,5.
+    const tiny = picture(); Object.assign(tiny.transform!, { rotation: 30, width: 0.2, height: 2 })
+    assert.throws(() => planRustEditorialDocument(document, [tiny], 8, 6, viewport, boundsPolicy), /source-transform-quality/)
     for (const patch of [{ x: 0.25 }, { y: 0.5 }, { width: 4 }, { height: 4 }, { width: 3, height: 3, x: 0.25, y: 0.5 }]) {
       const item = picture(); Object.assign(item.transform!, patch)
       const result = planRustEditorialDocument(document, [item], 8, 6, viewport, boundsPolicy)
@@ -236,7 +241,8 @@ test('redução escolhe bilinear até 0,5, média de área abaixo e recusa o que
   assert.equal(sampling(sized(0.6, 0.6, 180)), 'raster-area')
   // Redução forte num eixo com ampliação no outro, e rotação arbitrária na redução.
   assert.throws(() => planRustEditorialDocument(document, [sized(0.5, 8)], 8, 6, viewport), /source-transform-quality/)
-  assert.throws(() => planRustEditorialDocument(document, [sized(0.6, 0.6, 30)], 8, 6, viewport), /source-transform-quality/)
+  // Rotação com redução forte: decodificada reduzida (2×2 → 1×1) e composta no modo de cobertura.
+  assert.deepEqual([planRustEditorialDocument(document, [sized(0.6, 0.6, 30)], 8, 6, viewport).layers[0]!.input.sourceWidth], [1])
 })
 
 test('Worker não confia na geometria da forma com estilo', () => {

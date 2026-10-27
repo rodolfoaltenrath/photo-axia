@@ -171,9 +171,15 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     }
     if (!layer.image) throw new RustDocumentUnsupported('non-image-layer')
     const image = layer.image, transform = layer.transform
-    pushRaster(layer, transform, { type: 'raster', url: image.sourceUrl }, image.width, image.height,
+    // Rotação com redução abaixo de 0,5: o decodificador já entrega a fonte reduzida (resize de
+    // createImageBitmap), no menor tamanho que devolve as duas escalas a ≥ 0,5 e ao modo de cobertura.
+    const rotated = !rustRasterAxisScales(rustDocumentSourceMatrix(transform, image.width, image.height))
+    const reduce = (size: number, display: number) =>
+      rotated && display / size < 0.5 ? Math.max(1, Math.floor(display * 2)) : size
+    const sourceWidth = reduce(image.width, transform.width), sourceHeight = reduce(image.height, transform.height)
+    pushRaster(layer, transform, { type: 'raster', url: image.sourceUrl }, sourceWidth, sourceHeight,
       `${layer.id}:${image.editToken ?? ''}:${image.sourceUrl}`,
-      1 / Math.sqrt(transform.width / image.width * (transform.height / image.height)), { id: layer.id, url: image.sourceUrl })
+      1 / Math.sqrt(transform.width / sourceWidth * (transform.height / sourceHeight)), { id: layer.id, url: image.sourceUrl })
   }
   if (result.layers.some(layer => layer.sampling || !rustRasterAxisScales(layer.matrix)) && result.layers.some(layer => layerStyleBlendIfUsesUnderlying(layer.input.styles.blendIf))) {
     throw new RustDocumentUnsupported('source-transform-blend-if')

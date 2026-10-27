@@ -23,8 +23,8 @@ do legado. A ordem combinada:
 1. **Bloco 1 — fechar todas as lacunas que hoje caem no legado** (sem legado não
    haverá fallback). Feito: texto em modos de mesclagem (semântica do preview,
    `19311e9`), texto com efeitos (`135f654`), forma e fundo com efeitos
-   (`0d54ef4`), rotação arbitrária com escalas ≥ 0,5 (modo de cobertura). Faltam,
-   nesta ordem: rotação com redução abaixo de 0,5 (pré-filtro de área), saída em escala diferente de 1:1 e origem
+   (`0d54ef4`), rotação arbitrária (`d1f3d26`) inclusive com redução (fonte
+   decodificada reduzida). Faltam, nesta ordem: saída em escala diferente de 1:1 e origem
    fracionária (`output-scale-or-size`, `output-grid-quality`), reamostragem com
    `Mesclar se` de baixo (`source-transform-blend-if`), objetos inteligentes/PDF
    e miniaturas (`non-image-layer`, propósitos `smart`/`thumbnail`), fotos de
