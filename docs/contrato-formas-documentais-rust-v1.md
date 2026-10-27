@@ -83,7 +83,8 @@ elegíveis caem na política existente de fallback, sem pintar com uma cor padr�
 por acidente. O mesmo normalizador do traçado resolve cantos, proporções e
 quantidade de pontas válidos.
 
-Mantêm-se os tetos da fatia 7: até 32 camadas, 16 MiB agregados de fontes padded
+Mantêm-se os tetos da fatia 7: até 32 camadas, o orçamento agregado de fontes padded
+(47 MiB desde 2026-10-27, em `rustDocumentBudget.ts`)
 e assets, eixo até 16384 e limites de metadata/saída/quotas do núcleo. O tamanho
 de uma forma é o raster projetado recortado, não apenas suas dimensões base.
 Formas grandes não ficam isentas do orçamento por não terem Blob.

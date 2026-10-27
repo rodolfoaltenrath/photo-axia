@@ -1,7 +1,7 @@
 //! Prepared document stack with integer fast path and affine sampling.
 
 use crate::blend_if::UnderlyingBlendIf;
-use crate::composite::{composite_pixel_values, BlendMode};
+use crate::composite::{composite_pixel_bytes, composite_pixel_values, BlendMode};
 use crate::document_transform::{
     DocumentAffine, DocumentOutputGrid, DocumentSampler, DocumentSampling,
 };
@@ -206,9 +206,54 @@ fn compose_layer_pixel(
     }
 }
 
+/// Same result as `compose_layer_pixel` for an unfiltered byte texel. Transparent texels
+/// are skipped: the output keeps alpha 0 only on all-zero pixels, so they change nothing.
+#[inline(always)]
+fn compose_layer_texel(
+    target: &mut [u8; 4],
+    pixel: &[u8],
+    opacity: f64,
+    layer: &DocumentRasterLayer<'_>,
+) {
+    if pixel[3] == 0 {
+        return;
+    }
+    let alpha = f64::from(pixel[3]) * opacity;
+    if layer
+        .underlying_blend_if
+        .is_some_and(|config| !config.is_default())
+    {
+        let color = [
+            f64::from(pixel[0]),
+            f64::from(pixel[1]),
+            f64::from(pixel[2]),
+        ];
+        compose_layer_pixel(target, color, alpha, layer);
+        return;
+    }
+    composite_pixel_bytes(
+        target,
+        [pixel[0], pixel[1], pixel[2]],
+        alpha,
+        layer.blend_mode,
+    );
+    if target[3] == 0 {
+        target.fill(0);
+    }
+}
+
 pub fn compose_document_region(
     job: DocumentCompositeJob<'_>,
     output: &mut [u8],
+) -> Result<(), DocumentCompositeError> {
+    compose_document_region_with(job, output, true)
+}
+
+/// `texel_fast_path: false` forces the general sampler; tests use it as the reference.
+fn compose_document_region_with(
+    job: DocumentCompositeJob<'_>,
+    output: &mut [u8],
+    texel_fast_path: bool,
 ) -> Result<(), DocumentCompositeError> {
     // No output changes until every layer has passed preflight.
     validate_job(job, output.len())?;
@@ -240,7 +285,31 @@ pub fn compose_document_region(
                 layer.sampling,
             )
             .expect("validated sampler");
-            if let Some(bounds) = sampler.bounds(region) {
+            let opacity = layer.opacity / 100.0;
+            let Some(bounds) = sampler.bounds(region) else {
+                continue;
+            };
+            if let Some((offset_x, offset_y)) = sampler.integer_offset().filter(|_| texel_fast_path)
+            {
+                // Bounds lie inside the raster footprint, so every texel index is in range.
+                for y in bounds.y..bounds.y + bounds.height {
+                    let source_row = (y as i64 + offset_y) as usize * layer.width;
+                    let output_row = (y - region.y) * region.width;
+                    for x in bounds.x..bounds.x + bounds.width {
+                        let source_index = (source_row + (x as i64 + offset_x) as usize) * 4;
+                        let output_index = (output_row + x - region.x) * 4;
+                        let target: &mut [u8; 4] = (&mut output[output_index..output_index + 4])
+                            .try_into()
+                            .expect("validated RGBA output");
+                        compose_layer_texel(
+                            target,
+                            &layer.rgba[source_index..source_index + 4],
+                            opacity,
+                            layer,
+                        );
+                    }
+                }
+            } else {
                 for y in bounds.y..bounds.y + bounds.height {
                     for x in bounds.x..bounds.x + bounds.width {
                         let (color, alpha) = sampler.sample(layer.rgba, x, y);
@@ -248,7 +317,7 @@ pub fn compose_document_region(
                         let target: &mut [u8; 4] = (&mut output[index..index + 4])
                             .try_into()
                             .expect("validated RGBA output");
-                        compose_layer_pixel(target, color, alpha * (layer.opacity / 100.0), layer);
+                        compose_layer_pixel(target, color, alpha * opacity, layer);
                     }
                 }
             }
@@ -269,22 +338,14 @@ pub fn compose_document_region(
             let output_row = (y - region_y) as usize * region.width;
             for x in left..layer_right {
                 let source_index = (source_row + (x - layer_x) as usize) * 4;
-                let pixel = &layer.rgba[source_index..source_index + 4];
-                if pixel[3] == 0 {
-                    continue;
-                }
                 let output_index = (output_row + (x - region_x) as usize) * 4;
                 let target: &mut [u8; 4] = (&mut output[output_index..output_index + 4])
                     .try_into()
                     .expect("validated RGBA output");
-                compose_layer_pixel(
+                compose_layer_texel(
                     target,
-                    [
-                        f64::from(pixel[0]),
-                        f64::from(pixel[1]),
-                        f64::from(pixel[2]),
-                    ],
-                    f64::from(pixel[3]) * opacity,
+                    &layer.rgba[source_index..source_index + 4],
+                    opacity,
                     layer,
                 );
             }
@@ -856,5 +917,157 @@ mod tests {
             Err(DocumentCompositeError::WorkBudget)
         );
         assert!(output.iter().all(|v| *v == 99));
+    }
+
+    #[test]
+    fn texel_fast_path_matches_the_general_sampler_byte_for_byte() {
+        use crate::blend_if::BlendIfChannel;
+        // Partial alphas, zero alpha with stray RGB, and every byte value in each channel.
+        let pixels = |seed: usize, count: usize| -> Vec<u8> {
+            (0..count * 4)
+                .map(|index| match index % 4 {
+                    3 => [0, 1, 37, 128, 254, 255][(index / 4 + seed) % 6],
+                    channel => ((index / 4) * (31 + channel * 7) + seed * 13) as u8,
+                })
+                .collect()
+        };
+        let (bottom, top) = (pixels(1, 9 * 7), pixels(5, 6 * 5));
+        let modes = [
+            BlendMode::Normal,
+            BlendMode::Multiply,
+            BlendMode::Screen,
+            BlendMode::Overlay,
+            BlendMode::Darken,
+            BlendMode::Lighten,
+        ];
+        let samplings = [
+            DocumentSampling::CoverageBilinear,
+            DocumentSampling::RasterBilinear,
+            DocumentSampling::RasterBilinearPrecise,
+            DocumentSampling::RasterArea,
+        ];
+        let mut cases = 0;
+        for (mode_index, mode) in modes.into_iter().enumerate() {
+            for (sampling_index, sampling) in samplings.into_iter().enumerate() {
+                for (tx, ty, origin_x, origin_y) in [
+                    (0.0, 0.0, 0.0, 0.0),
+                    (2.0, -1.0, 0.0, 0.0),
+                    (-3.0, 4.0, 1.0, -2.0),
+                ] {
+                    let mut lower = layer(&bottom, 9, 7);
+                    lower.transform = Some(DocumentAffine([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]));
+                    lower.opacity = 73.25;
+                    let mut upper = layer(&top, 6, 5);
+                    upper.transform = Some(DocumentAffine([1.0, -0.0, 0.0, 1.0, tx, ty]));
+                    upper.opacity = [100.0, 41.5, 0.25][(mode_index + sampling_index) % 3];
+                    upper.blend_mode = mode;
+                    upper.sampling = sampling;
+                    if sampling_index == 1 {
+                        upper.underlying_blend_if = Some(UnderlyingBlendIf {
+                            channel: BlendIfChannel::Green,
+                            shadows: [10, 90],
+                            highlights: [160, 240],
+                        });
+                    }
+                    let layers = [lower, upper];
+                    for region in [
+                        RasterRegion {
+                            x: 0,
+                            y: 0,
+                            width: 8,
+                            height: 6,
+                        },
+                        RasterRegion {
+                            x: 3,
+                            y: 2,
+                            width: 2,
+                            height: 5,
+                        },
+                    ] {
+                        let request = DocumentCompositeJob {
+                            region,
+                            output_grid: Some(DocumentOutputGrid {
+                                scale_x: 1.0,
+                                scale_y: 1.0,
+                                origin_x,
+                                origin_y,
+                            }),
+                            ..job(&layers, 8, 6)
+                        };
+                        let mut fast = vec![0; region.width * region.height * 4];
+                        let mut general = fast.clone();
+                        compose_document_region_with(request, &mut fast, true).unwrap();
+                        compose_document_region_with(request, &mut general, false).unwrap();
+                        assert_eq!(
+                            fast, general,
+                            "{mode:?} {sampling:?} {tx},{ty} {origin_x},{origin_y} {region:?}"
+                        );
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 144);
+    }
+
+    #[test]
+    fn texel_fast_path_is_only_taken_for_whole_texel_placement() {
+        let grid = DocumentOutputGrid {
+            scale_x: 1.0,
+            scale_y: 1.0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+        };
+        let sampler = |matrix: [f64; 6], grid: DocumentOutputGrid| {
+            DocumentSampler::new(
+                DocumentAffine(matrix),
+                grid,
+                4,
+                4,
+                8,
+                8,
+                DocumentSampling::CoverageBilinear,
+            )
+            .unwrap()
+            .integer_offset()
+        };
+        assert_eq!(
+            sampler([1.0, 0.0, 0.0, 1.0, 3.0, -2.0], grid),
+            Some((-3, 2))
+        );
+        assert_eq!(
+            sampler(
+                [1.0, 0.0, 0.0, 1.0, 3.0, 0.0],
+                DocumentOutputGrid {
+                    origin_x: 1.0,
+                    ..grid
+                }
+            ),
+            Some((-2, 0))
+        );
+        assert_eq!(sampler([1.0, 0.0, 0.0, 1.0, 0.5, 0.0], grid), None);
+        assert_eq!(
+            sampler(
+                [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                DocumentOutputGrid {
+                    origin_y: 0.25,
+                    ..grid
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            sampler(
+                [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                DocumentOutputGrid {
+                    scale_x: 2.0,
+                    ..grid
+                }
+            ),
+            None
+        );
+        assert_eq!(sampler([2.0, 0.0, 0.0, 1.0, 0.0, 0.0], grid), None);
+        assert_eq!(sampler([-1.0, 0.0, 0.0, 1.0, 4.0, 0.0], grid), None);
+        assert_eq!(sampler([0.0, 1.0, 1.0, 0.0, 0.0, 0.0], grid), None);
     }
 }

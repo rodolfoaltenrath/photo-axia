@@ -21,7 +21,15 @@ export interface RustPixelPocStyleInput extends RustPixelPocStyleSourceInput {
   region?: RustPixelPocRegion
 }
 
-export function prepareRustStyleSourceLayout(input: RustPixelPocStyleSourceInput) {
+/**
+ * `staged`: the style session keeps the padded raster staged in its own WASM, so the
+ * original, the JS padding and that copy must fit 96 MiB together. `document`: the
+ * document consumer stages nothing here; its packet and prepared document are bounded by
+ * `styledDocumentPacketLayout` and RUST_DOCUMENT_SOURCE_BYTES instead.
+ */
+export type RustStyleSourceBudget = 'staged' | 'document'
+
+export function prepareRustStyleSourceLayout(input: RustPixelPocStyleSourceInput, budget: RustStyleSourceBudget = 'staged') {
   if (!input) throw new RustPixelPocError('invalid-input')
   const { sourceWidth, sourceHeight } = input
   if (typeof input.sourceIdentity !== 'string' || !input.sourceIdentity ||
@@ -41,16 +49,16 @@ export function prepareRustStyleSourceLayout(input: RustPixelPocStyleSourceInput
   }
   // Original + JS padding + staged WASM; the previous source is released first.
   const preparationBytes = sourceBytes + paddedBytes * 2
-  if (preparationBytes > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+  if (budget !== 'document' && preparationBytes > 96 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
   const sourceKey = JSON.stringify([input.sourceIdentity, sourceWidth, sourceHeight,
     insets.left, insets.top, insets.right, insets.bottom, scale, quality])
   return { sourceKey, sourceIdentity: input.sourceIdentity, sourceWidth, sourceHeight, width, height, insets, scale, quality, styles, light,
     offsetX: insets.left ? -insets.left : 0, offsetY: insets.top ? -insets.top : 0,
-    preparationBytes }
+    preparationBytes, budget }
 }
 
-export function prepareRustStyleJob(input: RustPixelPocStyleInput) {
-  const source = prepareRustStyleSourceLayout(input)
+export function prepareRustStyleJob(input: RustPixelPocStyleInput, budget: RustStyleSourceBudget = 'staged') {
+  const source = prepareRustStyleSourceLayout(input, budget)
   const region = input.region ? { ...input.region } : { x: 0, y: 0, width: source.width, height: source.height }
   const plan = prepareRustStyleStages(source.styles, source.light, source.scale, input.patterns)
   const layout = styleStagesLayout(plan, source.width, source.height, region)
@@ -98,8 +106,12 @@ export function copyRustStyleSource(source: LayerStyleRaster, job: RustPixelPocS
   return new Uint8Array(source.data)
 }
 
-export function padRustStyleSource(source: LayerStyleRaster, job: RustPixelPocStyleSourceLayout): Uint8Array<ArrayBuffer> {
+/** `reuse`: a caller that owns `source` hands its buffer over when there is nothing to pad. */
+export function padRustStyleSource(source: LayerStyleRaster, job: RustPixelPocStyleSourceLayout, reuse = false): Uint8Array<ArrayBuffer> {
   validateStyleSource(source, job)
+  const data = source.data
+  if (reuse && job.width === source.width && job.height === source.height && data.byteOffset === 0 &&
+      data.buffer instanceof ArrayBuffer && data.byteLength === data.buffer.byteLength) return new Uint8Array(data.buffer)
   const padded = new Uint8Array(job.width * job.height * 4), rowBytes = source.width * 4
   for (let y = 0; y < source.height; y++) {
     padded.set(source.data.subarray(y * rowBytes, (y + 1) * rowBytes),

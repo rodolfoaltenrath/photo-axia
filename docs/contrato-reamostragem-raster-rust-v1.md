@@ -228,8 +228,8 @@ Canvas pula texels e a área não. Esses números são informativos, não crité
 O custo da área por pixel é a pegada em texels; o orçamento de trabalho conta
 `(⌈pegada u⌉ + 1)(⌈pegada v⌉ + 1)` por pixel, igual no Rust e na pré-checagem TS.
 No total, um render inteiro lê cada texel da fonte poucas vezes, qualquer que seja
-a escala. O limite de 16 MiB de fontes por documento do consumidor experimental
-continua valendo: uma foto de 4000×3000 ainda cai em fallback por memória.
+a escala. Desde 2026-10-27 o orçamento de fontes do consumidor é de 47 MiB e uma
+foto de 4000×3000 entra no Rust (ver o contrato do consumidor documental, seção 4).
 
 ## 7. Provas
 
@@ -256,7 +256,7 @@ continua valendo: uma foto de 4000×3000 ainda cai em fallback por memória.
 
 ## 8. Gates restantes
 
-Fotos acima do orçamento de 16 MiB de fontes, rotação
+Fotos acima do orçamento de 47 MiB de fontes (24 MP ou mais), rotação
 arbitrária, reamostragem com `Mesclar se` abaixo, escala de saída diferente de
 1:1, WebView2 com GPU em outras máquinas e QA com documentos do usuário. Texto
 entrou no consumidor na fatia 12 sem reamostragem (ver

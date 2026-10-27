@@ -380,3 +380,33 @@ fn area_work_per_sample_counts_the_source_footprint() {
         33
     );
 }
+
+#[test]
+fn whole_texel_shortcut_equals_the_four_tap_sum_for_every_byte() {
+    // The sampler returns the texel when the bilinear weights are (1, 0, 0, 0); this is
+    // the exact four-tap sum it replaces, for every color/alpha and arbitrary neighbors.
+    for alpha in 1..=255u8 {
+        for color in 0..=255u8 {
+            let neighbors = [
+                (color ^ 0x5a, alpha.wrapping_mul(7)),
+                (255 - color, 255 - alpha),
+                (alpha, color),
+            ];
+            let mut sum_alpha = 0.0;
+            let mut sum_color = 0.0;
+            for (value, weight_alpha, weight) in [(color, alpha, 1.0)]
+                .into_iter()
+                .chain(neighbors.map(|(value, a)| (value, a, 0.0)))
+            {
+                let contribution = f64::from(weight_alpha) * weight;
+                sum_alpha += contribution;
+                sum_color += f64::from(value) * contribution;
+            }
+            assert_eq!(
+                (sum_color / sum_alpha).to_bits(),
+                f64::from(color).to_bits()
+            );
+            assert_eq!(sum_alpha.to_bits(), f64::from(alpha).to_bits());
+        }
+    }
+}

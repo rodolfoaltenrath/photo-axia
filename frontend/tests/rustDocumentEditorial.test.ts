@@ -90,13 +90,17 @@ test('efeitos/Blend If de forma permanecem explícitos no fallback; dimensão/co
   assert.throws(() => planRustEditorialDocument(document, [item], 8, 6, viewport), /invalid-input/)
   assert.throws(() => planRustDocumentShape({ ...shape, color: 'red' }, item.transform!, 8, 6, 1), /invalid-input/)
   assert.throws(() => planRustDocumentShape({ ...shape, baseWidth: 0 }, item.transform!, 8, 6, 1), /invalid-input/)
-  assert.throws(() => planRustDocumentShape(shape, transform({ width: 4096, height: 2048 }), 4096, 2048, 1), /memory-limit/)
+  assert.throws(() => planRustDocumentShape(shape, transform({ width: 4096, height: 4096 }), 4096, 4096, 1), /memory-limit/)
 })
 
 test('preflight editorial limita fonte e metadata antes do clone/fetch/decode', () => {
-  const large = picture(); large.image!.width = 4096; large.image!.height = 2048
-  large.transform!.width = 4096; large.transform!.height = 2048
+  const large = picture(); large.image!.width = 4096; large.image!.height = 4096
+  large.transform!.width = 4096; large.transform!.height = 4096
   assert.throws(() => planRustEditorialDocument(document, [large], 8, 6, viewport), /memory-limit/)
+  // Uma foto de 12 MP (4000×3000) cabe no orçamento medido; ver rustDocumentBudget.ts.
+  const photo = picture(); photo.image!.width = 4000; photo.image!.height = 3000
+  photo.transform!.width = 4000; photo.transform!.height = 3000
+  assert.doesNotThrow(() => planRustEditorialDocument(document, [photo], 8, 6, viewport))
   const metadata = picture(); metadata.image!.sourceUrl = 'x'.repeat(300_000)
   assert.throws(() => planRustEditorialDocument(document, [metadata], 8, 6, viewport), /memory-limit/)
 })

@@ -136,14 +136,16 @@ export function documentCompositeJobLayout(job: RustDocumentCompositeJob) {
   return { region, packetBytes, outputBytes, workingBytes }
 }
 
-export function encodeDocumentComposite(job: RustDocumentCompositeJob): Uint8Array<ArrayBuffer> {
+/** `target`, when given, must be zero-filled and exactly the packet size (writes in place). */
+export function encodeDocumentComposite(job: RustDocumentCompositeJob, target?: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
   const { packetBytes } = documentCompositeJobLayout(job)
+  if (target !== undefined && (!(target instanceof Uint8Array) || target.byteLength !== packetBytes)) invalid()
   const transformed = job.outputGrid !== undefined
   const underlying = job.layersBottomToTop.some(layer => layer.underlyingBlendIf !== undefined)
   const sampled = job.layersBottomToTop.some(layer => layer.sampling !== undefined)
   const version = sampled ? 4 : underlying ? 3 : transformed ? 2 : 1
   const header = transformed ? 80 : HEADER, recordBytes = underlying || sampled ? 96 : transformed ? 80 : RECORD
-  const bytes = new Uint8Array(packetBytes), view = new DataView(bytes.buffer)
+  const bytes = target ?? new Uint8Array(packetBytes), view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   bytes.set([68, 67, 80, 48 + version])
   for (const [offset, value] of [
     [4, version], [8, header], [12, job.layersBottomToTop.length],

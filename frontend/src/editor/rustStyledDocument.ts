@@ -36,7 +36,8 @@ export function encodeStyledDocument(job: RustDocumentCompositeJob, plans: reado
   view.setUint32(12, plans.length, true)
   const start = 32 + plans.length * 8
   view.setUint32(16, start, true); view.setUint32(20, document.packetBytes, true)
-  packet.set(encodeDocumentComposite(job), start)
+  // Escrito no lugar: uma foto grande não ganha uma segunda cópia transitória do pacote DCP.
+  encodeDocumentComposite(job, packet.subarray(start, start + document.packetBytes))
   let cursor = start + document.packetBytes
   plans.forEach((plan, index) => {
     if (plan === null) return

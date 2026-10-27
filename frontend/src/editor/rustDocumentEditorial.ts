@@ -7,6 +7,7 @@ import { activeLayerStyleEffects, layerStyleNeedsCompositing } from './layerStyl
 import { prepareRustStyleSourceLayout, type RustPixelPocStyleSourceInput } from './rustPixelPocStylePreparation.ts'
 import type { RustDocumentRasterLayer, RustDocumentOutputGrid } from './rustDocumentComposite.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
+import { RUST_DOCUMENT_SOURCE_BYTES } from './rustDocumentBudget.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import { planRustDocumentShape, type RustDocumentShapeSource } from './rustDocumentShape.ts'
 import { planRustDocumentText, rustDocumentTextFontsReady,
@@ -103,7 +104,7 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       if (!source) continue
       sourceBytes += source.width * source.height * 4
       metadata += rustPixelPocStyleMetadataBytes(source)
-      if (sourceBytes > 16 * 1024 * 1024 || result.layers.length >= 32 || metadata > 512 * 1024) {
+      if (sourceBytes > RUST_DOCUMENT_SOURCE_BYTES || result.layers.length >= 32 || metadata > 512 * 1024) {
         throw new RustPixelPocError('memory-limit')
       }
       result.layers.push({ source, input: { sourceIdentity: `shape:${layer.id}`, sourceWidth: source.width,
@@ -126,7 +127,7 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       if (!source) continue
       sourceBytes += source.width * source.height * 4
       metadata += rustPixelPocStyleMetadataBytes(source)
-      if (sourceBytes > 16 * 1024 * 1024 || result.layers.length >= 32 || metadata > 512 * 1024) {
+      if (sourceBytes > RUST_DOCUMENT_SOURCE_BYTES || result.layers.length >= 32 || metadata > 512 * 1024) {
         throw new RustPixelPocError('memory-limit')
       }
       result.layers.push({ source, input: { sourceIdentity: `text:${layer.id}`, sourceWidth: source.width,
@@ -147,9 +148,9 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     const input: RustPixelPocStyleSourceInput = { sourceIdentity: `${layer.id}:${image.editToken ?? ''}:${image.sourceUrl}`,
       sourceWidth: image.width, sourceHeight: image.height, styles, globalLight: light, quality: 'final',
       resolutionScale: 1 / Math.sqrt(transform.width / image.width * (transform.height / image.height)) }
-    const layout = prepareRustStyleSourceLayout(input)
+    const layout = prepareRustStyleSourceLayout(input, 'document')
     sourceBytes += layout.width * layout.height * 4
-    if (sourceBytes > 16 * 1024 * 1024 || result.layers.length >= 32) throw new RustPixelPocError('memory-limit')
+    if (sourceBytes > RUST_DOCUMENT_SOURCE_BYTES || result.layers.length >= 32) throw new RustPixelPocError('memory-limit')
     const [a, b, c, d, tx, ty] = matrix
     result.layers.push({ source: { type: 'raster', url: image.sourceUrl }, input,
       matrix: [a, b, c, d, tx - shiftX, ty - shiftY], opacity: layer.opacity, blendMode: layer.blendMode,

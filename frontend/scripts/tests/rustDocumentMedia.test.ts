@@ -108,7 +108,7 @@ test('preparação documental decodifica, estiliza e corrige insets antes da com
 test('preflight agregado rejeita fontes grandes antes de chamar decoder e respeita invalidação', async () => {
   const fixtures = installRustMediaFixtures()
   try {
-    const request = input(); request.layers[0]!.input.sourceWidth = 4096; request.layers[0]!.input.sourceHeight = 2048
+    const request = input(); request.layers[0]!.input.sourceWidth = 4096; request.layers[0]!.input.sourceHeight = 4096
     await assert.rejects(prepareRustDocumentMedia(request, () => {}), /memory-limit/)
     assert.equal(fixtures.state.decodes, 0)
     await assert.rejects(prepareRustDocumentMedia(input(), () => { throw new Error('obsolete') }), /obsolete/)

@@ -597,6 +597,8 @@ export async function createRustPixelPocRuntime(wasm: ArrayBuffer) {
   return {
     prepareDocumentPacket,
     composePreparedDocument,
+    /** Memória linear do WASM em bytes; só cresce, então é o pico da sessão. */
+    get memoryBytes() { return exports.memory.buffer.byteLength },
     documentMetadata(documentId: number) {
       if (disposed) throw new RustPixelPocError('wasm-unavailable')
       if (!preparedDocument || preparedDocument.id !== documentId) throw new RustPixelPocError('invalid-input')

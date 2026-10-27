@@ -1,4 +1,5 @@
 import { RustPixelPocError } from './rustPixelPocError.ts'
+import { RUST_DOCUMENT_DECODE_BYTES } from './rustDocumentBudget.ts'
 import { buildLayerStylePipeline } from './layerStyleCompositor.ts'
 import { drawTextLayerContent } from './textCanvas.ts'
 import { MAX_TEXT_CONTENT_LENGTH, MAX_TEXT_FONT_FAMILY_LENGTH, MAX_TEXT_LINE_COUNT } from './text.ts'
@@ -40,7 +41,8 @@ export async function decodeRustStyleSource(source: LayerStyleWorkerSource,
       const headerStarted = performance.now()
       const intrinsic = await readRustStyleImageDimensions(source.blob, ensureCurrent)
       timings.headerMs += performance.now() - headerStarted
-      if (intrinsic.bytes + 3 * layout.sourceWidth * layout.sourceHeight * 4 > MAX_WORKING_BYTES) {
+      const limit = layout.budget === 'document' ? RUST_DOCUMENT_DECODE_BYTES : MAX_WORKING_BYTES
+      if (intrinsic.bytes + 3 * layout.sourceWidth * layout.sourceHeight * 4 > limit) {
         throw new RustPixelPocError('memory-limit')
       }
       const bitmapStarted = performance.now()

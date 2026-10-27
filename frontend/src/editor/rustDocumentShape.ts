@@ -2,6 +2,7 @@ import type { LayerTransform, ShapeLayerContent } from '../types/editor.ts'
 import { normalizeShapeConfig, traceShapePath } from './shape.ts'
 import { layerDocumentBounds } from './renderBounds.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
+import { RUST_DOCUMENT_SOURCE_BYTES } from './rustDocumentBudget.ts'
 
 export interface RustDocumentShapeSource {
   type: 'shape'
@@ -28,7 +29,7 @@ export function planRustDocumentShape(shape: ShapeLayerContent, transform: Layer
   const right = Math.min(documentWidth, Math.ceil(bounds.x + bounds.width)), bottom = Math.min(documentHeight, Math.ceil(bounds.y + bounds.height))
   if (right <= left || bottom <= top) return null
   const width = right - left, height = bottom - top
-  if (width > 16384 || height > 16384 || width * height * 4 > 16 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+  if (width > 16384 || height > 16384 || width * height * 4 > RUST_DOCUMENT_SOURCE_BYTES) throw new RustPixelPocError('memory-limit')
   return { type: 'shape', shape: { ...normalizeShapeConfig(shape), baseWidth: shape.baseWidth, baseHeight: shape.baseHeight },
     transform: { x: transform.x, y: transform.y, width: transform.width, height: transform.height, rotation: transform.rotation ?? 0 },
     width, height, originX: left, originY: top, alpha }

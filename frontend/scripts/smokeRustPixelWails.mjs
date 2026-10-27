@@ -78,7 +78,7 @@ function evaluator(ws) {
     const timeout = setTimeout(() => {
       pending.delete(id)
       reject(new Error('DevTools WebView2 não respondeu.'))
-    }, 5000)
+    }, 30000) // O diagnóstico ocupa a thread principal; 5 s reprovava por carga da máquina.
     pending.set(id, { resolve, reject, timeout })
     ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }))
   })
@@ -131,6 +131,14 @@ try {
     assert.equal(measurement?.rows?.length, 8)
     const browser = await evaluate('navigator.userAgent')
     process.stdout.write(`${JSON.stringify({ browser, node: process.version, benchmark: measurement })}\n`)
+    // Foto de 12 MP pelo consumidor documental completo (rustDocumentBudgetBenchmark.ts).
+    const budget = await evaluate('JSON.parse(document.documentElement.dataset.axiaRustDocumentBudget || "null")')
+    process.stdout.write(`${JSON.stringify({ documentBudget: budget })}\n`)
+    assert.equal(budget?.rows?.length, 3)
+    for (const row of budget.rows) {
+      assert.equal(row.error, undefined, `${row.name}: ${row.error}`)
+      if ('mismatchedBytes' in row) assert.equal(row.mismatchedBytes, 0, row.name)
+    }
   }
 } finally {
   socket?.close()

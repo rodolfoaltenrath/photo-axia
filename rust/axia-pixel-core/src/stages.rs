@@ -507,6 +507,34 @@ pub unsafe extern "C" fn axia_poc_style_stages_region(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn full_fill_content_without_passes_is_the_source_for_every_visible_texel() {
+        // The document consumer sends no STG1 plan for unstyled layers; this is the proof
+        // that an empty plan at Fill 100 would only clear RGB under alpha 0.
+        let mut source = Vec::with_capacity(256 * 256 * 4);
+        for alpha in 0..=255u8 {
+            for color in 0..=255u8 {
+                source.extend_from_slice(&[color, 255 - color, color / 3, alpha]);
+            }
+        }
+        let region = RasterRegion {
+            x: 0,
+            y: 0,
+            width: 256,
+            height: 256,
+        };
+        let mut content = vec![0; source.len()];
+        composite_content(&source, 256, region, &mut content, 100.0);
+        for (texel, result) in source
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(content.as_chunks::<4>().0)
+        {
+            let expected = if texel[3] == 0 { [0; 4] } else { *texel };
+            assert_eq!(*result, expected);
+        }
+    }
     fn packet(fill: f64) -> Vec<u8> {
         let mut bytes = vec![0; HEADER];
         bytes[..4].copy_from_slice(&0x31475453u32.to_le_bytes());

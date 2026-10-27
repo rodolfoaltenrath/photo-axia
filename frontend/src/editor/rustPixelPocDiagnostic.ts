@@ -678,7 +678,7 @@ export async function runRustPixelPocDiagnostic(): Promise<{
           const actual = await readPng(await renderDocumentBlob(spec, [top, lower]), 12, 10)
           const diagnostic = JSON.parse(window.document.documentElement.dataset.axiaRustDocument ?? '{}')
           if (diagnostic.backend !== (compatible ? 'rust' : 'legacy') || !compatible && diagnostic.reason !== 'source-transform-platform') {
-            throw new Error('Raster fracionário ignorou a compatibilidade da plataforma.')
+            throw new Error(`Raster fracionário ignorou a compatibilidade da plataforma: ${diagnostic.backend}/${diagnostic.reason}.`)
           }
           // No modo Normal o Chromium escolhe a precisão dos pesos por contexto e conteúdo; aqui só existe a
           // variante fixa do Rust. O diagnóstico de 288 casos cobre o Normal contra as duas precisões.

@@ -238,6 +238,29 @@ impl DocumentSampler {
         })
     }
 
+    /// Texel offset `(u - x, v - y)` when every output pixel is exactly one source texel.
+    /// All four sampling modes then return that texel unchanged, so callers may skip them.
+    pub fn integer_offset(&self) -> Option<(i64, i64)> {
+        let whole = |value: f64| value.fract() == 0.0 && value.abs() <= f64::from(1u32 << 30);
+        (self.inverse == [1.0, 0.0, 0.0, 1.0]
+            && self.grid.scale_x == 1.0
+            && self.grid.scale_y == 1.0
+            && [
+                self.grid.origin_x,
+                self.grid.origin_y,
+                self.translation[0],
+                self.translation[1],
+            ]
+            .into_iter()
+            .all(whole))
+        .then(|| {
+            (
+                (self.grid.origin_x - self.translation[0]) as i64,
+                (self.grid.origin_y - self.translation[1]) as i64,
+            )
+        })
+    }
+
     /// Upper bound of source texels read per output sample, for the work budget.
     pub fn work_per_sample(&self) -> usize {
         if self.sampling != DocumentSampling::RasterArea {
@@ -376,6 +399,16 @@ impl DocumentSampler {
         };
         let fx = quantize(px - ix as f64);
         let fy = quantize(py - iy as f64);
+        if fx == 0.0 && fy == 0.0 {
+            // Weights (1, 0, 0, 0): the sums below reduce exactly to this texel, since
+            // color * alpha is an exact integer and dividing it by alpha restores color.
+            let texel = &rgba[(iy * self.width + ix) * 4..][..4];
+            if texel[3] == 0 {
+                return ([0.0; 3], 0.0);
+            }
+            let color = [texel[0], texel[1], texel[2]].map(f64::from);
+            return (color, f64::from(texel[3]) * coverage);
+        }
         let mut color = [0.0; 3];
         let mut alpha = 0.0;
         for (cx, cy, weight) in [

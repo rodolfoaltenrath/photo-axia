@@ -21,6 +21,8 @@ async function bootstrap() {
         if (params.get('axiaRustMediaBenchmark') === '1') {
           const { runRustStyleMediaBenchmark } = await import('./editor/rustStyleMediaBenchmark.ts')
           document.documentElement.dataset.axiaRustMediaBenchmark = JSON.stringify(await runRustStyleMediaBenchmark())
+          const { runRustDocumentBudgetBenchmark } = await import('./editor/rustDocumentBudgetBenchmark.ts')
+          document.documentElement.dataset.axiaRustDocumentBudget = JSON.stringify(await runRustDocumentBudgetBenchmark())
         }
         document.documentElement.dataset.axiaRustPoc = 'passed'
         console.info('Axia Rust POC:', result)

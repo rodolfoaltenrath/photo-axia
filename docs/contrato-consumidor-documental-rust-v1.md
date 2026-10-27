@@ -154,9 +154,18 @@ invalidação e provas no [contrato da sessão](contrato-sessao-documental-rust-
   tem até **1 MiB**; antes de criar a identidade/clone, o planner limita os
   metadados acumulados das imagens a **512 KiB**. A fonte é carregada só ao
   despachar, não para todos os pedidos pendentes.
-- Até **32 camadas** preparadas, somando fundo; até **16 MiB** de rasters padded
+- Até **32 camadas** preparadas, somando fundo; até **47 MiB** de rasters padded
   e assets decodificados no preflight Worker; cada imagem intrínseca também
-  precisa caber em 16 MiB. Conservador e experimental, não novo teto do editor.
+  precisa caber em 47 MiB (era 16 MiB até 2026-10-27). O valor foi medido: o
+  preparo mantém pacote e documento preparado ao mesmo tempo no orçamento de
+  96 MiB do núcleo, e uma foto de 12 MP (4000×3000, 45,8 MiB) cabe com pico de
+  92,7 MiB de memória WASM. Os limites vivem em `rustDocumentBudget.ts`.
+- Camada raster sem efeitos, com Fill 100 e sem `Mesclar se` próprio não leva
+  STG1: o núcleo compõe a fonte direto, sem cópia estilizada residente nem pico
+  2× (prova exaustiva em `stages.rs`). A decodificação no Worker documental
+  admite até 4× o orçamento de fontes como pico transitório JS/GPU (arquivo,
+  bitmap, canvas e leitura), liberado antes de montar o pacote; sem insets, o
+  raster lido vira a fonte do pacote sem cópia, e o DCP é escrito dentro do SDP1.
 - Blobs codificados somados até **32 MiB**, incluindo referências repetidas.
   Leitor streaming existente valida tamanho declarado/real, usa saldo restante
   e cancela leitura em abort/limite. Assets não são buscados por URL no Rust.

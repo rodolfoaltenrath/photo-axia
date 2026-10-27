@@ -4,14 +4,20 @@ import { readRustStyleImageDimensions } from './rustStyleImageHeader.ts'
 import { encodeStyledDocument } from './rustStyledDocument.ts'
 import { rustEditorialUnderlying, type RustDocumentMediaInput } from './rustDocumentEditorial.ts'
 import type { RustDocumentRasterLayer } from './rustDocumentComposite.ts'
-import type { RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
+import { prepareRustStyleStages, type RustPixelPocStagesPlan } from './rustPixelPocStages.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
+import { RUST_DOCUMENT_ENCODED_BYTES, RUST_DOCUMENT_SOURCE_BYTES } from './rustDocumentBudget.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import { drawRustDocumentShape, validateRustDocumentShape } from './rustDocumentShape.ts'
 import { validateRustDocumentTextPixels } from './rustDocumentText.ts'
 import { activeLayerStyleEffects } from './layerStyleCompositor.ts'
 import { layerStyleBlendIfIsDefault } from './layerStyles.ts'
 import { rustRasterSamplingSupported } from './rustDocumentSampling.ts'
+
+export function rustStylePlanIsIdentity(plan: RustPixelPocStagesPlan) {
+  return plan.fillOpacity === 100 && plan.thisLayerBlendIf === undefined && !plan.external.length &&
+    !plan.internal.length && !plan.overlay.length && !plan.upper.length
+}
 
 export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, check: () => void) {
   check()
@@ -22,7 +28,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
     if (layer.sampling !== undefined && (layer.source.type !== 'raster' ||
         !['raster-bilinear', 'raster-bilinear-precise', 'raster-area'].includes(layer.sampling) ||
         !Array.isArray(layer.matrix) || !rustRasterSamplingSupported(layer.matrix, input.grid, layer.sampling))) throw new RustPixelPocError('invalid-input')
-    const layout = prepareRustStyleSourceLayout(layer.input)
+    const layout = prepareRustStyleSourceLayout(layer.input, 'document')
     if (layout.width > 16384 || layout.height > 16384) throw new RustPixelPocError('memory-limit')
     padded += layout.width * layout.height * 4
     if (layer.source.type === 'raster') {
@@ -55,7 +61,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
     const assets = prepareRustStyleAssets(layout, layer.patterns)
     for (const blob of Object.values(layer.patterns)) encoded += blob.size
     padded += assets.decodedBytes
-    if (padded > 16 * 1024 * 1024 || encoded > 32 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+    if (padded > RUST_DOCUMENT_SOURCE_BYTES || encoded > RUST_DOCUMENT_ENCODED_BYTES) throw new RustPixelPocError('memory-limit')
     return { layout, assets }
   })
   const layers: RustDocumentRasterLayer[] = [], plans: (RustPixelPocStagesPlan | null)[] = []
@@ -64,7 +70,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
     const layer = input.layers[index]!, { layout, assets } = layouts[index]!
     if (layer.source.type === 'raster') {
       const intrinsic = await readRustStyleImageDimensions(layer.source.blob, check)
-      if (intrinsic.bytes > 16 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+      if (intrinsic.bytes > RUST_DOCUMENT_SOURCE_BYTES) throw new RustPixelPocError('memory-limit')
     }
     const source = layer.source.type === 'raster' ? await decodeRustStyleSource(layer.source, layout, check) :
       layer.source.type === 'shape' ? drawRustDocumentShape(layer.source, check) :
@@ -72,14 +78,17 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
         ? { width: layer.source.width, height: layer.source.height, data: new Uint8ClampedArray(layer.source.rgba) }
         : { width: 1, height: 1, data: new Uint8ClampedArray(layer.source.color) }
     const patterns = await decodeRustStyleAssets(assets, check)
-    const job = prepareRustStyleJob({ ...layer.input, patterns })
-    const rgba = padRustStyleSource(source, job), [a, b, c, d, tx, ty] = layer.matrix
-    layers.push({ rgba, width: job.width, height: job.height, x: 0, y: 0, visible: true,
+    // Sem efeitos, Fill 100 e sem Blend If próprio o STG1 só copiaria a fonte (prova em stages.rs):
+    // dispensá-lo evita a cópia estilizada residente, o pico 2× e as quotas de estágio no núcleo.
+    const styled = layer.source.type !== 'shape' && layer.source.type !== 'text-pixels' &&
+      !rustStylePlanIsIdentity(prepareRustStyleStages(layout.styles, layout.light, layout.scale, patterns))
+    plans.push(styled ? prepareRustStyleJob({ ...layer.input, patterns }, 'document').plan : null)
+    const rgba = padRustStyleSource(source, layout, true), [a, b, c, d, tx, ty] = layer.matrix
+    layers.push({ rgba, width: layout.width, height: layout.height, x: 0, y: 0, visible: true,
       opacity: layer.opacity, blendMode: layer.blendMode,
       ...(layer.sampling ? { sampling: layer.sampling } : {}),
-      sourceToDocument: [a, b, c, d, tx + a * job.offsetX + c * job.offsetY, ty + b * job.offsetX + d * job.offsetY],
+      sourceToDocument: [a, b, c, d, tx + a * layout.offsetX + c * layout.offsetY, ty + b * layout.offsetX + d * layout.offsetY],
       underlyingBlendIf: rustEditorialUnderlying(layer.input) })
-    plans.push(layer.source.type === 'shape' || layer.source.type === 'text-pixels' ? null : job.plan)
   }
   check()
   return encodeStyledDocument({ documentWidth: input.documentWidth, documentHeight: input.documentHeight,

@@ -5,6 +5,7 @@ import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import type { RustPixelPocConnect } from './rustPixelPocStyleService.ts'
 import type { RustPixelPocConnection } from './rustPixelPocWorkerClient.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
+import { RUST_DOCUMENT_ENCODED_BYTES } from './rustDocumentBudget.ts'
 import type { RustPixelPocRegion } from './rustPixelPocRuntime.ts'
 import { rustDocumentReusable, sameRustDocumentPreparation } from './rustDocumentReuse.ts'
 import { drawRustDocumentText } from './rustDocumentText.ts'
@@ -17,16 +18,16 @@ export async function loadRustDocumentMedia(plan: RustEditorialPlan, signal: Abo
     signal.throwIfAborted()
     const patterns: Record<string, Blob> = Object.create(null)
     for (const asset of rustStylePreviewPatternAssets({ styles: layer.input.styles })) {
-      const blob = await read(asset.sourceUrl, signal, 32 * 1024 * 1024 - encoded)
+      const blob = await read(asset.sourceUrl, signal, RUST_DOCUMENT_ENCODED_BYTES - encoded)
       encoded += blob.size; patterns[asset.id] = blob
     }
     // Texto rasteriza aqui, na thread principal: fontes de @font-face não existem no Worker.
     const source = layer.source.type === 'raster'
-      ? { type: 'raster' as const, blob: await read(layer.source.url, signal, 32 * 1024 * 1024 - encoded) }
+      ? { type: 'raster' as const, blob: await read(layer.source.url, signal, RUST_DOCUMENT_ENCODED_BYTES - encoded) }
       : layer.source.type === 'text' ? rasterizeText(layer.source) : layer.source
     if (source.type === 'raster') encoded += source.blob.size
     if (source.type === 'text-pixels') encoded += source.rgba.byteLength
-    if (encoded > 32 * 1024 * 1024) throw new RustPixelPocError('memory-limit')
+    if (encoded > RUST_DOCUMENT_ENCODED_BYTES) throw new RustPixelPocError('memory-limit')
     layers.push({ ...layer, source, patterns })
   }
   signal.throwIfAborted()

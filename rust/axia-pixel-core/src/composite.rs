@@ -43,21 +43,48 @@ fn blend_channel(backdrop: f64, source: f64, mode: BlendMode) -> f64 {
     }
 }
 
+/// `UNIT[v] == f64::from(v) / 255.0` bit for bit: the same IEEE division, done once.
+const UNIT: [f64; 256] = {
+    let mut table = [0.0; 256];
+    let mut value = 0;
+    while value < 256 {
+        table[value] = value as f64 / 255.0;
+        value += 1;
+    }
+    table
+};
+
 pub fn composite_pixel(target: &mut [u8; 4], color: [u8; 3], alpha: u8, mode: BlendMode) {
-    composite_pixel_values(target, color.map(f64::from), f64::from(alpha), mode);
+    composite_pixel_bytes(target, color, f64::from(alpha), mode);
+}
+
+/// `composite_pixel_values` for byte color, with every byte division looked up.
+pub fn composite_pixel_bytes(target: &mut [u8; 4], color: [u8; 3], alpha: f64, mode: BlendMode) {
+    composite_unit(
+        target,
+        color.map(|value| UNIT[usize::from(value)]),
+        alpha,
+        mode,
+    );
 }
 
 /// Gradient tails can extrapolate beyond byte ranges (TS parity).
 pub fn composite_pixel_values(target: &mut [u8; 4], color: [f64; 3], alpha: f64, mode: BlendMode) {
+    composite_unit(target, color.map(|value| value / 255.0), alpha, mode);
+}
+
+/// Shared body; `source` is the straight color already divided by 255.
+#[inline(always)]
+fn composite_unit(target: &mut [u8; 4], source: [f64; 3], alpha: f64, mode: BlendMode) {
     if alpha <= 0.0 {
         return;
     }
     let source_alpha = alpha / 255.0;
-    let backdrop_alpha = f64::from(target[3]) / 255.0;
+    let backdrop_alpha = UNIT[usize::from(target[3])];
     let output_alpha = source_alpha + backdrop_alpha - source_alpha * backdrop_alpha;
     for channel in 0..3 {
-        let source = color[channel] / 255.0;
-        let backdrop = f64::from(target[channel]) / 255.0;
+        let source = source[channel];
+        let backdrop = UNIT[usize::from(target[channel])];
         let blended = blend_channel(backdrop, source, mode);
         // Do not regroup, fuse multiply-add, or change precision during the port.
         let premultiplied = (1.0 - source_alpha) * backdrop * backdrop_alpha

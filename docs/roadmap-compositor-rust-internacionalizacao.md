@@ -880,6 +880,26 @@ o smoke Wails confere Segoe UI e Arial no WebView2 real. Detalhes no
 [contrato de texto](contrato-texto-documental-rust-v1.md). Não muda preview,
 nitidez do editor, tipografia, `.axia`, stack ou versões; C3/C4 seguem abertos.
 
+Décima quarta fatia de C3 (2026-10-27): **fotos de 12 MP no consumidor
+experimental**. O orçamento de fontes passa de 16 para 47 MiB, centralizado em
+`rustDocumentBudget.ts`, depois de medido (`benchmark:rust-document-budget`):
+preparar uma foto de 4000×3000 leva a memória WASM a 92,7 MiB e cabe no
+orçamento de 96 MiB do núcleo, inclusive na edição seguinte, porque a sessão
+libera o documento antes de preparar outro. Três tetos escondidos impediam a
+foto mesmo com o orçamento maior, e cada um foi tratado na origem: camada sem
+estilo efetivo deixa de mandar STG1 (que materializava uma cópia estilizada e o
+pico 2×; identidade provada nos 65.536 pares cor/alfa); a contabilidade da
+sessão de estilo (fonte + 2× padded) e a quota de estágios não se aplicam mais
+ao consumidor documental; a decodificação no Worker admite pico transitório de
+4× a fonte. O caminho JS perdeu duas cópias (raster sem insets e DCP escrito no
+SDP1). O compositor ganhou caminho direto para texel inteiro e tabela das
+divisões por 255, iguais byte a byte ao caminho geral (144 casos comparados nos
+quatro modos de amostragem): composição 1:1 da foto em 1,42 s contra 2,65 s no
+i7-3770. No WebView2 real, a foto inteira sai em 1,07 s (0,66 s reaproveitando o
+preparo) e **igual byte a byte à fonte**; a redução por área, em 0,68 s. Não
+muda preview, default, `.axia`, stack ou versões. Fotos de 24 MP (91,5 MiB)
+seguem em fallback: exigiriam subir as quotas de 64/96 MiB do núcleo.
+
 - [ ] Usar pilha/estilos/Blend If em ordem explícita no mesmo kernel para
   exportação, miniatura, amostragem, mesclagem e rasterização. Preservar
   resolução plena e `.axia` antigo; validar PNG e casos de baixa memória.

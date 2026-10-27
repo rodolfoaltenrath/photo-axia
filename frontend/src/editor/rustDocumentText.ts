@@ -3,8 +3,7 @@ import { layerDocumentBounds } from './renderBounds.ts'
 import { drawTextLayerContent } from './textCanvas.ts'
 import { MAX_TEXT_FONT_FAMILY_LENGTH, textContentIsWithinLimits, textFont } from './text.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
-
-const MAX_SOURCE_BYTES = 16 * 1024 * 1024
+import { RUST_DOCUMENT_SOURCE_BYTES } from './rustDocumentBudget.ts'
 
 /**
  * Descritor do texto no plano editorial. Não carrega pixels: é a identidade
@@ -59,7 +58,7 @@ export function planRustDocumentText(text: TextLayerContent, transform: LayerTra
   const right = Math.min(documentWidth, Math.ceil(bounds.x + bounds.width)), bottom = Math.min(documentHeight, Math.ceil(bounds.y + bounds.height))
   if (right <= left || bottom <= top) return null
   const width = right - left, height = bottom - top
-  if (width > 16384 || height > 16384 || width * height * 4 > MAX_SOURCE_BYTES) throw new RustPixelPocError('memory-limit')
+  if (width > 16384 || height > 16384 || width * height * 4 > RUST_DOCUMENT_SOURCE_BYTES) throw new RustPixelPocError('memory-limit')
   return { type: 'text', text: { ...text },
     transform: { x: transform.x, y: transform.y, width: transform.width, height: transform.height, rotation: transform.rotation ?? 0 },
     width, height, originX: left, originY: top, alpha }
@@ -118,7 +117,7 @@ export function validateRustDocumentTextPixels(source: RustDocumentTextPixels, d
   if (!source || ![source.width, source.height].every(value => Number.isSafeInteger(value) && value > 0 && value <= 16384) ||
       ![source.originX, source.originY].every(value => Number.isSafeInteger(value) && value >= 0) ||
       source.originX + source.width > documentWidth || source.originY + source.height > documentHeight ||
-      source.width * source.height * 4 > MAX_SOURCE_BYTES ||
+      source.width * source.height * 4 > RUST_DOCUMENT_SOURCE_BYTES ||
       !(source.rgba instanceof ArrayBuffer) || source.rgba.byteLength !== source.width * source.height * 4) {
     throw new RustPixelPocError('invalid-input')
   }
