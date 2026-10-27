@@ -232,8 +232,8 @@ async function compareEditorialConsumer() {
         throw new Error(`Sessão não reutilizou preparação entre PNG/Blob/cor: ${JSON.stringify(session)}`)
       }
     }
-    await renderDocumentPNG(doc('fallback', 'transparent'), [layer('unsupported', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { styles: { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('drop-shadow')] } })])
-    if (backend().backend !== 'legacy' || backend().reason !== 'text-style') throw new Error('Fallback editorial ausente')
+    await renderDocumentPNG(doc('fallback', 'transparent'), [layer('unsupported', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3, rotation: 30 }, { styles: { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('drop-shadow')] } })])
+    if (backend().backend !== 'legacy' || backend().reason !== 'source-transform-quality') throw new Error('Fallback editorial ausente')
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) throw new Error(`Paridade editorial: ${maxAlphaDifference}/${maxPremultipliedDifference}`)
     return { documents: fixtures.length, consumers: ['PNG', 'Blob', 'sample'], fallback: true,
       maxAlphaDifference, maxPremultipliedDifference, session: rustDocumentRendererStats() }
@@ -382,6 +382,45 @@ async function compareTextConsumer() {
         blendCases++
       }
     }
+    // Texto com estilo: raster da camada com estilos e matriz, a mesma semântica do legado, que é a referência.
+    const styledCases = []
+    for (const fontFamily of fonts) for (const [index, styled] of [
+      { effects: ['drop-shadow'], rotation: 0, blendMode: 'normal', background: 'white' },
+      { effects: ['stroke'], rotation: 90, blendMode: 'multiply', background: 'transparent' },
+      { effects: ['color-overlay', 'outer-glow'], rotation: 180, blendMode: 'normal', background: 'transparent' },
+      { fillOpacity: 40, effects: ['drop-shadow'], rotation: 0, blendMode: 'screen', background: 'white' }
+    ].entries()) {
+      const styles = { ...createLayerStyleConfig(), fillOpacity: styled.fillOpacity ?? 100,
+        effects: styled.effects.map(type => createDefaultLayerEffect(type)) }
+      const content = { ...DEFAULT_TEXT_LAYER, fontFamily, content: 'Axia 7', fontSize: 16, color: '#e04090', baseWidth: 60, baseHeight: 22 }
+      const text = layer(`text-styled-${styledCases.length}`, 'text', { text: content },
+        { x: 18, y: 13, width: 60, height: 22, rotation: styled.rotation }, { opacity: 80, blendMode: styled.blendMode, styles })
+      const rest = [rectangle('text-styled-back', '#30c060', { x: 0, y: 0, width: textWidth, height: textHeight, rotation: 0 },
+        { opacity: 43.7 }), layer('background', 'background', {}, undefined)]
+      styledCases.push({ id: `${fontFamily}/${index}`, spec: spec(`text-styled-document-${styledCases.length}`, styled.background),
+        layers: [text, ...rest], rest })
+    }
+    history.replaceState(null, '', original)
+    for (const item of styledCases) {
+      item.expected = await pixelsFromPng(await renderDocumentPNG(item.spec, item.layers), textWidth, textHeight)
+      item.withoutText = await pixelsFromPng(await renderDocumentPNG(item.spec, item.rest), textWidth, textHeight)
+    }
+    history.replaceState(null, '', enabled)
+    for (const item of styledCases) {
+      const actual = await pixelsFromPng(await renderDocumentPNG(item.spec, item.layers), textWidth, textHeight)
+      const backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+      if (backend.backend !== 'rust') throw new Error(`Texto com estilo ${item.id} em fallback: ${JSON.stringify(backend)}`)
+      let alpha = 0, color = 0, inked = 0
+      for (let i = 0; i < actual.length; i += 4) {
+        if ([0, 1, 2, 3].some(c => Math.abs(item.expected[i + c] - item.withoutText[i + c]) > 8)) inked++
+        alpha = Math.max(alpha, Math.abs(actual[i + 3] - item.expected[i + 3]))
+        for (let c = 0; c < 3; c++) color = Math.max(color,
+          Math.abs(actual[i + c] * actual[i + 3] / 255 - item.expected[i + c] * item.expected[i + 3] / 255))
+      }
+      if (inked < 20) throw new Error(`Texto com estilo ${item.id} sem tinta: ${inked}`)
+      if (alpha + color > maxAlphaDifference + maxPremultipliedDifference) worst = `estilo ${item.id}`
+      maxAlphaDifference = Math.max(maxAlphaDifference, alpha); maxPremultipliedDifference = Math.max(maxPremultipliedDifference, color)
+    }
     if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) {
       throw new Error(`Paridade de texto: ${maxAlphaDifference}/${maxPremultipliedDifference} (pior: ${worst})`)
     }
@@ -396,7 +435,7 @@ async function compareTextConsumer() {
         after.preparations - before.preparations !== 1 || after.reuses - before.reuses !== 2) {
       throw new Error(`Conta-gotas de texto não reutilizou a sessão: ${JSON.stringify({ before, after })}`)
     }
-    return { cases, blendCases, fonts: fonts.length, minInkedPixels, maxAlphaDifference, maxPremultipliedDifference, worst,
+    return { cases, blendCases, styledCases: styledCases.length, fonts: fonts.length, minInkedPixels, maxAlphaDifference, maxPremultipliedDifference, worst,
       alphaTolerance: 2, premultipliedTolerance: 3, sampleReuses: after.reuses - before.reuses }
   } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
 }
@@ -512,10 +551,10 @@ async function compareAppearanceConsumers() {
     await renderLayerAppearance(spec, rotated)
     const fallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
     if (fallback.backend !== 'legacy' || fallback.purpose !== 'layer' || fallback.reason !== 'source-transform-quality') throw new Error('Fallback de transformação da aparência ausente')
-    const text = layer('merge-text-fallback', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3 }, { styles: { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('drop-shadow')] } })
+    const text = layer('merge-text-fallback', 'text', { text: { ...DEFAULT_TEXT_LAYER, content: 'Axia' } }, { x: 1, y: 1, width: 3, height: 3, rotation: 30 }, { styles: { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('drop-shadow')] } })
     await renderMergedLayers(spec, [text])
     const textFallback = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
-    if (textFallback.backend !== 'legacy' || textFallback.purpose !== 'merge' || textFallback.reason !== 'text-style') throw new Error('Fallback textual de mesclagem ausente')
+    if (textFallback.backend !== 'legacy' || textFallback.purpose !== 'merge' || textFallback.reason !== 'source-transform-quality') throw new Error('Fallback textual de mesclagem ausente')
     const encode = HTMLCanvasElement.prototype.toBlob
     for (const rust of [false, true]) for (const purpose of ['layer', 'merge']) {
       history.replaceState(null, '', rust ? enabled : original)

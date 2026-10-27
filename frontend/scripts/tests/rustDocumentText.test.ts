@@ -6,7 +6,8 @@ import { createRustPixelPocRuntime } from '../../src/editor/rustPixelPocRuntime.
 import { prepareRustDocumentMedia } from '../../src/editor/rustDocumentMedia.ts'
 import { RustDocumentOffscreen, loadRustDocumentMedia } from '../../src/editor/rustDocumentOffscreen.ts'
 import { RustPixelPocWorkerClient } from '../../src/editor/rustPixelPocWorkerClient.ts'
-import { planRustDocumentText, type RustDocumentTextPixels, type RustDocumentTextSource } from '../../src/editor/rustDocumentText.ts'
+import { drawRustDocumentStyledText, planRustDocumentStyledText, planRustDocumentText, type RustDocumentTextPixels,
+  type RustDocumentTextSource } from '../../src/editor/rustDocumentText.ts'
 import { DEFAULT_TEXT_LAYER } from '../../src/editor/text.ts'
 import type { RustDocumentMediaInput, RustEditorialPlan } from '../../src/editor/rustDocumentEditorial.ts'
 import { createRustPixelWorkerHarness } from './support/rustPixelWorkerHarness.ts'
@@ -115,4 +116,47 @@ test('carga de mídia rasteriza texto na thread principal e desconta o saldo sem
       originX: source.originX, originY: source.originY, rgba: glyphs() }))
   assert.deepEqual(reads, [])
   assert.equal(result.layers[0]!.source.type, 'text-pixels')
+})
+
+function styledTextInput(rgba = glyphs(), overrides: Partial<RustDocumentMediaInput['layers'][number]> = {}): RustDocumentMediaInput {
+  return { documentWidth: 3, documentHeight: 2, width: 3, height: 2,
+    grid: { scaleX: 1, scaleY: 1, originX: 0, originY: 0 }, layers: [{
+      source: { type: 'styled-text-pixels', width: 2, height: 1, rgba }, patterns: {},
+      input: { sourceIdentity: 'text:caption', sourceWidth: 2, sourceHeight: 1,
+        styles: normalizeLayerStyleConfig({ fillOpacity: 50 }), globalLight: light, quality: 'final', resolutionScale: 1 },
+      matrix: [1, 0, 0, 1, 1, 1], opacity: 100, blendMode: 'normal', ...overrides }] }
+}
+
+test('texto com estilo segue o caminho de imagem: STG1 aplica o Fill e a matriz da camada posiciona', async () => {
+  const fixtures = installRustMediaFixtures(), runtime = await createRustPixelPocRuntime(wasm)
+  try {
+    const document = runtime.prepareDocumentPacket(await prepareRustDocumentMedia(styledTextInput(), () => {}), 1)
+    // Fill 50: alfa 128 → 64 e 255 → 128, aplicado pelo estágio de estilo, sem decoder nem Canvas.
+    assert.deepEqual([...runtime.composePreparedDocument(document.documentId, { x: 0, y: 0, width: 3, height: 2 }).rgba],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 64, 0, 0, 255, 128])
+    assert.equal(fixtures.state.decodes, 0); assert.equal(fixtures.state.canvases.length, 0)
+  } finally { fixtures.restore(); runtime.dispose() }
+})
+
+test('Worker não confia na geometria do raster de texto com estilo', async () => {
+  for (const request of [
+    styledTextInput(new ArrayBuffer(4)),
+    styledTextInput(glyphs(), { input: { ...styledTextInput().layers[0]!.input, sourceWidth: 3 } })
+  ]) await assert.rejects(prepareRustDocumentMedia(request, () => {}), /invalid-input/)
+})
+
+test('carga de mídia rasteriza o texto com estilo no referencial da camada, na escala do legado', async () => {
+  const { source } = planRustDocumentStyledText({ ...DEFAULT_TEXT_LAYER, content: 'Ab', fontFamily: 'Arial',
+    fontSize: 10, baseWidth: 20, baseHeight: 10 }, { x: 0.25, y: 0, width: 4, height: 2, rotation: 90 })
+  const calls: unknown[] = []
+  const canvas = (width: number, height: number) => ({ release() { calls.push('release') }, context: {
+    getImageData: () => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }),
+    scale: (x: number, y: number) => calls.push(['scale', x, y]), save() {}, restore() {}, translate() {}, beginPath() {},
+    rect() {}, clip() {}, fillText() {}, fillRect() {}, measureText: () => ({ width: 1 }), set font(_: string) {},
+    set fillStyle(_: string) {}, set textBaseline(_: string) {}, set textAlign(_: string) {}, set letterSpacing(_: string) {},
+    set globalAlpha(_: number) {}
+  } as never })
+  const pixelsOut = drawRustDocumentStyledText(source, canvas)
+  assert.deepEqual([pixelsOut.type, pixelsOut.width, pixelsOut.height], ['styled-text-pixels', 4, 2])
+  assert.deepEqual(calls.find(call => Array.isArray(call)), ['scale', 0.2, 0.2]); assert.equal(calls.at(-1), 'release')
 })

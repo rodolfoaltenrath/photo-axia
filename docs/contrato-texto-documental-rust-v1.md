@@ -50,8 +50,8 @@ opacidade 100, sem reamostrar — portanto sem depender da sonda da fatia 11.
 
 | Condição | Resultado | Motivo |
 | --- | --- | --- |
-| efeitos ou Fill < 100 | `text-style` | o legado manda esse texto por um raster de estilo reamostrado, não pelo desenho direto |
-| `Mesclar se` diferente do padrão | `text-style` | caminho separado no legado |
+| efeitos ou Fill < 100 | Rust (desde 2026-10-27), raster da camada | ver seção 4.1 |
+| `Mesclar se` diferente do padrão | Rust (desde 2026-10-27), raster da camada | ver seção 4.1 |
 | modo de mesclagem diferente de Normal | Rust (desde 2026-10-27) | mesclado uma vez, como o preview; ver seção 4 |
 | fonte de `@font-face` ainda carregando | `text-font-pending` | ver seção 5 |
 | camada `text` sem conteúdo | `non-image-layer` | inalterado |
@@ -80,6 +80,20 @@ divergindo nas sobreposições até ser removida. O oráculo browser confere 45
 casos (três fontes, três variantes com sublinhado, rotação e parágrafo, cinco
 modos) contra o documento sem o texto mais o texto isolado mesclado pelo Canvas,
 dentro da tolerância 2/3; o pior caso segue sendo de Normal (1/2,81).
+
+## 4.1 Texto com estilo, Fill ou `Mesclar se` (2026-10-27)
+
+O legado não desenha esse texto direto: `textStyleRasterPlan` cria um raster no
+referencial da camada, sem rotação, no tamanho de exibição; o Worker de estilos
+desenha o texto nele com `drawTextLayerContent` em `drawScale`, aplica os
+estilos e o resultado é desenhado com a matriz da camada, como uma imagem. O Rust
+repete essa semântica: o plano leva um descritor `styled-text` (sem pixels,
+identidade da sessão), a carga de mídia rasteriza na thread principal — onde vivem
+as fontes de `@font-face` — com a mesma chamada, e o Worker trata o raster como
+imagem com estilos, incluindo reamostragem e quartos de volta. Rotação arbitrária
+segue em fallback, como para imagens (`source-transform-quality`). Oráculo: 12
+casos (sombra, contorno, sobreposição de cor com brilho externo, Fill 40; 0°, 90°
+e 180°; Normal, Multiplicação e Tela) contra a exportação legada, dentro de 2/3.
 
 ## 5. Fontes ainda carregando
 

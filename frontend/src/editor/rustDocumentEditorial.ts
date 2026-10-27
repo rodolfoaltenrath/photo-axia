@@ -10,15 +10,15 @@ import { RustPixelPocError } from './rustPixelPocError.ts'
 import { RUST_DOCUMENT_SOURCE_BYTES } from './rustDocumentBudget.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
 import { planRustDocumentShape, type RustDocumentShapeSource } from './rustDocumentShape.ts'
-import { planRustDocumentText, rustDocumentTextFontsReady,
-  type RustDocumentTextPixels, type RustDocumentTextSource } from './rustDocumentText.ts'
+import { planRustDocumentStyledText, planRustDocumentText, rustDocumentTextFontsReady, type RustDocumentStyledTextPixels,
+  type RustDocumentStyledTextSource, type RustDocumentTextPixels, type RustDocumentTextSource } from './rustDocumentText.ts'
 import { rustRasterSamplingMode } from './rustDocumentSampling.ts'
 
 type Matrix = NonNullable<RustDocumentRasterLayer['sourceToDocument']>
 export type RustDocumentBoundsPolicy = 'document' | 'appearance'
 export interface RustEditorialLayer {
   source: { type: 'raster'; url: string } | { type: 'solid'; color: [number, number, number, number] } |
-    RustDocumentShapeSource | RustDocumentTextSource
+    RustDocumentShapeSource | RustDocumentTextSource | RustDocumentStyledTextSource
   input: RustPixelPocStyleSourceInput
   matrix: Matrix
   opacity: number
@@ -32,7 +32,7 @@ export interface RustEditorialPlan {
 export interface RustDocumentMediaInput extends Omit<RustEditorialPlan, 'layers'> {
   layers: (Omit<RustEditorialLayer, 'source'> & {
     source: { type: 'raster'; blob: Blob } | { type: 'solid'; color: [number, number, number, number] } |
-      RustDocumentShapeSource | RustDocumentTextPixels
+      RustDocumentShapeSource | RustDocumentTextPixels | RustDocumentStyledTextPixels
     patterns: Record<string, Blob>
   })[]
 }
@@ -91,6 +91,26 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       opacity: background.opacity * layerStyleFillOpacity(background.styles), blendMode: 'normal' })
   }
   let sourceBytes = 0, metadata = 0
+  /** Fonte raster com estilos e matriz da camada: imagem ou texto com estilo. */
+  function pushRaster(layer: LayerItem, transform: LayerTransform, source: RustEditorialLayer['source'],
+    sourceWidth: number, sourceHeight: number, sourceIdentity: string, resolutionScale: number, identity: object) {
+    const matrix = rustDocumentSourceMatrix(transform, sourceWidth, sourceHeight)
+    const resampled = !pixelAlignedSource(matrix)
+    // Ampliação e redução até 0,5 usam o bilinear compatível com Canvas; abaixo, a média de área.
+    const sampling = resampled ? rustRasterSamplingMode(matrix, result.grid, layer.blendMode) : undefined
+    if (resampled && !sampling) throw new RustDocumentUnsupported('source-transform-quality')
+    const styles = normalizeLayerStyleConfig(layer.styles)
+    metadata += rustPixelPocStyleMetadataBytes({ ...identity, styles })
+    if (metadata > 512 * 1024) throw new RustPixelPocError('memory-limit')
+    const input: RustPixelPocStyleSourceInput = { sourceIdentity, sourceWidth, sourceHeight, styles, globalLight: light,
+      quality: 'final', resolutionScale }
+    const layout = prepareRustStyleSourceLayout(input, 'document')
+    sourceBytes += layout.width * layout.height * 4
+    if (sourceBytes > RUST_DOCUMENT_SOURCE_BYTES || result.layers.length >= 32) throw new RustPixelPocError('memory-limit')
+    const [a, b, c, d, tx, ty] = matrix
+    result.layers.push({ source, input, matrix: [a, b, c, d, tx - shiftX, ty - shiftY], opacity: layer.opacity,
+      blendMode: layer.blendMode, ...(sampling ? { sampling } : {}) })
+  }
   for (const layer of [...layers].reverse()) {
     if (!layer.visible || !layer.transform || !styledLayerIntersectsBounds(layer, viewport, light)) continue
     if (!layer.image && layer.shape && !layer.text) {
@@ -114,12 +134,15 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     }
     if (!layer.image && layer.text && !layer.shape) {
       if (!Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 100) throw new RustPixelPocError('invalid-input')
-      // O legado só desenha texto direto, sem raster de estilo reamostrado, quando não há composição de estilo.
-      if (layerStyleNeedsCompositing(layer.styles) || !layerStyleBlendIfIsDefault(layer.styles.blendIf)) {
-        throw new RustDocumentUnsupported('text-style')
-      }
       // Texto é desenhado isolado e mesclado uma vez, como no preview (decisão do contrato de texto, seção 4).
       if (!rustDocumentTextFontsReady(layer.text)) throw new RustDocumentUnsupported('text-font-pending')
+      // Com composição de estilo o legado desenha o texto num raster da camada e o trata como imagem.
+      if (layerStyleNeedsCompositing(layer.styles) || !layerStyleBlendIfIsDefault(layer.styles.blendIf)) {
+        const styled = planRustDocumentStyledText(layer.text, layer.transform)
+        pushRaster(layer, layer.transform, styled.source, styled.source.width, styled.source.height, `text:${layer.id}`, styled.effectScale,
+          { id: layer.id, text: styled.source.text })
+        continue
+      }
       const transform = { ...layer.transform, x: layer.transform.x - shiftX, y: layer.transform.y - shiftY }
       const source = planRustDocumentText(layer.text, transform, result.documentWidth, result.documentHeight, layer.opacity / 100)
       if (!source) continue
@@ -135,24 +158,9 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     }
     if (!layer.image) throw new RustDocumentUnsupported('non-image-layer')
     const image = layer.image, transform = layer.transform
-    const matrix = rustDocumentSourceMatrix(transform, image.width, image.height)
-    const resampled = !pixelAlignedSource(matrix)
-    // Ampliação e redução até 0,5 usam o bilinear compatível com Canvas; abaixo, a média de área.
-    const sampling = resampled ? rustRasterSamplingMode(matrix, result.grid, layer.blendMode) : undefined
-    if (resampled && !sampling) throw new RustDocumentUnsupported('source-transform-quality')
-    const styles = normalizeLayerStyleConfig(layer.styles)
-    metadata += rustPixelPocStyleMetadataBytes({ id: layer.id, url: image.sourceUrl, styles })
-    if (metadata > 512 * 1024) throw new RustPixelPocError('memory-limit')
-    const input: RustPixelPocStyleSourceInput = { sourceIdentity: `${layer.id}:${image.editToken ?? ''}:${image.sourceUrl}`,
-      sourceWidth: image.width, sourceHeight: image.height, styles, globalLight: light, quality: 'final',
-      resolutionScale: 1 / Math.sqrt(transform.width / image.width * (transform.height / image.height)) }
-    const layout = prepareRustStyleSourceLayout(input, 'document')
-    sourceBytes += layout.width * layout.height * 4
-    if (sourceBytes > RUST_DOCUMENT_SOURCE_BYTES || result.layers.length >= 32) throw new RustPixelPocError('memory-limit')
-    const [a, b, c, d, tx, ty] = matrix
-    result.layers.push({ source: { type: 'raster', url: image.sourceUrl }, input,
-      matrix: [a, b, c, d, tx - shiftX, ty - shiftY], opacity: layer.opacity, blendMode: layer.blendMode,
-      ...(sampling ? { sampling } : {}) })
+    pushRaster(layer, transform, { type: 'raster', url: image.sourceUrl }, image.width, image.height,
+      `${layer.id}:${image.editToken ?? ''}:${image.sourceUrl}`,
+      1 / Math.sqrt(transform.width / image.width * (transform.height / image.height)), { id: layer.id, url: image.sourceUrl })
   }
   if (result.layers.some(layer => layer.sampling) && result.layers.some(layer => layerStyleBlendIfUsesUnderlying(layer.input.styles.blendIf))) {
     throw new RustDocumentUnsupported('source-transform-blend-if')

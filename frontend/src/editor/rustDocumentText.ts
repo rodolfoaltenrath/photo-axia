@@ -1,6 +1,6 @@
 import type { LayerTransform, TextLayerContent } from '../types/editor.ts'
 import { layerDocumentBounds } from './renderBounds.ts'
-import { drawTextLayerContent } from './textCanvas.ts'
+import { drawTextLayerContent, textStyleRasterPlan } from './textCanvas.ts'
 import { MAX_TEXT_FONT_FAMILY_LENGTH, textContentIsWithinLimits, textFont } from './text.ts'
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { RUST_DOCUMENT_SOURCE_BYTES } from './rustDocumentBudget.ts'
@@ -119,6 +119,57 @@ export function validateRustDocumentTextPixels(source: RustDocumentTextPixels, d
       source.originX + source.width > documentWidth || source.originY + source.height > documentHeight ||
       source.width * source.height * 4 > RUST_DOCUMENT_SOURCE_BYTES ||
       !(source.rgba instanceof ArrayBuffer) || source.rgba.byteLength !== source.width * source.height * 4) {
+    throw new RustPixelPocError('invalid-input')
+  }
+}
+
+/**
+ * Texto com estilo, Fill ou `Mesclar se`: como no legado (`textStyleRasterPlan`), o
+ * texto vira um raster no referencial da camada, sem rotação, que recebe os estilos e
+ * é desenhado com a matriz da camada — o mesmo caminho de uma imagem com estilo.
+ */
+export interface RustDocumentStyledTextSource {
+  type: 'styled-text'
+  text: TextLayerContent
+  width: number; height: number; drawScaleX: number; drawScaleY: number
+}
+
+export interface RustDocumentStyledTextPixels {
+  type: 'styled-text-pixels'
+  width: number; height: number
+  rgba: ArrayBuffer
+}
+
+export function planRustDocumentStyledText(text: TextLayerContent, transform: LayerTransform) {
+  if (!validText(text) || !transform ||
+      ![transform.width, transform.height].every(value => Number.isFinite(value) && value > 0)) {
+    throw new RustPixelPocError('invalid-input')
+  }
+  const plan = textStyleRasterPlan(text, transform)
+  if (plan.width * plan.height * 4 > RUST_DOCUMENT_SOURCE_BYTES) throw new RustPixelPocError('memory-limit')
+  const source: RustDocumentStyledTextSource = { type: 'styled-text', text: { ...text },
+    width: plan.width, height: plan.height, drawScaleX: plan.drawScaleX, drawScaleY: plan.drawScaleY }
+  return { source, effectScale: plan.effectScale }
+}
+
+/** Mesma sequência do `decodeRustStyleSource` do Worker de estilos legado, na thread das fontes. */
+export function drawRustDocumentStyledText(source: RustDocumentStyledTextSource,
+  createCanvas: RustDocumentTextCanvas = documentTextCanvas): RustDocumentStyledTextPixels {
+  const { context, release } = createCanvas(source.width, source.height)
+  try {
+    drawTextLayerContent(context, source.text, { x: source.drawScaleX, y: source.drawScaleY })
+    const pixels = context.getImageData(0, 0, source.width, source.height)
+    if (pixels.width !== source.width || pixels.height !== source.height ||
+        pixels.data.byteLength !== source.width * source.height * 4) throw new RustPixelPocError('wasm-failure')
+    return { type: 'styled-text-pixels', width: source.width, height: source.height, rgba: pixels.data.buffer as ArrayBuffer }
+  } finally { release() }
+}
+
+export function validateRustDocumentStyledTextPixels(source: RustDocumentStyledTextPixels, width: number, height: number) {
+  if (!source || source.width !== width || source.height !== height ||
+      ![width, height].every(value => Number.isSafeInteger(value) && value > 0 && value <= 16384) ||
+      width * height * 4 > RUST_DOCUMENT_SOURCE_BYTES ||
+      !(source.rgba instanceof ArrayBuffer) || source.rgba.byteLength !== width * height * 4) {
     throw new RustPixelPocError('invalid-input')
   }
 }

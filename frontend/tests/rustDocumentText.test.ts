@@ -33,17 +33,23 @@ test('texto Normal sem estilos entra no plano como descritor 1:1 com opacidade i
   assert.equal(entry.source.text.content, 'Ab'); assert.equal(entry.source.transform.x, 1.25)
 })
 
-test('estilo, Fill e Blend If mantêm o texto no fallback explícito; modos de mesclagem entram', () => {
-  const effect = createDefaultLayerEffect('drop-shadow')
-  for (const [overrides, reason] of [
-    [{ styles: styles({ fillOpacity: 50 }) }, 'text-style'],
-    [{ styles: styles({ effects: [effect] }) }, 'text-style']
-  ] as const) {
-    assert.throws(() => planRustEditorialDocument(document, [textLayer(overrides)], 8, 6, viewport),
-      (error: unknown) => error instanceof RustDocumentUnsupported && error.reason === reason)
+test('estilo, Fill e Blend If levam o texto ao raster da camada; modos de mesclagem entram', () => {
+  const effect = createDefaultLayerEffect('drop-shadow'), blendIf = styles(); blendIf.blendIf.thisLayer.shadows = [10, 10]
+  for (const layerStyles of [styles({ fillOpacity: 50 }), styles({ effects: [effect] }), blendIf]) {
+    const entry = planRustEditorialDocument(document, [textLayer({ styles: layerStyles, opacity: 63.7, blendMode: 'screen' })],
+      8, 6, viewport).layers[0]!
+    // Como o legado (textStyleRasterPlan): raster no tamanho de exibição, sem rotação, com a matriz da camada.
+    assert.equal(entry.source.type, 'styled-text')
+    if (entry.source.type !== 'styled-text') throw new Error('fonte ausente')
+    assert.deepEqual([entry.source.width, entry.source.height], [4, 2])
+    assert.deepEqual([entry.source.drawScaleX, entry.source.drawScaleY], [4 / 20, 2 / 12])
+    assert.equal(entry.input.sourceWidth, 4); assert.equal(entry.input.styles.fillOpacity, layerStyles.fillOpacity)
+    assert.equal(entry.opacity, 63.7); assert.equal(entry.blendMode, 'screen')
+    assert.deepEqual(entry.matrix.map(value => value + 0), [1, 0, 0, 1.2, 1.25, 0.5]); assert.equal(entry.sampling, 'raster-bilinear-precise')
   }
-  const blendIf = styles(); blendIf.blendIf.thisLayer.shadows = [10, 10]
-  assert.throws(() => planRustEditorialDocument(document, [textLayer({ styles: blendIf })], 8, 6, viewport), /text-style/)
+  // Rotação arbitrária de raster continua fora, como para imagens.
+  assert.throws(() => planRustEditorialDocument(document, [textLayer({ styles: styles({ fillOpacity: 50 }),
+    transform: transform({ x: 1, y: 1, width: 4, height: 2, rotation: 30 }) })], 8, 6, viewport), /source-transform-quality/)
   // Mesclado uma vez sobre o fundo, como o preview: o modo vai no registro, a opacidade no raster.
   for (const blendMode of ['multiply', 'screen', 'overlay', 'darken', 'lighten'] as const) {
     const entry = planRustEditorialDocument(document, [textLayer({ blendMode, opacity: 40 })], 8, 6, viewport).layers[0]!
