@@ -15,7 +15,26 @@ decisão ficam nos contratos em `docs/`, principalmente
   oráculos de documento e de reamostragem no Edge headless, smoke Wails 2/2 e
   `benchmark:rust-media-wails` com a foto de 12 MP igual byte a byte à fonte.
 
-## 2. Próximos passos, em ordem
+## 2. Decisão de 2026-10-27: substituir, não conviver
+
+Com os dois caminhos vivos não dá para saber se algo funciona por causa do Rust ou
+do legado. A ordem combinada:
+
+1. **Bloco 1 — fechar todas as lacunas que hoje caem no legado** (sem legado não
+   haverá fallback). Feito: texto em modos de mesclagem (semântica do preview,
+   `19311e9`), texto com efeitos (`135f654`), forma e fundo com efeitos
+   (`0d54ef4`). Faltam, nesta ordem: rotação arbitrária
+   (`source-transform-quality`), saída em escala diferente de 1:1 e origem
+   fracionária (`output-scale-or-size`, `output-grid-quality`), reamostragem com
+   `Mesclar se` de baixo (`source-transform-blend-if`), objetos inteligentes/PDF
+   e miniaturas (`non-image-layer`, propósitos `smart`/`thumbnail`), fotos de
+   24 MP e camadas grandes com efeitos.
+2. **Bloco 2 — C4**, preview ao vivo em superfície única (detalhes abaixo).
+3. **Bloco 3 — Rust como padrão.**
+4. **Teste de fogo do usuário**, depois **remoção do legado**; bugs são corrigidos
+   conforme relatados, sem período longo de convivência.
+
+## 3. Próximos passos — detalhes
 
 1. **C4 — preview ao vivo em superfície única.** É a migração visível ao usuário
    e ainda não começou. Agora que fotos comuns cabem no consumidor, deixou de
@@ -44,7 +63,7 @@ decisão ficam nos contratos em `docs/`, principalmente
    `npm run record:canvas-references -- --target webview2 --suite resampling`
    (e `--suite minification`) e rodar `scripts/tests/rustRasterParity.test.ts`.
 
-## 3. Lembretes do ambiente
+## 4. Lembretes do ambiente
 
 - Commits deste repositório não levam linha `Co-Authored-By`.
 - No Windows, usar `npm.cmd` no PowerShell.
