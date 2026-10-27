@@ -8,7 +8,8 @@ import { prepareRustStyleStages, type RustPixelPocStagesPlan } from './rustPixel
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { RUST_DOCUMENT_ENCODED_BYTES, RUST_DOCUMENT_SOURCE_BYTES } from './rustDocumentBudget.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
-import { drawRustDocumentShape, validateRustDocumentShape } from './rustDocumentShape.ts'
+import { drawRustDocumentShape, drawRustDocumentStyledShape, validateRustDocumentShape,
+  validateRustDocumentStyledShape } from './rustDocumentShape.ts'
 import { validateRustDocumentStyledTextPixels, validateRustDocumentTextPixels } from './rustDocumentText.ts'
 import { activeLayerStyleEffects } from './layerStyleCompositor.ts'
 import { layerStyleBlendIfIsDefault } from './layerStyles.ts'
@@ -25,7 +26,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
   if (rustPixelPocStyleMetadataBytes(input) > 1024 * 1024) throw new RustPixelPocError('memory-limit')
   let encoded = 0, padded = 0
   const layouts = input.layers.map(layer => {
-    if (layer.sampling !== undefined && (layer.source.type !== 'raster' && layer.source.type !== 'styled-text-pixels' ||
+    if (layer.sampling !== undefined && (!['raster', 'styled-text-pixels', 'styled-shape'].includes(layer.source.type) ||
         !['raster-bilinear', 'raster-bilinear-precise', 'raster-area'].includes(layer.sampling) ||
         !Array.isArray(layer.matrix) || !rustRasterSamplingSupported(layer.matrix, input.grid, layer.sampling))) throw new RustPixelPocError('invalid-input')
     const layout = prepareRustStyleSourceLayout(layer.input, 'document')
@@ -38,6 +39,8 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
       // Raster da camada, sem rotação: estilos, opacidade e matriz seguem o caminho de imagem.
       validateRustDocumentStyledTextPixels(layer.source, layer.input.sourceWidth, layer.input.sourceHeight)
       encoded += layer.source.rgba.byteLength
+    } else if (layer.source.type === 'styled-shape') {
+      validateRustDocumentStyledShape(layer.source, layer.input.sourceWidth, layer.input.sourceHeight)
     } else if (layer.source.type === 'shape') {
       const source = layer.source, matrix = [1, 0, 0, 1, source.originX, source.originY]
       validateRustDocumentShape(source, input.documentWidth, input.documentHeight)
@@ -78,6 +81,7 @@ export async function prepareRustDocumentMedia(input: RustDocumentMediaInput, ch
     }
     const source = layer.source.type === 'raster' ? await decodeRustStyleSource(layer.source, layout, check) :
       layer.source.type === 'shape' ? drawRustDocumentShape(layer.source, check) :
+      layer.source.type === 'styled-shape' ? drawRustDocumentStyledShape(layer.source, check) :
       layer.source.type === 'text-pixels' || layer.source.type === 'styled-text-pixels'
         ? { width: layer.source.width, height: layer.source.height, data: new Uint8ClampedArray(layer.source.rgba) }
         : { width: 1, height: 1, data: new Uint8ClampedArray(layer.source.color) }

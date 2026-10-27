@@ -67,6 +67,78 @@ async function pixelsFromPng(dataUrl, readWidth = width, readHeight = height) {
   return [...context.getImageData(0, 0, readWidth, readHeight).data]
 }
 
+async function compareStyledShapeConsumer() {
+  const { disposeRustDocumentRenderer } = await import('../src/services/rustDocumentRenderer.ts')
+  const { traceShapePath } = await import('../src/editor/shape.ts')
+  const original = location.href, enabled = new URL(original); enabled.searchParams.set('axiaRustDocument', '1')
+  const docWidth = 96, docHeight = 64
+  const spec = (id, background) => ({ ...doc(id, background), width: docWidth, height: docHeight,
+    physicalWidth: docWidth, physicalHeight: docHeight })
+  // Sem referência legada (a exportação recusa efeitos em forma): o legado renderiza uma imagem com
+  // os mesmos pixels da forma no referencial da camada, a mesma transformação e os mesmos estilos.
+  function shapeImage(shape, rasterWidth, rasterHeight) {
+    const canvas = document.createElement('canvas'); canvas.width = rasterWidth; canvas.height = rasterHeight
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    context.scale(rasterWidth / shape.baseWidth, rasterHeight / shape.baseHeight)
+    traceShapePath(context, { x: 0, y: 0, width: shape.baseWidth, height: shape.baseHeight }, shape)
+    context.fillStyle = shape.color; context.fill()
+    return { width: rasterWidth, height: rasterHeight, mimeType: 'image/png', sourceUrl: canvas.toDataURL('image/png') }
+  }
+  const cases = []
+  for (const [index, item] of [
+    { kind: 'rectangle', cornerRadius: 6, effects: ['drop-shadow'], rotation: 0, blendMode: 'normal', fill: 100 },
+    { kind: 'ellipse', effects: ['stroke'], rotation: 90, blendMode: 'multiply', fill: 60 },
+    { kind: 'star', effects: ['inner-shadow', 'color-overlay'], rotation: 0, blendMode: 'normal', fill: 100 },
+    { kind: 'triangle', effects: ['outer-glow'], rotation: 180, blendMode: 'screen', fill: 100 },
+    { kind: 'rectangle', blendIf: true, effects: [], rotation: 0, blendMode: 'normal', fill: 100 }
+  ].entries()) {
+    const styles = { ...createLayerStyleConfig(), fillOpacity: item.fill, effects: item.effects.map(type => createDefaultLayerEffect(type)) }
+    if (item.blendIf) styles.blendIf.thisLayer.highlights = [120, 200]
+    const shape = { kind: item.kind, color: '#e04090', cornerRadius: item.cornerRadius ?? 0, squareness: 0, starPoints: 5,
+      starInnerRatio: 50, baseWidth: 80, baseHeight: 40 }
+    const transform = { x: 20, y: 12, width: 48, height: 32, rotation: item.rotation }
+    const back = rectangle('styled-shape-back', '#30c060', { x: 0, y: 0, width: docWidth, height: docHeight, rotation: 0 }, { opacity: 43.7 })
+    const options = { opacity: 80, blendMode: item.blendMode, styles }
+    cases.push({ id: `${item.kind}/${index}`, spec: spec(`styled-shape-${index}`, index % 2 ? 'white' : 'transparent'),
+      actual: [layer(`styled-shape-${index}`, 'shape', { shape }, transform, options), back, layer('background', 'background', {}, undefined)],
+      reference: [layer(`styled-shape-image-${index}`, 'pixel', { image: shapeImage(shape, 48, 32) }, transform, options), back,
+        layer('background', 'background', {}, undefined)] })
+  }
+  // Fundo preto com sombra interna: imagem preta do tamanho do documento com o mesmo estilo.
+  const backgroundStyles = { ...createLayerStyleConfig(), effects: [createDefaultLayerEffect('inner-shadow')] }
+  const blackShape = { kind: 'rectangle', color: '#000000', cornerRadius: 0, squareness: 0, starPoints: 5, starInnerRatio: 50,
+    baseWidth: docWidth, baseHeight: docHeight }
+  cases.push({ id: 'background', spec: spec('styled-background', 'black'),
+    actual: [layer('background', 'background', {}, undefined, { styles: backgroundStyles })],
+    reference: [layer('styled-background-image', 'pixel', { image: shapeImage(blackShape, docWidth, docHeight) },
+      { x: 0, y: 0, width: docWidth, height: docHeight, rotation: 0 }, { styles: backgroundStyles })], referenceSpec: spec('styled-background-ref', 'transparent') })
+  let maxAlphaDifference = 0, maxPremultipliedDifference = 0, worst = ''
+  try {
+    history.replaceState(null, '', original)
+    for (const item of cases) {
+      item.expected = await pixelsFromPng(await renderDocumentPNG(item.referenceSpec ?? item.spec, item.reference), docWidth, docHeight)
+    }
+    history.replaceState(null, '', enabled)
+    for (const item of cases) {
+      const actual = await pixelsFromPng(await renderDocumentPNG(item.spec, item.actual), docWidth, docHeight)
+      const backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+      if (backend.backend !== 'rust') throw new Error(`Forma com estilo ${item.id} em fallback: ${JSON.stringify(backend)}`)
+      let alpha = 0, color = 0
+      for (let i = 0; i < actual.length; i += 4) {
+        alpha = Math.max(alpha, Math.abs(actual[i + 3] - item.expected[i + 3]))
+        for (let c = 0; c < 3; c++) color = Math.max(color,
+          Math.abs(actual[i + c] * actual[i + 3] / 255 - item.expected[i + c] * item.expected[i + 3] / 255))
+      }
+      if (alpha + color > maxAlphaDifference + maxPremultipliedDifference) worst = item.id
+      maxAlphaDifference = Math.max(maxAlphaDifference, alpha); maxPremultipliedDifference = Math.max(maxPremultipliedDifference, color)
+    }
+    if (maxAlphaDifference > 2 || maxPremultipliedDifference > 3) {
+      throw new Error(`Paridade de forma com estilo: ${maxAlphaDifference}/${maxPremultipliedDifference} (pior: ${worst})`)
+    }
+    return { cases: cases.length, maxAlphaDifference, maxPremultipliedDifference, worst, alphaTolerance: 2, premultipliedTolerance: 3 }
+  } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
+}
+
 async function renderCases() {
   const background = layer('background', 'background', {}, undefined)
   const shapeLayers = [
@@ -583,6 +655,7 @@ try {
   const rustText = await compareTextConsumer()
   const rustSessionEpoch = await verifyDocumentSessionEpoch()
   const rustAppearance = await compareAppearanceConsumers()
+  const rustStyledShapes = await compareStyledShapeConsumer()
   if (new URLSearchParams(location.search).has('record')) {
     result.textContent = JSON.stringify({ status: 'record', width, height, cases })
   } else {
@@ -621,7 +694,7 @@ try {
           errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)
         }
       }
-      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustText, rustSessionEpoch, rustAppearance })
+      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustText, rustSessionEpoch, rustAppearance, rustStyledShapes })
     }
   }
 } catch (error) {

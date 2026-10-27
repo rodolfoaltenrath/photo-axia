@@ -102,11 +102,19 @@ estrela, resize não uniforme, rotação e bounds fracionários. As APIs já lig
 de PNG/Blob, exportação elegível e conta-gotas podem usar essas formas junto
 de imagens e fundo sintético.
 
-Efeitos e `Blend If` em forma vetorial continuam fora desta integração, como no
-compositor anterior. O planner retorna `shape-style` e o fallback conserva a
-validação/rejeição existente; esta fatia não habilita uma feature editorial nova
-de estilos vetoriais. Texto permanece no caminho anterior. O caso explícito de
-fallback do oráculo passa a usar texto, pois forma simples agora é elegível.
+**Efeitos e `Mesclar se` em forma e no fundo (2026-10-27).** O compositor
+anterior recusa esses estilos na exportação (`LayerStyleUnsupportedEffectError`)
+e o preview desenha a forma como SVG sem eles; não há referência legada. O Rust
+dá a eles a semântica de imagem e de texto com estilo: a forma vira um raster no
+referencial da camada, sem rotação, no tamanho de exibição (`textStyleRasterPlan`),
+desenhado no Worker com alfa 1 (Fill vem do STG1), recebe os estilos e é composto
+com a matriz da camada — reamostragem e quartos de volta incluídos, rotação
+arbitrária em fallback. O fundo sintético com estilo é um retângulo do tamanho do
+documento pelo mesmo caminho. O oráculo compara com o legado renderizando uma
+**imagem** com os mesmos pixels, transformação e estilos: 6 casos (quatro tipos,
+sombra, contorno, sombra interna com sobreposição, brilho externo, `Mesclar se`,
+0°/90°/180°, três modos, fundo preto com sombra interna), máximo 1/2,34. Quando
+o preview passar a ser o compositor Rust (C4), os efeitos aparecerão também na tela.
 
 Escala de saída diferente de 1:1, minificação de imagem, texto/fontes, demais
 consumidores, sessão persistente/admission e superfície única C4 continuam gates.

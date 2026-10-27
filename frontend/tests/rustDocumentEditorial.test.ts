@@ -5,9 +5,10 @@ import { rustStylePreviewEnabled } from '../src/editor/rustStylePreviewProtocol.
 import { layer, image, transform, styles } from './editorTestFixtures.ts'
 import type { DocumentSpec } from '../src/types/editor.ts'
 import { DEFAULT_SHAPE_CONFIG } from '../src/editor/shape.ts'
-import { planRustDocumentShape, validateRustDocumentShape } from '../src/editor/rustDocumentShape.ts'
+import { planRustDocumentShape, planRustDocumentStyledShape, validateRustDocumentShape,
+  validateRustDocumentStyledShape } from '../src/editor/rustDocumentShape.ts'
 import { layerAppearanceRenderPlan } from '../src/services/renderDocument.ts'
-import { normalizeLayerStyleConfig } from '../src/editor/layerStyles.ts'
+import { createDefaultLayerEffect, normalizeLayerStyleConfig } from '../src/editor/layerStyles.ts'
 
 const document: DocumentSpec = { id: 'doc', name: 'doc', width: 8, height: 6, unit: 'px',
   physicalWidth: 8, physicalHeight: 6, resolutionDpi: 72, colorSpace: 'srgb', background: 'transparent',
@@ -81,11 +82,20 @@ test('bounds de forma são inteiros e recortados no documento, não no tile do c
   assert.equal(source.type, 'shape'); if (source.type === 'shape') assert.deepEqual([source.width, source.height], [4, 4])
 })
 
-test('efeitos/Blend If de forma permanecem explícitos no fallback; dimensão/cor inválidas não alocam', () => {
-  const shape = { ...DEFAULT_SHAPE_CONFIG, baseWidth: 4, baseHeight: 4 }
-  const item = layer({ kind: 'shape', shape, transform: transform({ width: 4, height: 4 }) })
+test('forma e fundo com efeitos/Blend If viram raster da camada; dimensão/cor inválidas não alocam', () => {
+  const shape = { ...DEFAULT_SHAPE_CONFIG, baseWidth: 8, baseHeight: 8 }
+  const item = layer({ kind: 'shape', shape, transform: transform({ x: 1, width: 4, height: 4 }), opacity: 63.7 })
   item.styles.blendIf.thisLayer.shadows = [0, 128]
-  assert.throws(() => planRustEditorialDocument(document, [item], 8, 6, viewport), /shape-style/)
+  const entry = planRustEditorialDocument(document, [item], 8, 6, viewport).layers[0]!
+  assert.equal(entry.source.type, 'styled-shape'); assert.equal(entry.opacity, 63.7)
+  if (entry.source.type !== 'styled-shape') throw new Error('fonte ausente')
+  assert.deepEqual([entry.source.width, entry.source.height, entry.source.drawScaleX], [4, 4, 0.5])
+  assert.deepEqual(entry.matrix.map(value => value + 0), [1, 0, 0, 1, 1, 0])
+  const background = layer({ id: 'background', kind: 'background', styles: styles({ effects: [createDefaultLayerEffect('inner-shadow')] }) })
+  const backdrop = planRustEditorialDocument({ ...document, background: 'black' }, [background], 8, 6, viewport).layers[0]!
+  assert.equal(backdrop.source.type, 'styled-shape')
+  if (backdrop.source.type !== 'styled-shape') throw new Error('fundo ausente')
+  assert.deepEqual([backdrop.source.width, backdrop.source.height, backdrop.source.shape.color], [8, 6, '#000000'])
   item.styles = styles({ fillOpacity: 37 }); item.opacity = 125
   assert.throws(() => planRustEditorialDocument(document, [item], 8, 6, viewport), /invalid-input/)
   assert.throws(() => planRustDocumentShape({ ...shape, color: 'red' }, item.transform!, 8, 6, 1), /invalid-input/)
@@ -223,4 +233,14 @@ test('redução escolhe bilinear até 0,5, média de área abaixo e recusa o que
   // Redução forte num eixo com ampliação no outro, e rotação arbitrária na redução.
   assert.throws(() => planRustEditorialDocument(document, [sized(0.5, 8)], 8, 6, viewport), /source-transform-quality/)
   assert.throws(() => planRustEditorialDocument(document, [sized(0.6, 0.6, 30)], 8, 6, viewport), /source-transform-quality/)
+})
+
+test('Worker não confia na geometria da forma com estilo', () => {
+  const { source } = planRustDocumentStyledShape({ ...DEFAULT_SHAPE_CONFIG, baseWidth: 8, baseHeight: 4 }, { width: 4, height: 2 })
+  assert.doesNotThrow(() => validateRustDocumentStyledShape(source, 4, 2))
+  assert.throws(() => validateRustDocumentStyledShape(source, 5, 2), /invalid-input/)
+  assert.throws(() => validateRustDocumentStyledShape({ ...source, drawScaleX: 2 }, 4, 2), /invalid-input/)
+  assert.throws(() => validateRustDocumentStyledShape({ ...source, shape: { ...source.shape, color: 'red' } }, 4, 2), /invalid-input/)
+  assert.throws(() => planRustDocumentStyledShape({ ...DEFAULT_SHAPE_CONFIG, baseWidth: 1, baseHeight: 1 },
+    { width: 4096, height: 4096 }), /memory-limit/)
 })

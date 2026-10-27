@@ -9,7 +9,9 @@ import type { RustDocumentRasterLayer, RustDocumentOutputGrid } from './rustDocu
 import { RustPixelPocError } from './rustPixelPocError.ts'
 import { RUST_DOCUMENT_SOURCE_BYTES } from './rustDocumentBudget.ts'
 import { rustPixelPocStyleMetadataBytes } from './rustPixelPocStyleInput.ts'
-import { planRustDocumentShape, type RustDocumentShapeSource } from './rustDocumentShape.ts'
+import { planRustDocumentShape, planRustDocumentStyledShape, type RustDocumentShapeSource,
+  type RustDocumentStyledShapeSource } from './rustDocumentShape.ts'
+import { DEFAULT_SHAPE_CONFIG } from './shape.ts'
 import { planRustDocumentStyledText, planRustDocumentText, rustDocumentTextFontsReady, type RustDocumentStyledTextPixels,
   type RustDocumentStyledTextSource, type RustDocumentTextPixels, type RustDocumentTextSource } from './rustDocumentText.ts'
 import { rustRasterSamplingMode } from './rustDocumentSampling.ts'
@@ -18,7 +20,7 @@ type Matrix = NonNullable<RustDocumentRasterLayer['sourceToDocument']>
 export type RustDocumentBoundsPolicy = 'document' | 'appearance'
 export interface RustEditorialLayer {
   source: { type: 'raster'; url: string } | { type: 'solid'; color: [number, number, number, number] } |
-    RustDocumentShapeSource | RustDocumentTextSource | RustDocumentStyledTextSource
+    RustDocumentShapeSource | RustDocumentTextSource | RustDocumentStyledTextSource | RustDocumentStyledShapeSource
   input: RustPixelPocStyleSourceInput
   matrix: Matrix
   opacity: number
@@ -32,7 +34,7 @@ export interface RustEditorialPlan {
 export interface RustDocumentMediaInput extends Omit<RustEditorialPlan, 'layers'> {
   layers: (Omit<RustEditorialLayer, 'source'> & {
     source: { type: 'raster'; blob: Blob } | { type: 'solid'; color: [number, number, number, number] } |
-      RustDocumentShapeSource | RustDocumentTextPixels | RustDocumentStyledTextPixels
+      RustDocumentShapeSource | RustDocumentTextPixels | RustDocumentStyledTextPixels | RustDocumentStyledShapeSource
     patterns: Record<string, Blob>
   })[]
 }
@@ -78,18 +80,6 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
   const result: RustEditorialPlan = { documentWidth: boundsPolicy === 'appearance' ? width : document.width,
     documentHeight: boundsPolicy === 'appearance' ? height : document.height,
     width, height, grid: { scaleX: 1, scaleY: 1, originX: viewport.x - shiftX, originY: viewport.y - shiftY }, layers: [] }
-  const background = layers.find(layer => layer.kind === 'background')
-  if (background?.visible && !background.image && document.background !== 'transparent') {
-    if (activeLayerStyleEffects(background.styles).length || !layerStyleBlendIfIsDefault(background.styles.blendIf)) {
-      throw new RustDocumentUnsupported('background-style')
-    }
-    const color = document.background === 'black' ? 0 : 255
-    result.layers.push({ source: { type: 'solid', color: [color, color, color, 255] },
-      input: { sourceIdentity: 'document-background', sourceWidth: 1, sourceHeight: 1,
-        styles: normalizeLayerStyleConfig({}), globalLight: light },
-      matrix: [document.width, 0, 0, document.height, 0 - shiftX, 0 - shiftY],
-      opacity: background.opacity * layerStyleFillOpacity(background.styles), blendMode: 'normal' })
-  }
   let sourceBytes = 0, metadata = 0
   /** Fonte raster com estilos e matriz da camada: imagem ou texto com estilo. */
   function pushRaster(layer: LayerItem, transform: LayerTransform, source: RustEditorialLayer['source'],
@@ -111,12 +101,32 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     result.layers.push({ source, input, matrix: [a, b, c, d, tx - shiftX, ty - shiftY], opacity: layer.opacity,
       blendMode: layer.blendMode, ...(sampling ? { sampling } : {}) })
   }
+  const background = layers.find(layer => layer.kind === 'background')
+  if (background?.visible && !background.image && document.background !== 'transparent') {
+    const color = document.background === 'black' ? 0 : 255
+    // Fundo com estilo: retângulo do tamanho do documento pelo caminho de forma com estilo.
+    if (activeLayerStyleEffects(background.styles).length || !layerStyleBlendIfIsDefault(background.styles.blendIf)) {
+      const transform = { x: 0, y: 0, width: document.width, height: document.height, rotation: 0 }
+      const styled = planRustDocumentStyledShape({ ...DEFAULT_SHAPE_CONFIG, kind: 'rectangle', cornerRadius: 0,
+        color: color ? '#ffffff' : '#000000', baseWidth: document.width, baseHeight: document.height }, transform)
+      pushRaster({ ...background, blendMode: 'normal' }, transform, styled.source, styled.source.width, styled.source.height,
+        'document-background', styled.effectScale, { id: background.id, shape: styled.source.shape })
+    } else result.layers.push({ source: { type: 'solid', color: [color, color, color, 255] },
+      input: { sourceIdentity: 'document-background', sourceWidth: 1, sourceHeight: 1,
+        styles: normalizeLayerStyleConfig({}), globalLight: light },
+      matrix: [document.width, 0, 0, document.height, 0 - shiftX, 0 - shiftY],
+      opacity: background.opacity * layerStyleFillOpacity(background.styles), blendMode: 'normal' })
+  }
   for (const layer of [...layers].reverse()) {
     if (!layer.visible || !layer.transform || !styledLayerIntersectsBounds(layer, viewport, light)) continue
     if (!layer.image && layer.shape && !layer.text) {
       if (!Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 100) throw new RustPixelPocError('invalid-input')
+      // Com efeitos ou Mesclar se a forma vira raster da camada com estilos, como texto com estilo.
       if (activeLayerStyleEffects(layer.styles).length || !layerStyleBlendIfIsDefault(layer.styles.blendIf)) {
-        throw new RustDocumentUnsupported('shape-style')
+        const styled = planRustDocumentStyledShape(layer.shape, layer.transform)
+        pushRaster(layer, layer.transform, styled.source, styled.source.width, styled.source.height, `shape:${layer.id}`,
+          styled.effectScale, { id: layer.id, shape: styled.source.shape })
+        continue
       }
       const transform = { ...layer.transform, x: layer.transform.x - shiftX, y: layer.transform.y - shiftY }
       const source = planRustDocumentShape(layer.shape, transform, result.documentWidth, result.documentHeight,
