@@ -218,13 +218,13 @@ test('adapter editorial: bilinear axial, cobertura na rotação arbitrária, ori
   }
 })
 
-test('reamostragem com dependência de Blend If inferior exige gate documental, não apenas da camada atual', () => {
+test('Blend If inferior combina com reamostragem e rotação: o filtro lê o RGBA8 documental da amostra', () => {
   const lower = picture(), upper = picture()
-  lower.transform!.x = 0.25
+  lower.transform!.x = 0.25; upper.transform!.rotation = 33
   upper.styles.blendIf.underlyingLayer.shadows = [128, 128]
-  assert.throws(() => planRustEditorialDocument(document, [upper, lower], 8, 6, viewport), /source-transform-blend-if/)
-  lower.transform!.x = 0
-  assert.equal(planRustEditorialDocument(document, [upper, lower], 8, 6, viewport).layers.length, 2)
+  const plan = planRustEditorialDocument(document, [upper, lower], 8, 6, viewport)
+  assert.equal(plan.layers[0]!.sampling, 'raster-bilinear'); assert.equal(plan.layers[1]!.sampling, undefined)
+  assert.deepEqual(plan.layers[1]!.input.styles.blendIf.underlyingLayer.shadows, [128, 128])
 })
 
 test('precisão raster é explícita por caminho de desenho e participa do snapshot', () => {

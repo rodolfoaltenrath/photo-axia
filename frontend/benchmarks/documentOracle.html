@@ -192,6 +192,52 @@ async function compareScaledExport() {
   } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
 }
 
+async function compareResampledUnderlying() {
+  const { disposeRustDocumentRenderer } = await import('../src/services/rustDocumentRenderer.ts')
+  const { rustRotationPixelClasses, rustRotationDifference } = await import('../src/editor/rustDocumentRotationDiagnostic.ts')
+  const { rustDocumentSourceMatrix } = await import('../src/editor/rustDocumentEditorial.ts')
+  const original = location.href, enabled = new URL(original); enabled.searchParams.set('axiaRustDocument', '1')
+  const docWidth = 12, docHeight = 10, spec = { ...doc('resampled-underlying', 'transparent'), width: docWidth, height: docHeight,
+    physicalWidth: docWidth, physicalHeight: docHeight }
+  const cases = []
+  for (const transform of [
+    { x: 3.25, y: 1.75, width: 2, height: 2, rotation: 0 }, { x: 2, y: 1, width: 5, height: 5, rotation: 0 },
+    { x: 2.25, y: 1.25, width: 6, height: 3, rotation: 90 }, { x: 2.5, y: 1.5, width: 6, height: 4, rotation: 33 }
+  ]) for (const channel of ['gray', 'red']) for (const mode of ['normal', 'multiply', 'screen']) {
+    const styles = createLayerStyleConfig()
+    styles.blendIf.channel = channel; styles.blendIf.underlyingLayer = { shadows: [0, 128], highlights: [200, 255] }
+    const upper = imageLayer(`resampled-upper-${cases.length}`, [240, 50, 130, 101, 20, 210, 70, 203, 120, 100, 230, 255, 240, 50, 130, 3],
+      { opacity: 63.7, blendMode: mode, styles })
+    upper.transform = { ...transform }
+    const lower = layer(`resampled-lower-${cases.length}`, 'pixel', { image: { width: 2, height: 2, mimeType: 'image/png',
+      sourceUrl: imageUrl([0, 30, 200, 255, 64, 125, 200, 109, 192, 50, 30, 255, 255, 200, 20, 128]) } },
+      { x: 0, y: 0, width: docWidth, height: docHeight, rotation: 0 })
+    cases.push({ id: `${transform.rotation}°/${transform.width}/${channel}/${mode}`, layers: [upper, lower], transform })
+  }
+  let worst = { interiorAlpha: 0, interiorColor: 0, edgeAlpha: 0, edgeColor: 0, outsideAlpha: 0, outsideColor: 0 }
+  try {
+    history.replaceState(null, '', original)
+    for (const item of cases) item.expected = await pixelsFromPng(await renderDocumentPNG(spec, item.layers), docWidth, docHeight)
+    history.replaceState(null, '', enabled)
+    for (const item of cases) {
+      const actual = await pixelsFromPng(await renderDocumentPNG(spec, item.layers), docWidth, docHeight)
+      const backend = JSON.parse(document.documentElement.dataset.axiaRustDocument || '{}')
+      if (backend.backend !== 'rust') throw new Error(`Mesclar se reamostrado ${item.id} em fallback: ${JSON.stringify(backend)}`)
+      const classes = rustRotationPixelClasses(rustDocumentSourceMatrix(item.transform, 2, 2), 2, 2, docWidth, docHeight)
+      const difference = rustRotationDifference(item.expected, actual, classes)
+      for (const key of Object.keys(worst)) worst[key] = Math.max(worst[key], difference[key])
+      // Alinhado a eixos: tolerância de sempre em todo pixel. Rotação: borda com a cobertura exata do Rust.
+      const rotated = item.transform.rotation % 90 !== 0
+      const edgeAlpha = rotated ? 12 : 2, edgeColor = rotated ? 16 : 3
+      // Interior até 4: o legado relê a camada reamostrada de um canvas premultiplicado em 8 bits antes do filtro;
+      // o Rust arredonda a amostra exata. Medido 3,56 na ampliação 2,5× com alfa baixo.
+      if (difference.interiorAlpha > 2 || difference.interiorColor > 4 || Math.max(difference.edgeAlpha, difference.outsideAlpha) > edgeAlpha ||
+          Math.max(difference.edgeColor, difference.outsideColor) > edgeColor) throw new Error(`Mesclar se reamostrado ${item.id}: ${JSON.stringify(difference)}`)
+    }
+    return { cases: cases.length, worst, interiorTolerance: [2, 4] }
+  } finally { await disposeRustDocumentRenderer(); history.replaceState(null, '', original) }
+}
+
 async function renderCases() {
   const background = layer('background', 'background', {}, undefined)
   const shapeLayers = [
@@ -714,6 +760,7 @@ try {
   const rustAppearance = await compareAppearanceConsumers()
   const rustStyledShapes = await compareStyledShapeConsumer()
   const rustScaledExport = await compareScaledExport()
+  const rustResampledUnderlying = await compareResampledUnderlying()
   if (new URLSearchParams(location.search).has('record')) {
     result.textContent = JSON.stringify({ status: 'record', width, height, cases })
   } else {
@@ -752,7 +799,7 @@ try {
           errors.push(`${item.id}: diferença máxima ${maxDifference} > ${reference.maxChannelDifference}`)
         }
       }
-      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustText, rustSessionEpoch, rustAppearance, rustStyledShapes, rustScaledExport })
+      result.textContent = JSON.stringify({ status: errors.length ? 'fail' : 'pass', errors, cases: cases.length, rustUnderlying, rustEditorial, rustShapes, rustText, rustSessionEpoch, rustAppearance, rustStyledShapes, rustScaledExport, rustResampledUnderlying })
     }
   }
 } catch (error) {

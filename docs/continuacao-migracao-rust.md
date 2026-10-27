@@ -25,9 +25,8 @@ do legado. A ordem combinada:
    `19311e9`), texto com efeitos (`135f654`), forma e fundo com efeitos
    (`0d54ef4`), rotação arbitrária (`d1f3d26`) inclusive com redução (fonte
    decodificada reduzida), saída com escala e origem fracionária (miniaturas e
-   exportação em outro DPI vão ao Rust). Faltam, nesta ordem: reamostragem com
-   `Mesclar se` de baixo (`source-transform-blend-if`), objetos inteligentes/PDF
-   e miniaturas (`non-image-layer`, propósitos `smart`/`thumbnail`), fotos de
+   exportação em outro DPI vão ao Rust), `Mesclar se` de baixo com reamostragem.
+   Faltam, nesta ordem: objetos inteligentes/PDF (`non-image-layer`), fotos de
    24 MP e camadas grandes com efeitos.
 2. **Bloco 2 — C4**, preview ao vivo em superfície única (detalhes abaixo).
 3. **Bloco 3 — Rust como padrão.**

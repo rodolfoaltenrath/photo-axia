@@ -194,9 +194,6 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       `${layer.id}:${image.editToken ?? ''}:${image.sourceUrl}`,
       1 / Math.sqrt(transform.width / sourceWidth * (transform.height / sourceHeight)), { id: layer.id, url: image.sourceUrl })
   }
-  if (result.layers.some(layer => layer.sampling || !rustRasterAxisScales(layer.matrix)) && result.layers.some(layer => layerStyleBlendIfUsesUnderlying(layer.input.styles.blendIf))) {
-    throw new RustDocumentUnsupported('source-transform-blend-if')
-  }
   if (rustPixelPocStyleMetadataBytes(result) > 1024 * 1024) throw new RustPixelPocError('memory-limit')
   return structuredClone(result)
 }

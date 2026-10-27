@@ -264,8 +264,21 @@ pelo modo de cobertura. Numa fonte 120×80 a 0,25 e 20°, o interior difere do
 `drawImage` legado em 0/4 — filtros de redução diferentes, como na seção 6.1 —
 com teto informativo de 2/8; a borda fica em 0/8. Só uma camada com menos de
 meio pixel de lado continua sem modo.
-`Mesclar se` de baixo com fonte rotacionada também segue em fallback
-(`source-transform-blend-if`), como com as demais reamostragens.
+`Mesclar se` de baixo com fonte reamostrada ou rotacionada passou ao Rust em
+2026-10-27 (seção 6.3).
+
+### 6.3 `Mesclar se` da camada de baixo com fonte reamostrada (2026-10-27)
+
+O filtro lê o RGBA8 documental da amostra: o Rust arredonda a amostra exata
+(bilinear, área ou cobertura) para bytes antes do filtro e da mesclagem, a mesma
+etapa do legado, que desenha a camada transformada num canvas e a relê. A
+restrição `source-transform-blend-if` existia só por falta de verificação. O
+oráculo compara a exportação inteira (24 casos: translação fracionária, ampliação
+2,5×, quarto de volta com escala e rotação de 33°; canais cinza e vermelho;
+Normal, Multiplicação e Tela): o pior interior foi 2/3,56, na ampliação com alfa
+baixo — o canvas intermediário do legado é premultiplicado em 8 bits e perde
+precisão nesses texels; o Rust não imita essa perda. Teto do interior para essa
+combinação: 2/4; borda alinhada 2/3, rotacionada 12/16 (seção 6.2).
 
 ## 7. Provas
 
@@ -292,7 +305,7 @@ meio pixel de lado continua sem modo.
 
 ## 8. Gates restantes
 
-Fotos acima do orçamento de 47 MiB de fontes (24 MP ou mais), reamostragem com `Mesclar se` abaixo, escala de saída diferente de
+Fotos acima do orçamento de 47 MiB de fontes (24 MP ou mais), escala de saída diferente de
 1:1, WebView2 com GPU em outras máquinas e QA com documentos do usuário. Texto
 entrou no consumidor na fatia 12 sem reamostragem (ver
 [texto documental](contrato-texto-documental-rust-v1.md)).
