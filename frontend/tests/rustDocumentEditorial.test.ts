@@ -174,14 +174,18 @@ test('aparência não libera texto sem conteúdo nem origens não inteiras ou ex
     2, 2, { x: 0, y: 0, width: 2, height: 2 }, 'appearance'), /non-image-layer/)
 })
 
-test('adapter editorial admite bilinear raster axial, mas não rotação arbitrária/grade fracionária', () => {
+test('adapter editorial: bilinear axial, cobertura na rotação arbitrária, recusa grade fracionária e rotação reduzida', () => {
   assert.throws(() => planRustEditorialDocument(document, [picture()], 1, 1,
     { x: 0.25, y: 0, width: 1, height: 1 }), /output-grid-quality/)
   for (const boundsPolicy of ['document', 'appearance'] as const) {
-    for (const patch of [{ rotation: 37 }, { rotation: 0.001 }]) {
+    for (const patch of [{ rotation: 37 }, { rotation: 0.001 }, { rotation: -123, width: 1, height: 3 }]) {
       const item = picture(); Object.assign(item.transform!, patch)
-      assert.throws(() => planRustEditorialDocument(document, [item], 8, 6, viewport, boundsPolicy), /source-transform-quality/)
+      const entry = planRustEditorialDocument(document, [item], 8, 6, viewport, boundsPolicy).layers[0]!
+      assert.equal(entry.sampling, undefined)
     }
+    // Rotação com redução abaixo de 0,5 ainda não tem modo de amostragem.
+    const reduced = picture(); Object.assign(reduced.transform!, { rotation: 30, width: 0.5, height: 2 })
+    assert.throws(() => planRustEditorialDocument(document, [reduced], 8, 6, viewport, boundsPolicy), /source-transform-quality/)
     for (const patch of [{ x: 0.25 }, { y: 0.5 }, { width: 4 }, { height: 4 }, { width: 3, height: 3, x: 0.25, y: 0.5 }]) {
       const item = picture(); Object.assign(item.transform!, patch)
       const result = planRustEditorialDocument(document, [item], 8, 6, viewport, boundsPolicy)

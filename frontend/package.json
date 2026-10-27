@@ -21,6 +21,8 @@
     "smoke:document-oracle": "node scripts/documentOracleBrowser.mjs",
     "presmoke:document-resampling": "node scripts/buildRustPixelPoc.mjs",
     "smoke:document-resampling": "node scripts/documentOracleBrowser.mjs --resampling",
+    "presmoke:document-rotation": "node scripts/buildRustPixelPoc.mjs",
+    "smoke:document-rotation": "node scripts/documentOracleBrowser.mjs --rotation",
     "prerecord:canvas-references": "npm run build",
     "record:canvas-references": "node scripts/recordCanvasReferences.mjs",
     "prerecord:document-oracle": "node scripts/buildRustPixelPoc.mjs",

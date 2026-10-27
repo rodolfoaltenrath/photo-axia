@@ -14,7 +14,7 @@ import { planRustDocumentShape, planRustDocumentStyledShape, type RustDocumentSh
 import { DEFAULT_SHAPE_CONFIG } from './shape.ts'
 import { planRustDocumentStyledText, planRustDocumentText, rustDocumentTextFontsReady, type RustDocumentStyledTextPixels,
   type RustDocumentStyledTextSource, type RustDocumentTextPixels, type RustDocumentTextSource } from './rustDocumentText.ts'
-import { rustRasterSamplingMode } from './rustDocumentSampling.ts'
+import { rustRasterAxisScales, rustRasterSamplingMode, rustRotationCoverageSupported } from './rustDocumentSampling.ts'
 
 type Matrix = NonNullable<RustDocumentRasterLayer['sourceToDocument']>
 export type RustDocumentBoundsPolicy = 'document' | 'appearance'
@@ -88,7 +88,10 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
     const resampled = !pixelAlignedSource(matrix)
     // Ampliação e redução até 0,5 usam o bilinear compatível com Canvas; abaixo, a média de área.
     const sampling = resampled ? rustRasterSamplingMode(matrix, result.grid, layer.blendMode) : undefined
-    if (resampled && !sampling) throw new RustDocumentUnsupported('source-transform-quality')
+    // Rotação arbitrária fica no modo de cobertura (sem `sampling`); ver rustRotationCoverageSupported.
+    if (resampled && !sampling && !rustRotationCoverageSupported(matrix, result.grid)) {
+      throw new RustDocumentUnsupported('source-transform-quality')
+    }
     const styles = normalizeLayerStyleConfig(layer.styles)
     metadata += rustPixelPocStyleMetadataBytes({ ...identity, styles })
     if (metadata > 512 * 1024) throw new RustPixelPocError('memory-limit')
@@ -172,7 +175,7 @@ export function planRustEditorialDocument(document: DocumentSpec, layers: LayerI
       `${layer.id}:${image.editToken ?? ''}:${image.sourceUrl}`,
       1 / Math.sqrt(transform.width / image.width * (transform.height / image.height)), { id: layer.id, url: image.sourceUrl })
   }
-  if (result.layers.some(layer => layer.sampling) && result.layers.some(layer => layerStyleBlendIfUsesUnderlying(layer.input.styles.blendIf))) {
+  if (result.layers.some(layer => layer.sampling || !rustRasterAxisScales(layer.matrix)) && result.layers.some(layer => layerStyleBlendIfUsesUnderlying(layer.input.styles.blendIf))) {
     throw new RustDocumentUnsupported('source-transform-blend-if')
   }
   if (rustPixelPocStyleMetadataBytes(result) > 1024 * 1024) throw new RustPixelPocError('memory-limit')

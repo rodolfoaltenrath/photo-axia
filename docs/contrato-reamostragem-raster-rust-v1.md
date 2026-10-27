@@ -231,6 +231,34 @@ No total, um render inteiro lê cada texel da fonte poucas vezes, qualquer que s
 a escala. Desde 2026-10-27 o orçamento de fontes do consumidor é de 47 MiB e uma
 foto de 4000×3000 entra no Rust (ver o contrato do consumidor documental, seção 4).
 
+### 6.2 Rotação arbitrária (2026-10-27)
+
+Medição (`npm run smoke:document-rotation`, Edge 156): o modo de cobertura do
+Rust — bilinear no centro do pixel com clamp, multiplicado pela cobertura
+geométrica exata do quadrilátero da fonte — contra `drawImage` com
+`setTransform` rotacionado, numa fonte 6×4 (opaca e com alfa variado), oito
+matrizes (15° a 200°, escalas de 0,6 a 2, translações fracionárias) e os seis
+modos: 96 casos. Cada pixel é classificado por 8×8 subamostras em interior,
+borda (o contorno cruza o pixel) ou fora.
+
+| Classe | Máximo medido (alfa / RGB premultiplicado) |
+| --- | --- |
+| interior | 2 / 2,53 |
+| borda | 9 / 11,86 |
+| fora (anel junto à borda) | 2 / 3,21 |
+
+O interior casa com o Canvas dentro da tolerância de sempre; a borda difere
+porque o Skia aproxima a cobertura analítica e o Rust a calcula exata. Como o
+legado será removido, a convenção é a do Rust: rotação arbitrária sem
+cisalhamento, com as duas escalas ≥ 0,5, usa o modo de cobertura, sem sonda de
+plataforma (`rustRotationCoverageSupported`). O portão exige 2/3 no interior e
+12/16 na borda e no anel. De ponta a ponta pelo app (imagem 37°, imagem −112°
+com sombra em Multiplicação, texto 23° com contorno), o pior foi 0/2 no interior
+e 0/8 na borda. Rotação com redução abaixo de 0,5 continua em fallback: o
+bilinear pularia texels e ainda não há pré-filtro de área para esse caso.
+`Mesclar se` de baixo com fonte rotacionada também segue em fallback
+(`source-transform-blend-if`), como com as demais reamostragens.
+
 ## 7. Provas
 
 - Rust nativo (`document_sampling_tests.rs`): translação não aplica alfa de borda
@@ -257,7 +285,7 @@ foto de 4000×3000 entra no Rust (ver o contrato do consumidor documental, seç�
 ## 8. Gates restantes
 
 Fotos acima do orçamento de 47 MiB de fontes (24 MP ou mais), rotação
-arbitrária, reamostragem com `Mesclar se` abaixo, escala de saída diferente de
+com redução abaixo de 0,5, reamostragem com `Mesclar se` abaixo, escala de saída diferente de
 1:1, WebView2 com GPU em outras máquinas e QA com documentos do usuário. Texto
 entrou no consumidor na fatia 12 sem reamostragem (ver
 [texto documental](contrato-texto-documental-rust-v1.md)).

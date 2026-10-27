@@ -57,3 +57,16 @@ export function rustRasterSamplingMode(matrix: readonly number[], grid: RustDocu
 export function rustRasterSamplingNeedsPlatformProbe(sampling: RustDocumentRasterLayer['sampling']) {
   return sampling === 'raster-bilinear' || sampling === 'raster-bilinear-precise'
 }
+
+/**
+ * Rotação arbitrária sem cisalhamento, com as duas escalas ≥ 0,5: o modo de cobertura do Rust
+ * (bilinear no centro do pixel e cobertura geométrica exata na borda) atende. No interior ele casa
+ * com o Canvas dentro de 2/3; na borda o Skia aproxima a cobertura e o Rust a calcula exata.
+ * Convenção do Rust, sem sonda de plataforma. Redução abaixo de 0,5 com rotação ainda não tem modo.
+ */
+export function rustRotationCoverageSupported(matrix: readonly number[], grid: RustDocumentOutputGrid) {
+  if (matrix.length !== 6 || !matrix.every(Number.isFinite) || !integerGrid(grid) || rustRasterAxisScales(matrix)) return false
+  const [a, b, c, d] = matrix as [number, number, number, number], scaleX = Math.hypot(a, b), scaleY = Math.hypot(c, d)
+  return Math.abs(a * c + b * d) <= 1e-9 * scaleX * scaleY &&
+    scaleX >= RASTER_BILINEAR_MIN_SCALE && scaleY >= RASTER_BILINEAR_MIN_SCALE
+}

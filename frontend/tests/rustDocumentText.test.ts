@@ -47,9 +47,9 @@ test('estilo, Fill e Blend If levam o texto ao raster da camada; modos de mescla
     assert.equal(entry.opacity, 63.7); assert.equal(entry.blendMode, 'screen')
     assert.deepEqual(entry.matrix.map(value => value + 0), [1, 0, 0, 1.2, 1.25, 0.5]); assert.equal(entry.sampling, 'raster-bilinear-precise')
   }
-  // Rotação arbitrária de raster continua fora, como para imagens.
-  assert.throws(() => planRustEditorialDocument(document, [textLayer({ styles: styles({ fillOpacity: 50 }),
-    transform: transform({ x: 1, y: 1, width: 4, height: 2, rotation: 30 }) })], 8, 6, viewport), /source-transform-quality/)
+  // Rotação arbitrária usa o modo de cobertura, como para imagens.
+  assert.equal(planRustEditorialDocument(document, [textLayer({ styles: styles({ fillOpacity: 50 }),
+    transform: transform({ x: 1, y: 1, width: 4, height: 2, rotation: 30 }) })], 8, 6, viewport).layers[0]!.sampling, undefined)
   // Mesclado uma vez sobre o fundo, como o preview: o modo vai no registro, a opacidade no raster.
   for (const blendMode of ['multiply', 'screen', 'overlay', 'darken', 'lighten'] as const) {
     const entry = planRustEditorialDocument(document, [textLayer({ blendMode, opacity: 40 })], 8, 6, viewport).layers[0]!
