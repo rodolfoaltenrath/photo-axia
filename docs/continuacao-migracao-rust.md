@@ -1,81 +1,16 @@
-# Continuação da migração Rust — estado em 2026-10-26
+# Continuação da migração Rust — estado em 2026-10-27
 
 Anotação para retomar o trabalho em outra máquina. Detalhes técnicos de cada
 decisão ficam nos contratos em `docs/`, principalmente
 `contrato-reamostragem-raster-rust-v1.md` (seções 5.2 e 6.1) e
 `contrato-texto-documental-rust-v1.md`.
 
-## 1. Situação desta fatia (redução de imagem)
+## 1. Situação da fatia de redução de imagem
 
-O código está pronto, mas **ainda não está commitado e a bateria completa ainda
-não rodou** depois das últimas mudanças. Antes de trocar de máquina é preciso
-commitar e enviar a partir da máquina original; o commit anterior (`61b999b`)
-também ainda não foi enviado (`main` 1 à frente de `origin/main` no momento da
-anotação).
-
-### Já validado
-
-- `cargo test` 146/146, `cargo clippy -- -D warnings` e `cargo fmt --check`.
-- Typecheck (`vue-tsc`).
-- Planner (`tests/rustDocumentEditorial.test.ts`) 19/19.
-- DCP4 (`scripts/tests/rustDocumentSampling.test.ts`) 8/8.
-- Área (`scripts/tests/rustRasterArea.test.ts`) 2/2, com 192 casos idênticos
-  byte a byte à referência independente.
-- Paridade (`scripts/tests/rustRasterParity.test.ts`) 3/3.
-
-### Falta rodar antes de commitar
-
-```powershell
-cd frontend
-npm.cmd test
-npm.cmd run test:rust-poc
-npm.cmd run build
-npm.cmd run test:rust-bundle
-npm.cmd run smoke:document-oracle      # a sentinela de redução da aparência mudou
-npm.cmd run smoke:document-resampling
-npm.cmd run smoke:rust-wails           # precisa do Go no PATH
-cd ..
-git diff --check
-```
-
-Se o `smoke:rust-wails` falhar com "DevTools WebView2 não respondeu", repita: é
-fragilidade do script sob carga da máquina (limite de 5 s por chamada DevTools),
-não regressão. Só trate como defeito se repetir com a máquina ociosa.
-
-Também falta a entrada desta fatia no
-`roadmap-compositor-rust-internacionalizacao.md`; a seção 6.1 do contrato de
-reamostragem serve de base.
-
-### Mensagem de commit sugerida
-
-Sem linha de co-autor.
-
-```
-feat(renderer): compose reduced rasters in Rust with bilinear and exact area sampling / compõe rasters reduzidos em Rust com bilinear e média de área exata
-
-Redução de imagem deixava o documento inteiro em fallback
-(source-minification). Uma gravação do Canvas real (1.152 casos por
-ambiente) mostrou que não há alvo único: o WebView2 distribuído
-(Chromium 155) usa bilinear em toda a faixa, enquanto o Chromium 156 e o
-contexto GPU passam a usar mipmap abaixo de ~0,53.
-
-- Escalas >= 0,5 usam os modos bilineares existentes, que casam
-  estritamente com o WebView2 distribuído; o mínimo deixou de ser 1.
-- Abaixo de 0,5, onde o bilinear pula texels e gera aliasing, o novo
-  DocumentSampling::RasterArea faz a média exata da fonte sobre o pixel,
-  em espaço premultiplicado, com cobertura de área nas bordas (DCP4,
-  valor 3).
-- O orçamento de trabalho conta a pegada em texels, igual no Rust e na
-  pré-checagem TS.
-- A área é convenção do Rust e não passa pela sonda de plataforma.
-- recordCanvasReferences.mjs substitui o gravador anterior e grava as
-  suítes resampling e minification no WebView2 ou no Edge headless.
-
-Provas: referência independente em TypeScript igual byte a byte ao Rust
-em 192 casos; 36 casos de regressão contra o WebView2 real na faixa
-bilinear; testes Rust de média exata, cobertura de borda, quarto de
-volta, recusas, tiles e custo por amostra.
-```
+Concluída: commit `bf86d37`, validada em 2026-10-27 com a bateria completa
+(frontend 622/622, WASM 450/450, build, bundle, oráculos de documento e de
+reamostragem no Edge headless, smoke Wails 2/2 com a reamostragem ativa, cargo
+146/146, clippy, go test) e registrada no roadmap como décima terceira fatia de C3.
 
 ## 2. Próximos passos, em ordem
 

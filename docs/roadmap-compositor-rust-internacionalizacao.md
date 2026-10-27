@@ -852,6 +852,18 @@ sonda deixa de exigir direção de empate. A reamostragem Rust fica **ativa** no
 app instalado, com smoke Wails verde. Detalhes na seção 5.2 do
 [contrato de reamostragem](contrato-reamostragem-raster-rust-v1.md).
 
+Décima terceira fatia de C3 (2026-10-26): **redução raster**. Uma gravação do
+Canvas real (1.152 casos por ambiente) mostrou que a redução também não tem alvo
+único: o WebView2 distribuído (Chromium 155) usa bilinear em toda a faixa, o 156 e
+o contexto GPU usam mipmap abaixo de ~0,53. O Rust define a convenção pela
+qualidade: bilinear com as duas escalas ≥ 0,5 (casa com o WebView2 distribuído;
+regressão com 36 casos gravados) e `RasterArea` abaixo de 0,5, onde o bilinear
+pula texels — média exata em espaço premultiplicado, validada contra uma
+referência TypeScript independente, igual byte a byte em 192 casos. DCP4 ganha o
+valor 3; o orçamento de trabalho conta a pegada em texels. O limite de 16 MiB de
+fontes do consumidor experimental continua mandando fotos grandes ao fallback.
+Detalhes na seção 6.1 do [contrato de reamostragem](contrato-reamostragem-raster-rust-v1.md).
+
 Décima segunda fatia de C3: **texto no consumidor experimental**. Até aqui,
 qualquer camada de texto levava o documento inteiro ao fallback. Texto Normal sem
 efeitos, Fill 100 e `Mesclar se` padrão agora entra como descritor no plano
